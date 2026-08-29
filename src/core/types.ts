@@ -169,6 +169,12 @@ export interface Ctx2D {
   clip(): void;
   translate(x: number, y: number): void;
   scale(x: number, y: number): void;
+  /**
+   * Rotate by radians. Only the plane needs it, for its propeller — the one
+   * moving part in the closet that genuinely spins rather than swaying.
+   * Always pair with save/restore.
+   */
+  rotate(angle: number): void;
   clearRect(x: number, y: number, w: number, h: number): void;
 }
 

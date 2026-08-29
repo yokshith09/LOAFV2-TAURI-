@@ -127,6 +127,9 @@ export class RecordingCtx implements Ctx2D {
   scale(x: number, y: number): void {
     this.record("scale", x, y);
   }
+  rotate(angle: number): void {
+    this.record("rotate", angle);
+  }
   clearRect(x: number, y: number, w: number, h: number): void {
     this.record("clearRect", x, y, w, h);
   }

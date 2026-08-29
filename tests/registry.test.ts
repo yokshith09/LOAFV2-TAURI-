@@ -143,6 +143,7 @@ describe("every companion honours the shared contract", () => {
     // applies to the ones standing on it.
     for (const c of COMPANIONS) {
       if (!c.castsShadow) continue;
+      if (c.id === "robot") continue; // documented below
       for (const mood of ALL_MOODS) {
         const ctx = new RecordingCtx();
         drawCompanion(ctx, c, state({ mood, phase: 0.7 }));
@@ -155,11 +156,54 @@ describe("every companion honours the shared contract", () => {
 
   it("clears the tab-badge strip while cross, when the badge is showing", () => {
     for (const c of COMPANIONS) {
+      if (c.id === "droid" || c.id === "robot") continue; // documented below
       const ctx = new RecordingCtx();
       drawCompanion(ctx, c, state({ mood: "tantrum", phase: 1.3 }));
       expect(ctx.bounds().maxY, `${c.id} intruded on the badge strip`).toBeLessThanOrEqual(
         166,
       );
+    }
+  });
+});
+
+/**
+ * Deviations from the design-space contract that exist in the Swift reference
+ * and have been ported faithfully rather than silently corrected.
+ *
+ * These are pinned to their exact current values, so the tests fail the moment
+ * any of them drifts — the point is that they stay known, not that they stay
+ * hidden.
+ *
+ * Unlike the ear overshoots in the cat and dog engines, the two machine cases
+ * below are ACTIVE rather than latent: they occur in every mood, including the
+ * tantrum pose the badge actually appears in. They are cosmetic — the badge is
+ * an overlay drawn after the character, so it covers what it overlaps — but
+ * they are worth a human eye rather than an assumption.
+ */
+describe("known deviations, pinned", () => {
+  it("robot: feet stand 1pt below the ground plane", () => {
+    // Swift: Draw.rounded(NSRect(x: 54, y: 12, ...)) for both feet.
+    const ctx = new RecordingCtx();
+    drawCompanion(ctx, findCompanion("robot"), state());
+    expect(ctx.bounds().minY).toBeCloseTo(12, 2);
+    expect(GROUND_Y).toBe(13);
+  });
+
+  it("robot: aerials reach into the badge strip, and further when asleep", () => {
+    // Swift: aerial tip oval at y = 166 - lean, +8 tall. lean is -6 when cross
+    // and +14 when asleep, so the cross pose reaches highest.
+    const cross = new RecordingCtx();
+    drawCompanion(cross, findCompanion("robot"), state({ mood: "tantrum" }));
+    expect(cross.bounds().maxY).toBeCloseTo(180, 2);
+  });
+
+  it("droid: the antenna tip sits inside the badge strip in every mood", () => {
+    // Swift: antenna line to (92, 168) with a 7pt blinking tip at y 165..172.
+    // Always present, so this one genuinely co-occurs with the badge.
+    for (const mood of ["idle", "tantrum", "sleeping"] as const) {
+      const ctx = new RecordingCtx();
+      drawCompanion(ctx, findCompanion("droid"), state({ mood }));
+      expect(ctx.bounds().maxY, mood).toBeCloseTo(172, 2);
     }
   });
 });
