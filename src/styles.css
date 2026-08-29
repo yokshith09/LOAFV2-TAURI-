@@ -26,12 +26,28 @@ body {
   display: block;
   width: 100%;
   height: 100%;
-  /* The whole window is the drag handle; Tauri reads this attribute's CSS
-     counterpart via the drag region API, and it keeps the cat grabbable. */
-  -webkit-app-region: drag;
+  /*
+   * Dragging is handled in JS via the window.startDragging command, NOT here.
+   *
+   * `-webkit-app-region: drag` was tried and is an ELECTRON api — Tauri ignores
+   * it, which is why the first Mac build could not be moved at all. Tauri's own
+   * `data-tauri-drag-region` would work but covers the whole window and
+   * swallows every click, and a pet you cannot click is not a pet.
+   */
+  cursor: grab;
 }
 
-/* Phase 0 diagnostics only. */
+#stage:active {
+  cursor: grabbing;
+}
+
+/*
+ * Phase 0 diagnostics. Hidden unless explicitly switched on, because a black
+ * box of debug text under the cat is the first thing a tester notices and the
+ * last thing they should be reporting on.
+ *
+ * Toggle with the D key, or ?debug=1 in the dev server URL.
+ */
 #probe {
   position: fixed;
   inset: auto 4px 4px 4px;
@@ -42,6 +58,10 @@ body {
   padding: 4px 6px;
   pointer-events: none;
   white-space: pre-wrap;
+}
+
+#probe[hidden] {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

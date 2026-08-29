@@ -15,7 +15,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# macos-private-api is REQUIRED for a transparent window on macOS. Without it
+# `"transparent": true` is silently ignored and the companion arrives sitting on
+# an opaque rectangle — which is exactly what the first Mac test build did.
+#
+# The name is not a warning to ignore: it does use private APIs, so a build with
+# this enabled cannot be submitted to the Mac App Store. Direct distribution
+# (what we already do, and what the Swift original did) is unaffected.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
