@@ -234,6 +234,28 @@ export interface Companion {
 }
 
 /**
+ * Something the companion wears.
+ *
+ * Drawn after the face, in the same design space, positioned from the
+ * companion's anchors (`hatAnchor`, `headEllipse`, `eyeLeft/Right`, `neckY`)
+ * rather than from hardcoded coordinates — that is what lets one outfit fit
+ * every species instead of needing a cat version and a duck version.
+ */
+export interface Outfit {
+  /** Stable identifier, persisted in preferences. */
+  readonly id: string;
+  readonly name: string;
+  /** Shown on the closet chip. */
+  readonly glyph: string;
+  /**
+   * Months (1–12) this belongs to, for "dress for the season".
+   * Empty means it is never auto-picked.
+   */
+  readonly months: ReadonlySet<number>;
+  draw(ctx: Ctx2D, companion: Companion, s: SceneState): void;
+}
+
+/**
  * Blush sits under the outer corner of each eye, derived from the head box so
  * species don't each have to hand-place it.
  */

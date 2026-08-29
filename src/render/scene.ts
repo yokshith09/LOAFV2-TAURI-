@@ -1,4 +1,4 @@
-import type { Companion, Ctx2D, SceneState } from "../core/types";
+import type { Companion, Ctx2D, Outfit, SceneState } from "../core/types";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../core/types";
 import { drawEyes, drawFurSpikes } from "./face";
 
@@ -67,7 +67,12 @@ export function applyFit(ctx: Ctx2D, fit: FitTransform): void {
  * the body, then the head, then the shared eyes, then the species' own muzzle.
  * Fur spikes go last so a bristling tantrum reads on top of the silhouette.
  */
-export function drawCompanion(ctx: Ctx2D, c: Companion, s: SceneState): void {
+export function drawCompanion(
+  ctx: Ctx2D,
+  c: Companion,
+  s: SceneState,
+  outfit?: Outfit | null,
+): void {
   c.drawBehind(ctx, s);
   c.drawBody(ctx, s);
   c.drawHead(ctx, s);
@@ -83,6 +88,12 @@ export function drawCompanion(ctx: Ctx2D, c: Companion, s: SceneState): void {
     drawEyes(ctx, c, s);
   }
   c.drawMuzzle(ctx, s);
+
+  // Clothes go on last, over the finished face. The sunglasses depend on it —
+  // they work by covering eyes that have already been drawn.
+  if (outfit) {
+    outfit.draw(ctx, c, s);
+  }
 }
 
 /**
@@ -95,10 +106,11 @@ export function renderScene(
   s: SceneState,
   viewWidth: number,
   viewHeight: number,
+  outfit?: Outfit | null,
 ): void {
   ctx.clearRect(0, 0, viewWidth, viewHeight);
   ctx.save();
   applyFit(ctx, computeFit(viewWidth, viewHeight));
-  drawCompanion(ctx, c, s);
+  drawCompanion(ctx, c, s, outfit);
   ctx.restore();
 }

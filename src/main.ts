@@ -7,8 +7,10 @@
  */
 
 import { COMPANIONS } from "./companions/registry";
+import { OUTFITS, findOutfit, SEASONAL_ID } from "./outfits/registry";
 import { renderScene } from "./render/scene";
-import { ALL_MOODS, type Mood, type SceneState } from "./core/types";
+import { renderPixelScene } from "./render/pixelate";
+import { ALL_MOODS, type Mood, type Outfit, type SceneState } from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
 const probeEl = document.getElementById("probe") as HTMLDivElement | null;
@@ -20,6 +22,25 @@ if (!ctx) throw new Error("2d context unavailable — webview is too old");
 let characterIndex = 0;
 let moodIndex = 0;
 let companion = COMPANIONS[characterIndex]!;
+
+/**
+ * Wardrobe selection, as the closet will store it: null = bare, the seasonal
+ * sentinel = follow the calendar, anything else = a garment id. Cycling walks
+ * bare -> each garment -> seasonal -> bare.
+ */
+const OUTFIT_CYCLE: ReadonlyArray<string | null> = [
+  null,
+  ...OUTFITS.map((o) => o.id),
+  SEASONAL_ID,
+];
+let outfitIndex = 0;
+
+/** Style toggle, not a second set of sprites — see render/pixelate.ts. */
+let pixelated = false;
+
+function currentOutfit(): Outfit | null {
+  return findOutfit(OUTFIT_CYCLE[outfitIndex]!);
+}
 
 /** Diagnostics are off unless asked for — a tester should see a cat, not a HUD. */
 let debugVisible = new URLSearchParams(location.search).has("debug");
@@ -78,13 +99,25 @@ function frame(nowMs: number): void {
 
   ctx!.save();
   ctx!.scale(dpr, dpr);
-  renderScene(
-    ctx as unknown as Parameters<typeof renderScene>[0],
-    companion,
-    state,
-    window.innerWidth,
-    window.innerHeight,
-  );
+  if (pixelated) {
+    renderPixelScene(
+      ctx!,
+      companion,
+      state,
+      window.innerWidth,
+      window.innerHeight,
+      currentOutfit(),
+    );
+  } else {
+    renderScene(
+      ctx as unknown as Parameters<typeof renderScene>[0],
+      companion,
+      state,
+      window.innerWidth,
+      window.innerHeight,
+      currentOutfit(),
+    );
+  }
   ctx!.restore();
 
   requestAnimationFrame(frame);
@@ -137,12 +170,22 @@ function wireInteraction(): void {
     updateProbeLabel();
   });
 
-  // A way to see diagnostics without shipping them switched on.
+  // Spike controls, until the closet window exists to own these properly.
   window.addEventListener("keydown", (e) => {
-    if (e.key === "d" || e.key === "D") {
-      debugVisible = !debugVisible;
-      updateProbeLabel();
+    switch (e.key.toLowerCase()) {
+      case "d": // diagnostics, off unless asked for
+        debugVisible = !debugVisible;
+        break;
+      case "o": // cycle the wardrobe: bare -> garments -> seasonal -> bare
+        outfitIndex = (outfitIndex + 1) % OUTFIT_CYCLE.length;
+        break;
+      case "p": // pixel art
+        pixelated = !pixelated;
+        break;
+      default:
+        return;
     }
+    updateProbeLabel();
   });
 }
 
@@ -153,7 +196,11 @@ function updateProbeLabel(extra?: string): void {
   if (extra !== undefined) lastProbeLine = extra;
   probeEl.hidden = !debugVisible;
   if (!debugVisible) return;
-  probeEl.textContent = `${companion.defaultName} · ${ALL_MOODS[moodIndex]}\n${lastProbeLine}`;
+  const wearing = currentOutfit()?.name ?? OUTFIT_CYCLE[outfitIndex] ?? "bare";
+  probeEl.textContent =
+    `${companion.defaultName} · ${ALL_MOODS[moodIndex]}` +
+    `\n${wearing}${pixelated ? " · pixel" : ""}` +
+    `\n${lastProbeLine}`;
 }
 
 /** Call a Tauri command, tolerating running in a plain browser. */
