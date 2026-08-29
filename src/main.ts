@@ -10,6 +10,14 @@ import { COMPANIONS } from "./companions/registry";
 import { OUTFITS, findOutfit, SEASONAL_ID } from "./outfits/registry";
 import { renderScene } from "./render/scene";
 import { renderPixelScene } from "./render/pixelate";
+import { CurlDirector, canCurl } from "./behaviour/curl";
+import { PlayDirector } from "./behaviour/play";
+import { WanderController } from "./behaviour/wander";
+import { drawBall, drawSwipe } from "./behaviour/furBall";
+import { resolveLicence, licenceInputs } from "./behaviour/licence";
+import { defaultBehaviourSettings } from "./behaviour/settings";
+import { TauriMovableWindow } from "./platform/tauriWindow";
+import { applyFit, computeFit } from "./render/scene";
 import { ALL_MOODS, type Mood, type Outfit, type SceneState } from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
@@ -40,6 +48,101 @@ let pixelated = false;
 
 function currentOutfit(): Outfit | null {
   return findOutfit(OUTFIT_CYCLE[outfitIndex]!);
+}
+
+// --- The ambient layer -------------------------------------------------------
+
+const behaviour = defaultBehaviourSettings();
+const curlDirector = new CurlDirector();
+const playDirector = new PlayDirector();
+const wander = new WanderController();
+const hostWindow = new TauriMovableWindow();
+
+curlDirector.settings = behaviour;
+playDirector.settings = behaviour;
+curlDirector.canLoaf = canCurl(companion);
+
+/** Set while the user has the companion under the mouse or is moving it. */
+let hovering = false;
+let draggingWindow = false;
+
+/** Timestamp of the last frame, for the ambient layer's dt. */
+let lastTickMs: number | null = null;
+let nextWanderAt: number | null = null;
+
+function tickAmbient(nowMs: number, mood: Mood): void {
+  const dt = lastTickMs === null ? 0 : Math.min(0.25, (nowMs - lastTickMs) / 1000);
+  lastTickMs = nowMs;
+  if (dt <= 0) return;
+
+  const licence = resolveLicence(
+    licenceInputs({ mood, hovering, dragging: draggingWindow }),
+  );
+
+  // One activity at a time: a curled-up animal cannot reach a ball, and neither
+  // should be happening while the window is walking.
+  const walking = wander.isMoving;
+  curlDirector.tick(dt, licence, nowMs / 1000, nowMs, playDirector.isPlaying || walking);
+  playDirector.tick(dt, licence, nowMs, curlDirector.curl > 0 || walking);
+
+  tickWander(dt, nowMs, licence.mayWander, licence.mayBegin);
+}
+
+function tickWander(
+  dt: number,
+  nowMs: number,
+  mayWander: boolean,
+  mayBegin: boolean,
+): void {
+  hostWindow.poll(nowMs);
+  if (!hostWindow.isReady) return;
+
+  // A drifting character moves by nature. It reuses the whole wander machinery
+  // — leash, screen clamping, abort-on-drag — and only changes the dials, so
+  // drift inherits every guarantee the geometry was tested for rather than
+  // opening a second way for a window to end up off-screen.
+  const drifting = companion.drifts && behaviour.drifting;
+  wander.linear = drifting;
+  const leash = drifting ? behaviour.driftLeash : behaviour.wanderLeash;
+  const speed = drifting ? behaviour.driftSpeed : behaviour.wanderSpeed;
+  const every = drifting ? behaviour.driftEvery : behaviour.wanderEvery;
+  const gap = (): number =>
+    (every.min + (every.max - every.min) * Math.random()) * 1000;
+
+  if (!(behaviour.wandering || drifting) || !mayWander) {
+    // Stopped mid-stride by a tantrum or a drag. He stays where the
+    // interruption caught him — inside the leash either way — and the next walk
+    // is pushed out, so the moment a tantrum clears he does not set straight
+    // off again.
+    if (wander.isMoving) {
+      wander.abort();
+      nextWanderAt = nowMs + gap();
+    }
+    return;
+  }
+
+  if (wander.isMoving) {
+    wander.step(dt, hostWindow);
+    if (!wander.isMoving) nextWanderAt = nowMs + gap();
+    return;
+  }
+
+  if (nextWanderAt === null) {
+    nextWanderAt = nowMs + gap();
+    return;
+  }
+  if (
+    !mayBegin ||
+    curlDirector.curl > 0 ||
+    (!drifting && playDirector.ball !== null) ||
+    nowMs < nextWanderAt
+  ) {
+    return;
+  }
+  if (!wander.begin(hostWindow, leash, speed)) {
+    // Nowhere worth going right now — try again shortly rather than never.
+    nextWanderAt = nowMs + (drifting ? 3000 : 20000);
+  }
 }
 
 /** Diagnostics are off unless asked for — a tester should see a cat, not a HUD. */
@@ -91,8 +194,11 @@ function frame(nowMs: number): void {
     nextBlinkAt = nowMs + 2500 + Math.random() * 4000;
   }
 
+  const mood = ALL_MOODS[moodIndex]! as Mood;
+  tickAmbient(nowMs, mood);
+
   const state: SceneState = {
-    mood: ALL_MOODS[moodIndex]! as Mood,
+    mood,
     phase,
     blinking: nowMs < blinkUntil,
   };
@@ -117,6 +223,30 @@ function frame(nowMs: number): void {
       window.innerHeight,
       currentOutfit(),
     );
+  }
+
+  // The ball and the paw that bats it share the companion's design space, so
+  // they go through the same fit transform. Skipped in pixel mode: the ball is
+  // rasterised with the character there, not drawn over the top of it.
+  const ball = playDirector.ball;
+  if (ball && !pixelated) {
+    ctx!.save();
+    applyFit(
+      ctx as unknown as Parameters<typeof applyFit>[0],
+      computeFit(window.innerWidth, window.innerHeight),
+    );
+    drawBall(ctx as unknown as Parameters<typeof drawBall>[0], ball);
+    const swipe = playDirector.swipe;
+    if (swipe !== null) {
+      drawSwipe(
+        ctx as unknown as Parameters<typeof drawSwipe>[0],
+        companion,
+        playDirector.swipeSide,
+        swipe,
+        ball,
+      );
+    }
+    ctx!.restore();
   }
   ctx!.restore();
 
@@ -149,10 +279,28 @@ function wireInteraction(): void {
     const moved = Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y);
     if (moved < DRAG_THRESHOLD_PX) return;
     dragging = true;
+    // The user is placing the window: stop any walk dead rather than animating
+    // it out from under them, and treat where they drop it as the new home.
+    draggingWindow = true;
+    wander.abort();
     // Hand the window to the OS. From here the webview stops seeing the
     // gesture, so there is no mouseup to wait for — reset on the way out.
     void invokeSafe("start_drag");
     downAt = null;
+    // The OS swallows the rest of the gesture, so the drag flag is cleared on a
+    // short timer instead of a mouseup that will never arrive.
+    window.setTimeout(() => {
+      draggingWindow = false;
+      const f = hostWindow.getFrame();
+      if (hostWindow.isReady) wander.noteUserPlaced({ x: f.x, y: f.y });
+    }, 600);
+  });
+
+  window.addEventListener("mouseenter", () => {
+    hovering = true;
+  });
+  window.addEventListener("mouseleave", () => {
+    hovering = false;
   });
 
   window.addEventListener("mouseup", (e) => {
@@ -164,6 +312,8 @@ function wireInteraction(): void {
     if (e.shiftKey) {
       characterIndex = (characterIndex + 1) % COMPANIONS.length;
       companion = COMPANIONS[characterIndex]!;
+      // The closet swapping the character out changes whether it can curl.
+      curlDirector.canLoaf = canCurl(companion);
     } else {
       moodIndex = (moodIndex + 1) % ALL_MOODS.length;
     }
@@ -181,6 +331,12 @@ function wireInteraction(): void {
         break;
       case "p": // pixel art
         pixelated = !pixelated;
+        break;
+      case "b": // force a game of fetch, which otherwise takes minutes
+        playDirector.forcePlay();
+        break;
+      case "l": // force a loaf, same reason
+        curlDirector.forceCurl(performance.now(), 30);
         break;
       default:
         return;
