@@ -240,23 +240,32 @@ export class FairyCompanion implements Companion {
       // Horns. They rise from the forehead and only lean outward near the tip —
       // an earlier version swept them sideways from the temples, which read as a
       // second pair of ears next to the pointed ones.
+      // Shortened from the reference, whose tips reached y=178 — well inside
+      // the strip reserved for the tab badge. This was the sharpest of the
+      // overshoots: the horns exist ONLY in the tantrum pose, which is exactly
+      // the pose the badge appears in, so the transformation announcing "too
+      // many tabs" and the badge counting them were drawn into the same space
+      // by construction, every time.
+      //
+      // The sweep is squashed toward the base rather than truncated, so the
+      // curve keeps its shape and the horns stay horn-shaped — just shorter.
       for (const dir of [-1, 1]) {
         ctx.fillStyle = css(DEMON.deep);
         ctx.beginPath();
         ctx.moveTo(85 + dir * 8, 143); // inner base
         ctx.bezierCurveTo(
           85 + dir * 10,
-          160,
+          154,
           85 + dir * 19,
-          172,
+          161,
           85 + dir * 27,
-          178, // tip
+          165, // tip, one point clear of the strip
         );
         ctx.bezierCurveTo(
           85 + dir * 27,
-          165,
+          157,
           85 + dir * 25,
-          152,
+          149,
           85 + dir * 22,
           142, // outer base
         );
@@ -269,11 +278,11 @@ export class FairyCompanion implements Companion {
         ctx.moveTo(85 + dir * 12, 146);
         ctx.bezierCurveTo(
           85 + dir * 13,
-          159,
+          154,
           85 + dir * 19,
-          168,
+          159,
           85 + dir * 25,
-          174,
+          162,
         );
         ctx.lineWidth = 2;
         ctx.stroke();

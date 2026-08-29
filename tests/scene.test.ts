@@ -168,40 +168,36 @@ describe("design-space contract", () => {
     }
   });
 
-  it("documents the latent ear overshoot inherited from the Swift reference", () => {
-    // KNOWN DEVIATION, ported faithfully rather than silently corrected.
-    //
-    // The scrolling pose leans the ears UP (lean = +3), while tantrum leans them
-    // DOWN (lean = -6). For the tallest ears in the roster — the indie cat at
-    // earScale 1.16 — the scrolling tip reaches y = 169.24, which is inside the
-    // reserved badge strip:
+  it("clamps the tallest ears out of the badge strip while scrolling", () => {
+    // The scrolling pose leans the ears UP (lean = +3) while tantrum leans them
+    // DOWN (-6). For the tallest ears in the roster — the indie cat at earScale
+    // 1.16 — that used to put the tip at y = 169.24, inside the reserved strip:
     //     124 + (160 + 3 - 124) * 1.16 = 169.24
     //
-    // It is currently unreachable: a badge forces tantrum, and tantrum pulls the
-    // same ear down to 158.8. So this is latent, not a visible artefact. The test
-    // pins the exact value so that if either the lean or the ear scale changes,
-    // this stops being harmless and we find out immediately.
+    // The height is now clamped against BADGE_STRIP_Y, scaled per coat because
+    // the ear grows about its base.
     const ctx = new RecordingCtx();
     drawCompanion(
       ctx,
       new CatCompanion(CAT_COATS.find((c) => c.id === "cat-indie")!),
       state({ mood: "scrolling" }),
     );
-    expect(ctx.bounds().maxY).toBeCloseTo(169.24, 2);
-
-    // The same ear while cross must stay clear, which is what makes it harmless.
-    const cross = new RecordingCtx();
-    drawCompanion(
-      cross,
-      new CatCompanion(CAT_COATS.find((c) => c.id === "cat-indie")!),
-      state({ mood: "tantrum" }),
-    );
-    expect(cross.bounds().maxY).toBeLessThanOrEqual(166);
+    expect(ctx.bounds().maxY).toBeLessThanOrEqual(166);
   });
 
-  it("keeps every other coat clear of the badge strip in every mood", () => {
+  it("clamps height only, so the scrolling lean survives", () => {
+    // Reducing the lean instead would have been the lazy fix and would have
+    // made the scrolling pose indistinguishable from idle.
+    const indie = CAT_COATS.find((c) => c.id === "cat-indie")!;
+    const scrolling = new RecordingCtx();
+    drawCompanion(scrolling, new CatCompanion(indie), state({ mood: "scrolling" }));
+    const idle = new RecordingCtx();
+    drawCompanion(idle, new CatCompanion(indie), state({ mood: "idle" }));
+    expect(scrolling.signature()).not.toBe(idle.signature());
+  });
+
+  it("keeps every coat clear of the badge strip in every mood", () => {
     for (const coat of CAT_COATS) {
-      if (coat.id === "cat-indie") continue; // covered by the deviation test above
       for (const mood of ALL_MOODS) {
         const ctx = new RecordingCtx();
         drawCompanion(ctx, new CatCompanion(coat), state({ mood, phase: 1.3 }));

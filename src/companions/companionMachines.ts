@@ -71,8 +71,14 @@ export class DroidCompanion implements Companion {
       fillOval(ctx, rect(85 - r, 12 - 3, r * 2, 12), withAlpha(p.inner, a));
     });
     // Antenna with a blinking tip.
+    //
+    // Shortened from the reference, which ran the stalk to y=168 and put the
+    // 7pt tip at y 165..172 — inside the strip reserved for the tab badge, in
+    // every mood. The badge would have covered the blinking light exactly when
+    // the droid was trying to get your attention with it. The stalk keeps its
+    // lean; only its length changed.
     ctx.strokeStyle = css(p.furDark);
-    line(ctx, point(85, 150), point(92, 168), 2.4);
+    line(ctx, point(85, 150), point(90, 161), 2.4);
     const blink =
       s.mood === "tantrum"
         ? Math.sin(s.phase * 14) > 0
@@ -81,7 +87,7 @@ export class DroidCompanion implements Companion {
         : 0.55 + 0.45 * Math.sin(s.phase * 3);
     fillOval(
       ctx,
-      rect(89, 165, 7, 7),
+      rect(87, 158, 7, 7),
       withAlpha(s.mood === "tantrum" ? ALARM : p.inner, blink),
     );
   }
@@ -182,16 +188,21 @@ export class RobotCompanion implements Companion {
     const p = this.palette;
     const lean = s.mood === "sleeping" ? 14 : s.mood === "tantrum" ? -6 : 0;
     ctx.strokeStyle = css(p.furDark);
+    // Lowered from the reference, which put the tip bulb at y 166..174 at rest
+    // and 172..180 when cross — deepest into the reserved badge strip of any
+    // character, and worst in exactly the mood the badge appears in. The
+    // dimensions are unchanged; the whole assembly sits 14pt lower, which is
+    // what the cross pose (lean = -6, the tallest case) needs to clear 166.
     for (const dir of [-1, 1]) {
       line(
         ctx,
         point(85 + dir * 20, 148),
-        point(85 + dir * (28 + lean), 170 - lean),
+        point(85 + dir * (28 + lean), 156 - lean),
         2.6,
       );
       fillOval(
         ctx,
-        rect(85 + dir * (28 + lean) - 4, 166 - lean, 8, 8),
+        rect(85 + dir * (28 + lean) - 4, 152 - lean, 8, 8),
         s.mood === "tantrum" ? ALARM : p.inner,
       );
     }

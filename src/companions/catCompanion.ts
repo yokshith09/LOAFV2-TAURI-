@@ -8,7 +8,7 @@ import type {
   Rect,
   SceneState,
 } from "../core/types";
-import { point, rect } from "../core/types";
+import { BADGE_STRIP_Y, point, rect } from "../core/types";
 import { css, hex, withAlpha } from "../core/color";
 import { fillOval, fillRounded, line, onCurve, strokeLine } from "../core/draw";
 import type { CatCoat } from "./catBreeds";
@@ -304,6 +304,11 @@ export class CatCompanion implements Companion {
     const k = this.coat.earScale;
     const lean = s.mood === "tantrum" ? -6 : s.mood === "scrolling" ? 3 : 0;
 
+    // Highest raw y whose scaled result still clears the reserved badge strip.
+    // The ear is scaled about its base (y=124), so the ceiling depends on the
+    // coat's earScale: a bigger ear reaches the strip from a lower raw value.
+    const maxRawY = 124 + (BADGE_STRIP_Y - 124) / k;
+
     for (const flip of [false, true]) {
       // Scale the ear about its own base so a bigger ear grows upward rather
       // than detaching from the skull.
@@ -316,7 +321,11 @@ export class CatCompanion implements Companion {
       const outer0 = e(56, 124);
       const outerC1 = e(52, 140);
       const outerC2 = e(50, 152);
-      const outer1 = e(51 - lean * 0.6, 160 + lean);
+      // The scrolling pose leans the ears UP, which on the tallest coat (indie,
+      // earScale 1.16) pushed the tip to y=169.24 — inside the strip reserved
+      // for the tab badge. Clamping only the height keeps the lean's sideways
+      // gesture intact: the ear still tips forward, it just stops growing.
+      const outer1 = e(51 - lean * 0.6, Math.min(160 + lean, maxRawY));
       const outerC3 = e(60 - lean, 162 + lean);
       const outerC4 = e(74, 152);
       const outer2 = e(84, 138);

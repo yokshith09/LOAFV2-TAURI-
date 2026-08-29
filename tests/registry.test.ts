@@ -8,7 +8,12 @@ import {
   GROUP_NOTES,
 } from "../src/companions/registry";
 import { drawCompanion } from "../src/render/scene";
-import { ALL_MOODS, GROUND_Y, type SceneState } from "../src/core/types";
+import {
+  ALL_MOODS,
+  BADGE_STRIP_Y,
+  GROUND_Y,
+  type SceneState,
+} from "../src/core/types";
 
 const state = (over: Partial<SceneState> = {}): SceneState => ({
   mood: "idle",
@@ -143,7 +148,11 @@ describe("every companion honours the shared contract", () => {
     // applies to the ones standing on it.
     for (const c of COMPANIONS) {
       if (!c.castsShadow) continue;
-      if (c.id === "robot") continue; // documented below
+      // The robot's feet sit at y=12, one point under the plane, in the Swift
+      // original. Left alone: a single point of overlap with the floor reads as
+      // contact rather than as a mistake, and unlike the badge-strip cases
+      // nothing is competing for that space.
+      if (c.id === "robot") continue;
       for (const mood of ALL_MOODS) {
         const ctx = new RecordingCtx();
         drawCompanion(ctx, c, state({ mood, phase: 0.7 }));
@@ -154,76 +163,111 @@ describe("every companion honours the shared contract", () => {
     }
   });
 
-  it("clears the tab-badge strip while cross, when the badge is showing", () => {
+  it("clears the tab-badge strip — every companion, every mood", () => {
+    // No exemptions. All five overshoots inherited from the Swift reference
+    // have been fixed, so this is now a plain contract rather than a contract
+    // with a footnote.
     for (const c of COMPANIONS) {
-      // documented in "known deviations, pinned" below
-      if (c.id === "droid" || c.id === "robot" || c.id === "fairy") continue;
-      const ctx = new RecordingCtx();
-      drawCompanion(ctx, c, state({ mood: "tantrum", phase: 1.3 }));
-      expect(ctx.bounds().maxY, `${c.id} intruded on the badge strip`).toBeLessThanOrEqual(
-        166,
-      );
+      for (const mood of ALL_MOODS) {
+        for (const phase of [0, 0.7, 1.3, 2.9, 11.4]) {
+          const ctx = new RecordingCtx();
+          drawCompanion(ctx, c, state({ mood, phase }));
+          expect(
+            ctx.bounds().maxY,
+            `${c.id} / ${mood} / phase ${phase} intruded on the badge strip`,
+          ).toBeLessThanOrEqual(BADGE_STRIP_Y);
+        }
+      }
     }
   });
 });
 
 /**
- * Deviations from the design-space contract that exist in the Swift reference
- * and have been ported faithfully rather than silently corrected.
+ * Regression cover for the five badge-strip overshoots inherited from the Swift
+ * reference and since fixed.
  *
- * These are pinned to their exact current values, so the tests fail the moment
- * any of them drifts — the point is that they stay known, not that they stay
- * hidden.
+ * Each was fixed differently, according to what the shape was doing:
  *
- * Unlike the ear overshoots in the cat and dog engines, the two machine cases
- * below are ACTIVE rather than latent: they occur in every mood, including the
- * tantrum pose the badge actually appears in. They are cosmetic — the badge is
- * an overlay drawn after the character, so it covers what it overlaps — but
- * they are worth a human eye rather than an assumption.
+ * - The cat and dog ears are CLAMPED. Their overshoot came from the scrolling
+ *   pose leaning the ears upward, so capping the height preserves the lean's
+ *   sideways gesture — the ear still tips forward, it just stops growing.
+ * - The droid's antenna, the robot's aerials and the fairy's horns are
+ *   SHORTENED. Theirs were structural rather than pose-driven; a clamp would
+ *   have flattened the tip into a chord.
+ *
+ * These tests assert the fix from the direction the bug came from, so a future
+ * change to any of the underlying numbers is caught here specifically rather
+ * than only by the blanket contract test above.
  */
-describe("known deviations, pinned", () => {
-  it("robot: feet stand 1pt below the ground plane", () => {
-    // Swift: Draw.rounded(NSRect(x: 54, y: 12, ...)) for both feet.
+describe("badge-strip overshoots, fixed", () => {
+  it("cat: the tallest ears clear the strip while scrolling", () => {
+    // Was y=169.24 for cat-indie (earScale 1.16).
+    const ctx = new RecordingCtx();
+    drawCompanion(ctx, findCompanion("cat-indie"), state({ mood: "scrolling" }));
+    expect(ctx.bounds().maxY).toBeLessThanOrEqual(BADGE_STRIP_Y);
+  });
+
+  it("cat: clamping the height did not flatten the lean", () => {
+    // The point of clamping rather than reducing the lean: the scrolling pose
+    // must still look different from the idle one.
+    const scrolling = new RecordingCtx();
+    drawCompanion(scrolling, findCompanion("cat-indie"), state({ mood: "scrolling" }));
+    const idle = new RecordingCtx();
+    drawCompanion(idle, findCompanion("cat-indie"), state({ mood: "idle" }));
+    expect(scrolling.signature()).not.toBe(idle.signature());
+  });
+
+  it("dog: the husky's erect ears clear the strip while scrolling", () => {
+    // Was y=170.
+    const ctx = new RecordingCtx();
+    drawCompanion(ctx, findCompanion("dog-husky"), state({ mood: "scrolling" }));
+    expect(ctx.bounds().maxY).toBeLessThanOrEqual(BADGE_STRIP_Y);
+  });
+
+  it("droid: the antenna tip clears the strip in every mood", () => {
+    // Was y=172 always — the badge would have covered the blinking light in
+    // exactly the mood the droid uses it to get your attention.
+    for (const mood of ALL_MOODS) {
+      const ctx = new RecordingCtx();
+      drawCompanion(ctx, findCompanion("droid"), state({ mood }));
+      expect(ctx.bounds().maxY, mood).toBeLessThanOrEqual(BADGE_STRIP_Y);
+    }
+  });
+
+  it("robot: the aerials clear the strip in every mood, including cross", () => {
+    // Was y=174 at rest and y=180 when cross — the deepest intrusion of any
+    // character, and worst in the mood the badge appears in.
+    for (const mood of ALL_MOODS) {
+      const ctx = new RecordingCtx();
+      drawCompanion(ctx, findCompanion("robot"), state({ mood }));
+      expect(ctx.bounds().maxY, mood).toBeLessThanOrEqual(BADGE_STRIP_Y);
+    }
+  });
+
+  it("fairy: the demon horns clear the strip", () => {
+    // Was y=178, and uniquely bad because the horns exist ONLY in the tantrum
+    // pose — the same pose that summons the badge.
+    const ctx = new RecordingCtx();
+    drawCompanion(ctx, findCompanion("fairy"), state({ mood: "tantrum" }));
+    expect(ctx.bounds().maxY).toBeLessThanOrEqual(BADGE_STRIP_Y);
+  });
+
+  it("fairy: shortening the horns did not remove them", () => {
+    // Squashed toward the base, not truncated — she must still visibly grow
+    // horns when she turns.
+    const cross = new RecordingCtx();
+    drawCompanion(cross, findCompanion("fairy"), state({ mood: "tantrum" }));
+    const calm = new RecordingCtx();
+    drawCompanion(calm, findCompanion("fairy"), state({ mood: "idle" }));
+    expect(cross.bounds().maxY).toBeGreaterThan(calm.bounds().maxY);
+  });
+
+  it("robot: feet still rest a point under the plane, which is left alone", () => {
+    // Not a badge-strip case. A single point of overlap with the floor reads as
+    // contact, and nothing competes for that space.
     const ctx = new RecordingCtx();
     drawCompanion(ctx, findCompanion("robot"), state());
     expect(ctx.bounds().minY).toBeCloseTo(12, 2);
     expect(GROUND_Y).toBe(13);
-  });
-
-  it("robot: aerials reach into the badge strip, and further when asleep", () => {
-    // Swift: aerial tip oval at y = 166 - lean, +8 tall. lean is -6 when cross
-    // and +14 when asleep, so the cross pose reaches highest.
-    const cross = new RecordingCtx();
-    drawCompanion(cross, findCompanion("robot"), state({ mood: "tantrum" }));
-    expect(cross.bounds().maxY).toBeCloseTo(180, 2);
-  });
-
-  it("fairy: the demon horns rise into the badge strip — and only when cross", () => {
-    // The sharpest case of the three. The droid's antenna and the robot's
-    // aerials merely happen to be tall; the fairy's horns exist ONLY in the
-    // tantrum pose, which is precisely the pose the badge appears in. So this
-    // is not a coincidence of geometry — the transformation that signals "too
-    // many tabs" and the badge that counts them are drawn into the same space,
-    // every time, by construction.
-    //
-    // As a fairy she is well clear, so nothing is wrong until she turns.
-    const calm = new RecordingCtx();
-    drawCompanion(calm, findCompanion("fairy"), state({ mood: "idle" }));
-    expect(calm.bounds().maxY).toBeLessThanOrEqual(166);
-
-    // Swift: horn tip bezier ends at (85 +/- 27, 178).
-    const cross = new RecordingCtx();
-    drawCompanion(cross, findCompanion("fairy"), state({ mood: "tantrum" }));
-    expect(cross.bounds().maxY).toBeCloseTo(178, 2);
-  });
-
-  it("droid: the antenna tip sits inside the badge strip in every mood", () => {
-    // Swift: antenna line to (92, 168) with a 7pt blinking tip at y 165..172.
-    // Always present, so this one genuinely co-occurs with the badge.
-    for (const mood of ["idle", "tantrum", "sleeping"] as const) {
-      const ctx = new RecordingCtx();
-      drawCompanion(ctx, findCompanion("droid"), state({ mood }));
-      expect(ctx.bounds().maxY, mood).toBeCloseTo(172, 2);
-    }
   });
 });

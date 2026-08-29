@@ -207,28 +207,24 @@ describe("design-space contract", () => {
     }
   });
 
-  it("documents the husky's latent ear overshoot, matching the cat's", () => {
-    // SAME KNOWN DEVIATION AS cat-indie, inherited from the Swift reference —
-    // which makes it a pattern rather than a one-off: neither drawing engine
-    // bounds-checks the scrolling lean.
-    //
-    // Scrolling leans ears UP (dogs: lean = +4), tantrum leans them DOWN
-    // (lean = -7). The husky's erect ears sit at headEllipse.maxY + 18 + lean:
-    //     scrolling -> 148 + 18 + 4 = 170   (inside the badge strip)
-    //     tantrum   -> 148 + 18 - 7 = 159   (clear)
-    //
-    // Harmless today because a badge forces tantrum. Pinned so that if the
-    // lean, the ear geometry or the head box changes, it stops being harmless
-    // and we hear about it immediately.
-    expect(render("dog-husky", { mood: "scrolling" }).bounds().maxY).toBeCloseTo(170, 2);
+  it("clamps the husky's erect ears out of the badge strip", () => {
+    // Scrolling leans ears UP (dogs: lean = +4), tantrum leans them DOWN (-7).
+    // The husky's erect ears sit at headEllipse.maxY + 18 + lean, which used to
+    // put the scrolling tip at 148 + 18 + 4 = 170, inside the strip. Same fix
+    // as the cats: clamp the height, keep the lean.
     expect(
-      render("dog-husky", { mood: "tantrum" }).bounds().maxY,
+      render("dog-husky", { mood: "scrolling" }).bounds().maxY,
     ).toBeLessThanOrEqual(166);
   });
 
-  it("keeps every other breed clear of the badge strip in every mood", () => {
+  it("keeps the husky's scrolling pose distinct after clamping", () => {
+    expect(render("dog-husky", { mood: "scrolling" }).signature()).not.toBe(
+      render("dog-husky", { mood: "idle" }).signature(),
+    );
+  });
+
+  it("keeps every breed clear of the badge strip in every mood", () => {
     for (const b of DOG_BREEDS) {
-      if (b.id === "dog-husky") continue; // covered by the deviation test above
       for (const mood of ALL_MOODS) {
         const ctx = render(b.id, { mood, phase: 1.3 });
         expect(

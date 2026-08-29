@@ -8,7 +8,15 @@ import type {
   Rect,
   SceneState,
 } from "../core/types";
-import { point, rect, rectMaxX, rectMaxY, rectMidY, rectMinX } from "../core/types";
+import {
+  BADGE_STRIP_Y,
+  point,
+  rect,
+  rectMaxX,
+  rectMaxY,
+  rectMidY,
+  rectMinX,
+} from "../core/types";
 import { blend, css, rgba, withAlpha, BLACK, WHITE } from "../core/color";
 import { fillOval, fillRounded, line } from "../core/draw";
 import type { DogBreed } from "./dogBreeds";
@@ -472,6 +480,11 @@ export class DogCompanion implements Companion {
           break;
         }
         case "erect": {
+          // Same clamp as the cats, for the same reason: the scrolling pose
+          // leans ears UP (+4 for dogs), which pushed the husky's tip to y=170,
+          // inside the reserved badge strip. The lean's sideways gesture is
+          // kept; only the height is capped.
+          const tipY = Math.min(rectMaxY(head) + 18 + lean, BADGE_STRIP_Y);
           ctx.fillStyle = css(p.furDark);
           ctx.beginPath();
           ctx.moveTo(x(rectMinX(head) + 12), rectMaxY(head) - 16);
@@ -481,11 +494,11 @@ export class DogCompanion implements Companion {
             x(rectMinX(head) + 6),
             rectMaxY(head) + 10,
             x(rectMinX(head) + 8 - lean * 0.5),
-            rectMaxY(head) + 18 + lean,
+            tipY,
           );
           ctx.bezierCurveTo(
             x(rectMinX(head) + 18 - lean),
-            rectMaxY(head) + 20 + lean,
+            Math.min(rectMaxY(head) + 20 + lean, BADGE_STRIP_Y),
             x(rectMinX(head) + 30),
             rectMaxY(head) + 4,
             x(rectMinX(head) + 36),
@@ -503,7 +516,7 @@ export class DogCompanion implements Companion {
             x(rectMinX(head) + 11),
             rectMaxY(head) + 5,
             x(rectMinX(head) + 13 - lean * 0.4),
-            rectMaxY(head) + 11 + lean * 0.8,
+            Math.min(rectMaxY(head) + 11 + lean * 0.8, BADGE_STRIP_Y),
           );
           ctx.bezierCurveTo(
             x(rectMinX(head) + 19 - lean),
