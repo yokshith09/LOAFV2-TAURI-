@@ -75,7 +75,12 @@ jobs:
 
   bundle:
     name: Bundle (${{ matrix.os }})
-    needs: [frontend, rust]
+    # Deliberately does NOT depend on the `rust` job. That job runs
+    # `clippy -D warnings`, and a single pedantic lint would otherwise block the
+    # installers — including the macOS build that testers are waiting on. This
+    # job compiles the Rust itself, so genuine compile errors still surface here;
+    # only style findings are decoupled.
+    needs: [frontend]
     strategy:
       fail-fast: false
       matrix:
