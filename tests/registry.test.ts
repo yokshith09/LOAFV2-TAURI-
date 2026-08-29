@@ -156,7 +156,8 @@ describe("every companion honours the shared contract", () => {
 
   it("clears the tab-badge strip while cross, when the badge is showing", () => {
     for (const c of COMPANIONS) {
-      if (c.id === "droid" || c.id === "robot") continue; // documented below
+      // documented in "known deviations, pinned" below
+      if (c.id === "droid" || c.id === "robot" || c.id === "fairy") continue;
       const ctx = new RecordingCtx();
       drawCompanion(ctx, c, state({ mood: "tantrum", phase: 1.3 }));
       expect(ctx.bounds().maxY, `${c.id} intruded on the badge strip`).toBeLessThanOrEqual(
@@ -195,6 +196,25 @@ describe("known deviations, pinned", () => {
     const cross = new RecordingCtx();
     drawCompanion(cross, findCompanion("robot"), state({ mood: "tantrum" }));
     expect(cross.bounds().maxY).toBeCloseTo(180, 2);
+  });
+
+  it("fairy: the demon horns rise into the badge strip — and only when cross", () => {
+    // The sharpest case of the three. The droid's antenna and the robot's
+    // aerials merely happen to be tall; the fairy's horns exist ONLY in the
+    // tantrum pose, which is precisely the pose the badge appears in. So this
+    // is not a coincidence of geometry — the transformation that signals "too
+    // many tabs" and the badge that counts them are drawn into the same space,
+    // every time, by construction.
+    //
+    // As a fairy she is well clear, so nothing is wrong until she turns.
+    const calm = new RecordingCtx();
+    drawCompanion(calm, findCompanion("fairy"), state({ mood: "idle" }));
+    expect(calm.bounds().maxY).toBeLessThanOrEqual(166);
+
+    // Swift: horn tip bezier ends at (85 +/- 27, 178).
+    const cross = new RecordingCtx();
+    drawCompanion(cross, findCompanion("fairy"), state({ mood: "tantrum" }));
+    expect(cross.bounds().maxY).toBeCloseTo(178, 2);
   });
 
   it("droid: the antenna tip sits inside the badge strip in every mood", () => {

@@ -11,6 +11,8 @@ import {
   PlaneCompanion,
   RobotCompanion,
 } from "./companionMachines";
+import { ShibaCompanion } from "./companionShiba";
+import { FairyCompanion } from "./companionFairy";
 
 /**
  * The closet's stock. Order here is the order they appear in the picker.
@@ -26,9 +28,11 @@ import {
 export const COMPANIONS: readonly Companion[] = [
   ...CAT_COATS.map((c) => new CatCompanion(c)),
   ...DOG_BREEDS.map((b) => new DogCompanion(b)),
+  new ShibaCompanion(),
   new DroidCompanion(),
   new RobotCompanion(),
   new PlaneCompanion(),
+  new FairyCompanion(),
   new GhostCompanion(),
   new CapybaraCompanion(),
   new DuckCompanion(),
