@@ -28,6 +28,23 @@ export function rgba(r: number, g: number, b: number, a = 1): Color {
   return { r, g, b, a };
 }
 
+/**
+ * `NSColor.blended(withFraction:of:)` equivalent: mix `fraction` of `other`
+ * into `base`. The dog breeds lean on this for ear leather, which sits partway
+ * between the coat and its shadow rather than being a colour of its own.
+ */
+export function blend(base: Color, fraction: number, other: Color): Color {
+  const f = Math.max(0, Math.min(1, fraction));
+  return {
+    r: base.r * (1 - f) + other.r * f,
+    g: base.g * (1 - f) + other.g * f,
+    b: base.b * (1 - f) + other.b * f,
+    a: base.a,
+  };
+}
+
+export const BLACK: Color = rgba(0, 0, 0, 1);
+
 /** Render a Color as a CSS string for canvas fill/stroke. */
 export function css(c: Color): string {
   // Round channels so the output is stable and diffable in tests.

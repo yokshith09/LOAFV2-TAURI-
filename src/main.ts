@@ -10,8 +10,7 @@
  * yet — the point of a spike is to be thrown away if the architecture fails.
  */
 
-import { CatCompanion } from "./companions/catCompanion";
-import { CAT_COATS } from "./companions/catBreeds";
+import { COMPANIONS } from "./companions/registry";
 import { renderScene } from "./render/scene";
 import { ALL_MOODS, type Mood, type SceneState } from "./core/types";
 
@@ -22,9 +21,9 @@ if (!canvas) throw new Error("missing #stage canvas");
 const ctx = canvas.getContext("2d");
 if (!ctx) throw new Error("2d context unavailable — webview is too old");
 
-let coatIndex = 0;
+let characterIndex = 0;
 let moodIndex = 0;
-let companion = new CatCompanion(CAT_COATS[coatIndex]!);
+let companion = COMPANIONS[characterIndex]!;
 
 /** Blink on a human-ish rhythm rather than a metronome. */
 let nextBlinkAt = 2000;
@@ -79,12 +78,12 @@ function frame(nowMs: number): void {
   requestAnimationFrame(frame);
 }
 
-/** Phase 0 affordance: click cycles mood, shift-click cycles coat. */
+/** Phase 0 affordance: click cycles mood, shift-click cycles character. */
 function wireSpikeControls(): void {
   window.addEventListener("click", (e) => {
     if (e.shiftKey) {
-      coatIndex = (coatIndex + 1) % CAT_COATS.length;
-      companion = new CatCompanion(CAT_COATS[coatIndex]!);
+      characterIndex = (characterIndex + 1) % COMPANIONS.length;
+      companion = COMPANIONS[characterIndex]!;
     } else {
       moodIndex = (moodIndex + 1) % ALL_MOODS.length;
     }
