@@ -16,6 +16,7 @@ use super::normalize::{display_name, idle_seconds_from_ticks};
 use super::{ForegroundApp, PlatformProbe, ProbeError};
 
 use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
+use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -92,8 +93,7 @@ impl PlatformProbe for WindowsProbe {
                 dwTime: 0,
             };
             if GetLastInputInfo(&mut info).as_bool() {
-                let now = windows::Win32::System::SystemInformation::GetTickCount();
-                Ok(Some(idle_seconds_from_ticks(now, info.dwTime)))
+                Ok(Some(idle_seconds_from_ticks(GetTickCount(), info.dwTime)))
             } else {
                 Err(ProbeError::Platform("GetLastInputInfo failed".into()))
             }

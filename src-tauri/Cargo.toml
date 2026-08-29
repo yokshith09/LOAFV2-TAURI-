@@ -29,6 +29,8 @@ features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_Threading",
   "Win32_System_ProcessStatus",
+  # GetTickCount, for the idle-time delta.
+  "Win32_System_SystemInformation",
 ]
 
 [features]
