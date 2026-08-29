@@ -118,6 +118,9 @@ export class RecordingCtx implements Ctx2D {
   stroke(): void {
     this.record("stroke");
   }
+  clip(): void {
+    this.record("clip");
+  }
   translate(x: number, y: number): void {
     this.record("translate", x, y);
   }

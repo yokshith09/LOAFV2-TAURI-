@@ -3,6 +3,7 @@ import { CatCompanion } from "./catCompanion";
 import { CAT_COATS } from "./catBreeds";
 import { DogCompanion } from "./dogCompanion";
 import { DOG_BREEDS } from "./dogBreeds";
+import { GhostCompanion } from "./companionGhost";
 
 /**
  * The closet's stock. Order here is the order they appear in the picker.
@@ -18,6 +19,7 @@ import { DOG_BREEDS } from "./dogBreeds";
 export const COMPANIONS: readonly Companion[] = [
   ...CAT_COATS.map((c) => new CatCompanion(c)),
   ...DOG_BREEDS.map((b) => new DogCompanion(b)),
+  new GhostCompanion(),
 ];
 
 export const DEFAULT_COMPANION_ID = "cat-ginger";

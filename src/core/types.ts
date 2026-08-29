@@ -160,6 +160,13 @@ export interface Ctx2D {
   ): void;
   fill(): void;
   stroke(): void;
+  /**
+   * Confine subsequent drawing to the current path. Only the ghost uses it, to
+   * shade one side of its sheet without adding a second colour to the
+   * silhouette — the `NSGraphicsContext.saveGraphicsState` + `addClip` pair in
+   * the Swift. Always pair with save/restore.
+   */
+  clip(): void;
   translate(x: number, y: number): void;
   scale(x: number, y: number): void;
   clearRect(x: number, y: number, w: number, h: number): void;
