@@ -1,0 +1,86 @@
+name: Release
+
+# Produces PUBLIC, non-expiring download links for macOS and Windows.
+#
+# CI artefacts are the wrong tool for sharing with testers: they expire after a
+# fortnight and can only be downloaded by people with repo access. A Release on
+# a public repo gives a plain URL anyone can click.
+#
+# Nothing publishes until you push a version tag:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# The release is created as a DRAFT so you can look at it before anyone else
+# can. Publish it from the Releases page when you are ready.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS
+            # Build a universal binary so one download serves both Apple
+            # Silicon and Intel Macs — testers should not have to know which
+            # they have. Matches what the Swift reference shipped.
+            args: --target universal-apple-darwin
+          - os: windows-latest
+            label: Windows
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # NOTE: unsigned and un-notarised. macOS testers must right-click -> Open
+      # the first time, and Windows shows a SmartScreen warning. Signing is
+      # Phase 4 — it needs a paid Apple Developer ID and a Windows cert.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          releaseName: "Loaf ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
+          releaseBody: |
+            Phase 0 spike build — the companion renders, but tracking, the
+            privacy radar, the focus timer and the closet are not built yet.
+
+            **macOS:** the app is unsigned, so Gatekeeper will block a
+            double-click. Right-click the app -> **Open** -> **Open**. If it
+            still refuses:
+
+            ```
+            xattr -dr com.apple.quarantine /Applications/Loaf.app
+            ```
+
+            **Windows:** SmartScreen will warn. More info -> Run anyway.
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}
