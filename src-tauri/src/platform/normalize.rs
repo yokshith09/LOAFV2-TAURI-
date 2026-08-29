@@ -45,9 +45,9 @@ fn strip_known_extension(name: &str) -> &str {
 
 /// Tidy an executable stem into something presentable.
 ///
-/// Kept conservative on purpose: we title-case only all-lowercase single words,
-/// because real app names carry deliberate casing ("iTerm", "VLC", "IntelliJ
-/// IDEA") that must survive untouched.
+/// Kept conservative on purpose: we only add capitalisation to names that carry
+/// none of their own. Real app names encode deliberate casing ("iTerm", "VLC",
+/// "IntelliJ IDEA") and must survive untouched.
 fn prettify(stem: &str) -> String {
     let cleaned: String = stem
         .chars()
@@ -55,22 +55,28 @@ fn prettify(stem: &str) -> String {
         .collect();
     let cleaned = cleaned.trim();
 
-    if cleaned.is_empty() {
+    if cleaned.is_empty() || is_drive_root(cleaned) {
         return String::new();
     }
 
-    let is_all_lower_single_word =
-        !cleaned.contains(' ') && cleaned.chars().all(|c| !c.is_uppercase());
-
-    if is_all_lower_single_word {
-        let mut chars = cleaned.chars();
-        match chars.next() {
-            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-            None => String::new(),
-        }
-    } else {
-        cleaned.to_string()
+    // Decide on the presence of uppercase ANYWHERE, not on word count. Testing
+    // for a single word here was a bug: `my_editor` becomes `my editor` above,
+    // which then stopped looking like one word and never got capitalised.
+    if cleaned.chars().any(char::is_uppercase) {
+        return cleaned.to_string();
     }
+
+    let mut chars = cleaned.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// `C:` and friends. A drive root is a path that lost its file, not an app name.
+fn is_drive_root(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
 /// Windows reports idle in milliseconds since boot via a wrapping 32-bit tick

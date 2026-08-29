@@ -7,6 +7,11 @@ dist/
 src-tauri/target/
 src-tauri/gen/schemas/
 
+# Machine-local cargo config. On this Windows box it redirects target-dir off
+# the E: drive to work around Smart App Control; that path is specific to one
+# machine and must not be forced on anyone else. See README.
+src-tauri/.cargo/config.toml
+
 # The generated icon source. `node scripts/make-icon-source.mjs` recreates it;
 # the expanded icons under src-tauri/icons/ ARE committed, because the Tauri
 # build needs them and regenerating requires the CLI.
