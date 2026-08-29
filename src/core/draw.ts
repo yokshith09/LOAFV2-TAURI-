@@ -60,6 +60,67 @@ export function fillRounded(ctx: Ctx2D, r: Rect, radius: number, fill: Color): v
   ctx.fill();
 }
 
+/**
+ * `NSBezierPath.appendArc(withCenter:radius:startAngle:endAngle:)`.
+ *
+ * AppKit takes DEGREES and sweeps in the direction of increasing angle, which
+ * in a y-up space reads as counter-clockwise. Our context is flipped to y-up,
+ * so sweeping from `startDeg` to `endDeg` with the canvas default direction
+ * produces the same arc — only the units differ. Like AppKit, this joins the
+ * current point to the arc's start with a line rather than beginning a new
+ * subpath, which is what lets `block()` chain four corners into one outline.
+ */
+export function arcDeg(
+  ctx: Ctx2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  startDeg: number,
+  endDeg: number,
+): void {
+  const rad = (d: number): number => (d * Math.PI) / 180;
+  ctx.ellipse(cx, cy, radius, radius, 0, rad(startDeg), rad(endDeg), false);
+}
+
+/**
+ * A box with independent top and bottom corner radii.
+ *
+ * `roundedRectPath` can only be uniformly soft. The capybara's snout and rump
+ * both want a soft top over a squarer base — the flat-bottomed snout is what
+ * makes that face blunt rather than merely wide.
+ */
+export function blockPath(
+  ctx: Ctx2D,
+  r: Rect,
+  top: number,
+  bottom: number,
+): void {
+  const minX = r.x;
+  const maxX = r.x + r.width;
+  const minY = r.y;
+  const maxY = r.y + r.height;
+
+  ctx.beginPath();
+  ctx.moveTo(minX, minY + bottom);
+  arcDeg(ctx, minX + bottom, minY + bottom, bottom, 180, 270);
+  arcDeg(ctx, maxX - bottom, minY + bottom, bottom, 270, 360);
+  arcDeg(ctx, maxX - top, maxY - top, top, 0, 90);
+  arcDeg(ctx, minX + top, maxY - top, top, 90, 180);
+  ctx.closePath();
+}
+
+export function fillBlock(
+  ctx: Ctx2D,
+  r: Rect,
+  top: number,
+  bottom: number,
+  fill: Color,
+): void {
+  ctx.fillStyle = css(fill);
+  blockPath(ctx, r, top, bottom);
+  ctx.fill();
+}
+
 /** A round-capped straight stroke. Mirrors `Draw.line`. */
 export function line(ctx: Ctx2D, a: Point, b: Point, width: number): void {
   ctx.beginPath();
