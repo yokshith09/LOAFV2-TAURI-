@@ -69,18 +69,61 @@ jobs:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           releaseName: "Loaf ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
           releaseBody: |
-            Phase 0 spike build — the companion renders, but tracking, the
-            privacy radar, the focus timer and the closet are not built yet.
+            Early test build. A small cat sits on your desktop.
 
-            **macOS:** the app is unsigned, so Gatekeeper will block a
-            double-click. Right-click the app -> **Open** -> **Open**. If it
-            still refuses:
+            ---
+
+            ## ⚠️ macOS — DO NOT DOUBLE-CLICK IT
+
+            This app is **not signed by Apple yet**. If you double-click it,
+            macOS says *"Loaf cannot be opened because the developer cannot be
+            verified"* and only offers you **Cancel**. The app is fine — macOS
+            just cannot confirm who built it.
+
+            **Download `Loaf_0.1.0_universal.dmg`** (works on both Apple Silicon
+            and Intel), open it, drag **Loaf** into **Applications**, then:
+
+            **On macOS 14 (Sonoma) and earlier**
+            1. Open your **Applications** folder
+            2. **Right-click** Loaf → **Open**
+            3. Click **Open** in the dialog that appears
+            4. Only needed the first time
+
+            **On macOS 15 (Sequoia) and later** — right-click → Open was removed
+            by Apple, so it must be done from Settings:
+            1. Double-click Loaf once. It gets blocked. This is expected.
+            2. Open **System Settings** → **Privacy & Security**
+            3. Scroll down. There is a line saying *"Loaf was blocked"* with an
+               **Open Anyway** button. Click it.
+            4. Confirm with Touch ID or your password
+            5. Only needed the first time
+
+            **If it still refuses**, run this in Terminal and try again:
 
             ```
             xattr -dr com.apple.quarantine /Applications/Loaf.app
             ```
 
-            **Windows:** SmartScreen will warn. More info -> Run anyway.
+            ---
+
+            ## Windows
+
+            Download `Loaf_0.1.0_x64-setup.exe`. SmartScreen will warn because
+            the build is unsigned — click **More info** → **Run anyway**.
+
+            ---
+
+            ## Using it
+
+            There is no window and no Dock icon. The cat appears in the
+            bottom-right of your screen. **Click** it to cycle through its seven
+            expressions, **shift-click** to change which cat.
+
+            ## What is NOT in this build
+
+            This is an early spike to check the app works at all. Time tracking,
+            the privacy radar, the focus timer and the character closet are all
+            still to come.
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
