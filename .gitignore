@@ -1,0 +1,24 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Rust / Tauri build products — all reproducible from source.
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# The generated icon source. `node scripts/make-icon-source.mjs` recreates it;
+# the expanded icons under src-tauri/icons/ ARE committed, because the Tauri
+# build needs them and regenerating requires the CLI.
+src-tauri/icon-source.png
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local agent config
+.claude/

@@ -1,0 +1,17 @@
+# This repo is developed on Windows and macOS at once. Normalise to LF in the
+# repository so the two platforms stop fighting over every line of every file.
+* text=auto eol=lf
+
+# Shell scripts must keep LF even when checked out on Windows, or they will not
+# run on the macOS CI runner.
+*.sh text eol=lf
+
+# Binary assets: never touch these.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.woff binary
+*.woff2 binary

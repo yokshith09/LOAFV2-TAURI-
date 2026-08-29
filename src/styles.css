@@ -1,0 +1,52 @@
+/*
+ * The window is transparent and undecorated: nothing here may paint a
+ * background, or the companion arrives sitting on a grey rectangle.
+ */
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  /* A desktop pet is not a document. No text selection, no drag ghosting,
+     no context menu artefacts — the same discipline WebChrome.swift applies
+     to the reference's five web views. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The whole window is the drag handle; Tauri reads this attribute's CSS
+     counterpart via the drag region API, and it keeps the cat grabbable. */
+  -webkit-app-region: drag;
+}
+
+/* Phase 0 diagnostics only. */
+#probe {
+  position: fixed;
+  inset: auto 4px 4px 4px;
+  font: 10px/1.35 ui-monospace, "JetBrains Mono", Consolas, monospace;
+  color: #fff;
+  background: rgba(20, 18, 14, 0.82);
+  border-radius: 4px;
+  padding: 4px 6px;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Honoured by the render loop, which drops to a static frame. */
+  :root {
+    --reduced-motion: 1;
+  }
+}
