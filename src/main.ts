@@ -19,6 +19,7 @@ import { drawBall, drawSwipe } from "./behaviour/furBall";
 import { resolveLicence, licenceInputs } from "./behaviour/licence";
 import { loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/habits";
 import { resolveMood } from "./behaviour/mood";
+import { ScrollEnergy } from "./behaviour/scroll";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
 import { FocusTimer } from "./focus/timer";
@@ -688,6 +689,18 @@ let moodOverride: Mood | null = null;
  * tantrum, which is the only thing in the app that earns it.
  */
 let proudUntil = 0;
+
+/**
+ * The scrolling pose's trigger.
+ *
+ * Polled rather than pushed: the platform reports only how long since the wheel
+ * last moved, which is all it is allowed to know. Five times a second is enough
+ * for a pose that takes about four tenths of a second to strike, and it is a
+ * cheap in-process call on both platforms.
+ */
+const scrollEnergy = new ScrollEnergy();
+let secondsSinceScroll: number | null = null;
+const SCROLL_POLL_MS = 200;
 const PROUD_SECONDS = 6;
 
 function currentMood(): Mood {
@@ -695,6 +708,7 @@ function currentMood(): Mood {
     hovering,
     tabAlert: radar?.tabAlert != null,
     proud: Date.now() < proudUntil,
+    scrolling: scrollEnergy.isScrolling,
     override: moodOverride,
     sleeping,
     debug: debugMood,
@@ -767,6 +781,7 @@ function tickAmbient(nowMs: number, mood: Mood): void {
 
   focus.poll();
   pollFocusState();
+  scrollEnergy.tick(secondsSinceScroll, dt);
   const licence = resolveLicence(
     licenceInputs({
       // `mood` reports happy while you are petting him even mid-tantrum — a
@@ -1240,4 +1255,9 @@ void loadHistory()
 // Five seconds, matching the reference: the interval IS the unit of time
 // credited, so changing it changes what a recorded second means.
 setInterval(() => void pollPlatform(), TICK_INTERVAL * 1000);
+setInterval(() => {
+  void invokeSafe<number | null>("seconds_since_scroll").then((s) => {
+    secondsSinceScroll = s;
+  });
+}, SCROLL_POLL_MS);
 requestAnimationFrame(frame);

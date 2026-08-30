@@ -15,8 +15,7 @@ import type { Mood } from "../core/types";
  *   2. tabAlert  -> tantrum    too many tabs open, per the privacy radar
  *   3. proud                   you closed enough tabs to end a tantrum
  *   4. override                the break nudge, and whatever speaks next
- *   5. scrolling               NOT YET — needs a global scroll monitor, which is
- *                              a permission on macOS and a hook on Windows
+ *   5. scrolling               the wheel has been moving
  *   6. sleeping                away from the keyboard past the idle threshold
  *   7. idle
  */
@@ -34,6 +33,8 @@ export interface MoodInputs {
   readonly proud: boolean;
   /** Forced while something is being said. */
   readonly override: Mood | null;
+  /** Enough recent wheel movement to strike the pose. See behaviour/scroll.ts. */
+  readonly scrolling: boolean;
   /** The tracker reported an idle tick. */
   readonly sleeping: boolean;
   /** The alt-click development cycle. Below every real signal. */
@@ -45,6 +46,7 @@ export function resolveMood(inputs: MoodInputs): Mood {
   if (inputs.tabAlert) return "tantrum";
   if (inputs.proud) return "proud";
   if (inputs.override !== null) return inputs.override;
+  if (inputs.scrolling) return "scrolling";
   if (inputs.sleeping) return "sleeping";
   return inputs.debug ?? "idle";
 }

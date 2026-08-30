@@ -49,10 +49,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Sounds | ✅ four occasions, synthesised placeholders, your own files win |
 | Onboarding | ✅ the radar's consent screen, honest per platform |
 | Sprite packs | ✅ hand-drawn characters load from a folder, beside the shipped 18 |
-| Moods | ✅ 6 of 7 rungs live — `scrolling` needs a decision, see below |
-| Next | **parity reached** except the scrolling mood |
+| Moods | ✅ all 7 rungs live |
+| Next | **parity reached.** Nothing from the reference is unported |
 
-Tests: **609 frontend** (Vitest) + **55 Rust**. CI green on macOS and Windows.
+Tests: **621 frontend** (Vitest) + **55 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -136,6 +136,7 @@ src/                     Frontend (TypeScript, no framework)
   bubble/render.ts       The speech bubble's card and tail
   bubble/prompts.ts      What it says, and when it stays quiet
   behaviour/habits.ts    The four habits a user can switch, and remembering them
+  behaviour/scroll.ts    The scrolling pose's rise-and-decay trigger
   sound/voice.ts         What Loaf sounds like — placeholders, and when to be quiet
   onboarding/view.ts     The radar's consent screen, and the deal it states
   sprites/manifest.ts    character.json, validated — the gate a pack must pass
@@ -149,6 +150,7 @@ src-tauri/
   src/browser_windows.rs UI Automation on Windows, and what that costs
   src/sounds.rs          The user's own sound files, and the folder README
   src/packs.rs           Hand-drawn characters, read off disk
+  src/scroll.rs          Seconds since the wheel moved — and what it deliberately is not
   capabilities/          What the two windows may ask the Tauri core for
 tests/                   Vitest suites
   registry.test.ts       Contract tests every companion must satisfy
@@ -231,13 +233,15 @@ skipped entirely while the address bar has focus (a half-typed search query is
 not a domain), and the truncation happens in Rust before the value can reach the
 frontend, storage or a log.
 
-**The `scrolling` mood is not wired, on purpose.** The reference detects it with
-a global scroll monitor. Reproducing that means an input hook on Windows
-(`WH_MOUSE_LL` or a Raw Input sink) and either an Input Monitoring permission or
-a new Core Graphics dependency on macOS — a system-wide input hook, installed by
-an app whose entire pitch is that it does not watch what you do, to power a
-cosmetic animation. The trade is not worth it. Every other rung of the mood
-ladder is live.
+**The `scrolling` mood asks one question and no more.** The reference gets it
+from a global scroll monitor. Here neither platform installs a hook: macOS calls
+`CGEventSourceSecondsSinceLastEventType`, the permission-free API the reference
+itself falls back to and the same family the tracker uses for idle time; Windows
+listens for Raw Input on a message-only window, which *receives copies* of
+events rather than sitting in their delivery path the way `WH_MOUSE_LL` would.
+Only the wheel flag is read — the movement deltas that arrive in the same struct
+are ignored — and all either platform can answer is "how long since the wheel
+moved". See `src-tauri/src/scroll.rs`.
 
 **No sample data anywhere.** The reference fills days it never recorded with a
 seeded 1.5–4.5h bar (hatched, captioned "sample") and falls back to an invented

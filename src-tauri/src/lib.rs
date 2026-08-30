@@ -21,6 +21,7 @@ pub mod browser;
 pub mod browser_windows;
 pub mod packs;
 pub mod platform;
+pub mod scroll;
 pub mod sounds;
 pub mod storage;
 
@@ -93,6 +94,15 @@ fn browser_probe_supported() -> RadarSupport {
         supported: browser::supported(),
         reads_inside_browser: browser::reads_inside_the_browser(),
     }
+}
+
+/// Seconds since the wheel last moved, or null where that cannot be known.
+///
+/// The pose it drives is cosmetic, so a platform with no answer simply never
+/// strikes it — see `scroll.rs` for what this is deliberately not.
+#[tauri::command]
+fn seconds_since_scroll() -> Option<f64> {
+    scroll::seconds_since_scroll()
 }
 
 #[tauri::command]
@@ -776,6 +786,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            // Windows needs a listener running; macOS polls and this is a no-op.
+            scroll::start();
+
             build_tray(app.handle())?;
             build_bubble_window(app.handle())?;
 
@@ -787,6 +800,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             foreground_app,
             idle_seconds,
+            seconds_since_scroll,
             platform_name,
             start_drag,
             read_stats,

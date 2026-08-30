@@ -40,6 +40,9 @@ features = [
   "Win32_System_SystemInformation",
   # The privacy radar reads the address bar through UI Automation.
   "Win32_UI_Accessibility",
+  # The scrolling pose listens for Raw Input on a message-only window.
+  "Win32_UI_Input",
+  "Win32_System_LibraryLoader",
   "Win32_System_Com",
   "Win32_System_Variant",
 ]

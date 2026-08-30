@@ -334,6 +334,7 @@ describe("the mood ladder", () => {
       tabAlert: false,
       proud: false,
       override: null,
+      scrolling: false,
       sleeping: false,
       debug: null,
       ...over,
@@ -368,6 +369,16 @@ describe("the mood ladder", () => {
     // A nudge that arrived just as you stepped away must still show the worried
     // face rather than a sleeping one.
     expect(ladder({ override: "worried", sleeping: true })).toBe("worried");
+  });
+
+  it("shows the scrolling pose over being asleep", () => {
+    // Scrolling IS input, so the two should never both be true — but if a stale
+    // idle tick overlaps a fresh scroll, the one that just happened wins.
+    expect(ladder({ scrolling: true, sleeping: true })).toBe("scrolling");
+  });
+
+  it("lets a spoken line outrank the scrolling pose", () => {
+    expect(ladder({ scrolling: true, override: "worried" })).toBe("worried");
   });
 
   it("sleeps when the tracker says you are away", () => {
