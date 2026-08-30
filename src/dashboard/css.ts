@@ -170,6 +170,13 @@ export const PLUS_CSS = `
   .support-btn.star:hover { background:var(--site); color:#fff; border-color:var(--site); }
   .support-fine { font-size:10px; line-height:1.45; color:var(--ink-soft); margin:9px 0 0; }
 
+  /* Quiet, but present. The point is that someone reporting a bug can read it
+     back to you without being asked where to look. */
+  .version {
+    font-size:10px; color:var(--ink-soft); margin:6px 0 0;
+    font-variant-numeric:tabular-nums; letter-spacing:.02em;
+  }
+
   /* Reset and Forget are the only two controls here that destroy something.
      They were a whisper of grey underline while every harmless control was
      louder, which is the wrong way round — a button that deletes your history

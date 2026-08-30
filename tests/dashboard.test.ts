@@ -575,3 +575,24 @@ describe("the tab tantrum threshold", () => {
     expect(isCommand("radar:off")).toBe(true);
   });
 });
+
+describe("the version line", () => {
+  it("shows the running build when it is known", () => {
+    const html = dashboardHTML(new Tracker({ json: null }), { version: "0.2.0" });
+    expect(html).toContain("Loaf 0.2.0");
+  });
+
+  // Omitted rather than guessed: the hover card and the tests have no binary to
+  // ask, and a footer reading "unknown" is worse than no footer line at all.
+  it("says nothing when it is not", () => {
+    const html = dashboardHTML(new Tracker({ json: null }), {});
+    expect(html).not.toContain('class="version"');
+  });
+
+  it("escapes it, like every other value that reaches the page", () => {
+    const html = dashboardHTML(new Tracker({ json: null }), {
+      version: '0.2.0"><script>x</script>',
+    });
+    expect(html).not.toContain("<script>x</script>");
+  });
+});

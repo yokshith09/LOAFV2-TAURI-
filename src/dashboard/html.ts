@@ -102,6 +102,15 @@ export interface DashboardOptions {
    * clock, so the caption and the chart under it can never disagree.
    */
   readonly now?: Date;
+  /**
+   * The running build, e.g. "0.2.0".
+   *
+   * Optional, and omitted rather than guessed: this window renders in tests and
+   * in the hover card, neither of which has a binary to ask. A dashboard that
+   * printed "unknown" would put a wrong-looking version in a screenshot, which
+   * is the one thing a version line exists to prevent.
+   */
+  readonly version?: string;
 }
 
 // --- Escaping ----------------------------------------------------------------
@@ -609,6 +618,7 @@ export function dashboardBody(
 
     <div class="footer">
       <p>Lives only on this computer.<br>No account, no network, no upload.</p>
+      ${opts.version ? `<p class="version">Loaf ${escapeHTML(opts.version)}</p>` : ""}
       <div class="footer-actions">
         ${cmdButton("danger", "reset", "Reset today")}
         ${cmdButton("danger", "sites:forget", "Forget site data")}

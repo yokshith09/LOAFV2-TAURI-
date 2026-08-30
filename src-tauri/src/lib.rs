@@ -790,6 +790,17 @@ fn open_feedback() -> Result<(), String> {
     Ok(())
 }
 
+/// The running build's version.
+///
+/// Read from the binary's own package info rather than passed in from the
+/// frontend, so it cannot drift: a version the JS believes and a version the
+/// user is actually running are the same number here by construction. A bug
+/// report naming the wrong build is worse than one naming none.
+#[tauri::command]
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 /// Open the closet without going through the tray.
 ///
 /// The tray stays the product's entry point, but it cannot be the only one. An
@@ -991,6 +1002,7 @@ pub fn run() {
             platform_name,
             start_drag,
             close_dashboard,
+            app_version,
             open_star,
             open_feedback,
             open_closet,

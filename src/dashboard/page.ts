@@ -39,6 +39,15 @@ async function detectPlatform(): Promise<Platform> {
 let platform: Platform = "other";
 
 /**
+ * The running build, asked for once.
+ *
+ * Empty until the binary answers, and the footer simply omits the line until
+ * then — a version that appears a beat late is invisible; a wrong one ends up
+ * in a bug report.
+ */
+let version = "";
+
+/**
  * What the companion last said about the radar.
  *
  * Unavailable until it answers, which is also the truthful state if it never
@@ -64,7 +73,7 @@ async function render(): Promise<void> {
 
   const tracker = new Tracker({ json });
   try {
-    root!.innerHTML = dashboardBody(tracker, { radar, platform });
+    root!.innerHTML = dashboardBody(tracker, { radar, platform, version });
   } catch (err) {
     throw err;
   }
@@ -112,6 +121,12 @@ void listen(RADAR_STATE_EVENT, (e) => {
 void detectPlatform()
   .then((p) => {
     platform = p;
+  })
+  // Asked for alongside the platform so both land before the first paint, and
+  // the footer does not visibly gain a line a moment after opening.
+  .then(() => invoke<string>("app_version").catch(() => ""))
+  .then((v) => {
+    version = v;
   })
   .then(render)
   .then(() => emit(RADAR_HELLO_EVENT))
