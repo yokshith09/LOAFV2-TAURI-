@@ -76,6 +76,10 @@ pub trait PlatformProbe: Send + Sync {
 }
 
 /// Construct the probe for whatever we were compiled for.
+///
+/// Written as the literal rather than `default()`: every probe is a unit struct
+/// with nothing to initialise, and going through `Default` for one only reads
+/// as though there were state here.
 pub fn native() -> NativeProbe {
-    NativeProbe::default()
+    NativeProbe
 }

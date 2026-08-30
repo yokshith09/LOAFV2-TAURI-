@@ -147,6 +147,19 @@ fn write_stats(app: tauri::AppHandle, json: String) -> Result<(), String> {
     storage::write_atomic(&data_dir(&app)?, &json)
 }
 
+/// Every hand-drawn character in the Characters folder.
+#[tauri::command]
+fn sprite_packs(app: tauri::AppHandle) -> Result<Vec<packs::LoadedPack>, String> {
+    Ok(packs::load_all(&data_dir(&app)?))
+}
+
+/// Make the Characters folder, write the format guide, and open it.
+#[tauri::command]
+fn open_packs_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = packs::ensure(&data_dir(&app)?)?;
+    open_in_file_manager(&dir.to_string_lossy())
+}
+
 /// Which occasions the user has supplied a sound for.
 ///
 /// Names only. The bytes come from `read_sound`, and no path ever crosses to
@@ -234,6 +247,8 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // Phrased as an invitation and placed with the other ordinary items — not a
     // prompt, not a gate, and never checked at runtime. See STAR_URL.
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
+    let packs_item =
+        MenuItem::with_id(app, "packs", "Draw your own character…", true, None::<&str>)?;
     let reset = MenuItem::with_id(app, "reset", "Reset today's stats", true, None::<&str>)?;
     let forget = MenuItem::with_id(app, "forget", "Forget all site data", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "About Loaf", true, None::<&str>)?;

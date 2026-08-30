@@ -26,7 +26,7 @@
 #![cfg(windows)]
 
 use crate::browser::ProbeOutcome;
-use windows::core::{Interface, VARIANT};
+use windows::core::VARIANT;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,

@@ -71,7 +71,7 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
-        TranslateMessage, HWND_MESSAGE, MSG, RI_MOUSE_WHEEL, WINDOW_EX_STYLE, WINDOW_STYLE,
+        TranslateMessage, HMENU, HWND_MESSAGE, MSG, RI_MOUSE_WHEEL, WINDOW_EX_STYLE, WINDOW_STYLE,
         WM_INPUT, WNDCLASSW,
     };
 
@@ -156,9 +156,9 @@ mod imp {
             0,
             0,
             0,
-            Some(HWND_MESSAGE),
-            None,
-            Some(instance.into()),
+            HWND_MESSAGE,
+            HMENU::default(),
+            instance,
             None,
         ) else {
             return;
@@ -179,7 +179,7 @@ mod imp {
         }
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+        while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
