@@ -185,6 +185,18 @@ export class Tracker {
     return dayKeyFor(this.now());
   }
 
+  /**
+   * The tracker's idea of now.
+   *
+   * Exposed so anything rendering this data reads the same clock. The dashboard
+   * captions a chart built from `history()`; sourcing that caption from an
+   * ambient `new Date()` would let the two disagree in exactly the tests where
+   * the clock is injected, which is where a date bug would otherwise be caught.
+   */
+  currentDate(): Date {
+    return this.now();
+  }
+
   get continuousActive(): number {
     return this.continuousActiveValue;
   }

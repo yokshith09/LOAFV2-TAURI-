@@ -40,10 +40,11 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Pixel-art mode | ✅ |
 | Ambient behaviour, curl, fur ball, window walk | ✅ |
 | Focus timer, ring and pill | ✅ (session logic; the presets window is UI still to come) |
-| Screen-time tracker | ✅ accumulation and storage; the dashboard is still to come |
-| Next | privacy radar, dashboards, closet UI, tray menus, speech bubbles |
+| Screen-time tracker | ✅ accumulation and storage |
+| Dashboard + hover preview | ✅ both views generated; the window to host them is still to come |
+| Next | the dashboard window, privacy radar, closet UI, tray menus, speech bubbles |
 
-Tests: **343 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
+Tests: **389 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -113,6 +114,7 @@ src/                     Frontend (TypeScript, no framework)
   behaviour/             Ambient layer: curl, play, wander, the fur ball
   focus/timer.ts         Focus sessions, counted to a wall-clock deadline
   tracker/tracker.ts     Screen time. Pure: a string in, a string out.
+  dashboard/html.ts      Both dashboard views, as self-contained HTML
 src-tauri/
   src/platform/          The OS seam. Everything native terminates here.
   src/storage.rs         The one file on disk, and the path it must keep using
@@ -193,9 +195,10 @@ Signing and notarisation (macOS), code signing (Windows), the privacy radar, the
 dashboards, the closet UI, the tray menus, speech bubbles, onboarding, the focus
 presets window, and everything else in Priorities 1–6 of the product direction.
 
-The screen-time tracker records and persists, but nothing yet *displays* it
-beyond the debug overlay, and the break nudge has no visible form until speech
-bubbles land.
+The screen-time tracker records and persists, and the dashboard that displays it
+is generated and tested — but nothing yet *opens* that dashboard, so in the app
+today the numbers still only surface in the debug overlay. The break nudge has no
+visible form until speech bubbles land.
 
 ## Licence
 
