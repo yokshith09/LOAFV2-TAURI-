@@ -18,6 +18,8 @@ import { resolveLicence, licenceInputs } from "./behaviour/licence";
 import { defaultBehaviourSettings } from "./behaviour/settings";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
+import { FocusTimer } from "./focus/timer";
+import { drawFocusRing, drawFocusPill } from "./render/focusRing";
 import { ALL_MOODS, type Mood, type Outfit, type SceneState } from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
@@ -53,6 +55,29 @@ function currentOutfit(): Outfit | null {
 // --- The ambient layer -------------------------------------------------------
 
 const behaviour = defaultBehaviourSettings();
+/**
+ * The focus timer persists through localStorage so a session survives a quit —
+ * relaunch inside one and it is still counting.
+ */
+const focus = new FocusTimer({
+  store: {
+    getItem: (k) => {
+      try {
+        return localStorage.getItem(k);
+      } catch {
+        return null;
+      }
+    },
+    setItem: (k, v) => {
+      try {
+        localStorage.setItem(k, v);
+      } catch {
+        // Private window, or storage disabled. The timer still runs; it just
+        // will not survive a quit.
+      }
+    },
+  },
+});
 const curlDirector = new CurlDirector();
 const playDirector = new PlayDirector();
 const wander = new WanderController();
@@ -75,8 +100,14 @@ function tickAmbient(nowMs: number, mood: Mood): void {
   lastTickMs = nowMs;
   if (dt <= 0) return;
 
+  focus.poll();
   const licence = resolveLicence(
-    licenceInputs({ mood, hovering, dragging: draggingWindow }),
+    licenceInputs({
+      mood,
+      hovering,
+      dragging: draggingWindow,
+      focus: focus.display,
+    }),
   );
 
   // One activity at a time: a curled-up animal cannot reach a ball, and neither
@@ -225,19 +256,32 @@ function frame(nowMs: number): void {
     );
   }
 
-  // The ball and the paw that bats it share the companion's design space, so
-  // they go through the same fit transform. Skipped in pixel mode: the ball is
-  // rasterised with the character there, not drawn over the top of it.
+  // The ball, the paw and the focus session share the companion's design space,
+  // so they go through the same fit transform. The ball is skipped in pixel
+  // mode — there it is rasterised with the character rather than drawn over the
+  // top — but the ring and pill are always crisp: "24:31" at 56x63 is mush.
   const ball = playDirector.ball;
-  if (ball && !pixelated) {
+  const session = focus.display;
+  if ((ball && !pixelated) || session) {
     ctx!.save();
     applyFit(
       ctx as unknown as Parameters<typeof applyFit>[0],
       computeFit(window.innerWidth, window.innerHeight),
     );
-    drawBall(ctx as unknown as Parameters<typeof drawBall>[0], ball);
+    if (session) {
+      const shown = { ...session, progress: focus.progress };
+      drawFocusRing(
+        ctx as unknown as Parameters<typeof drawFocusRing>[0],
+        shown,
+        pixelated,
+      );
+      drawFocusPill(ctx as unknown as Parameters<typeof drawFocusPill>[0], shown);
+    }
+    if (ball && !pixelated) {
+      drawBall(ctx as unknown as Parameters<typeof drawBall>[0], ball);
+    }
     const swipe = playDirector.swipe;
-    if (swipe !== null) {
+    if (ball && swipe !== null) {
       drawSwipe(
         ctx as unknown as Parameters<typeof drawSwipe>[0],
         companion,
@@ -337,6 +381,12 @@ function wireInteraction(): void {
         break;
       case "l": // force a loaf, same reason
         curlDirector.forceCurl(performance.now(), 30);
+        break;
+      case "f": // start / pause a focus session
+        focus.toggle();
+        break;
+      case "r": // back to the top of the chosen length
+        focus.reset();
         break;
       default:
         return;

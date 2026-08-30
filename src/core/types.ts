@@ -167,6 +167,17 @@ export interface Ctx2D {
    * the Swift. Always pair with save/restore.
    */
   clip(): void;
+  /**
+   * Text support. Only the focus pill and the tab badge need it.
+   *
+   * BEWARE: the render context is flipped to y-up, so calling `fillText`
+   * directly draws the glyphs upside down. Always go through `drawFlippedText`
+   * in `render/text.ts`, which un-flips locally.
+   */
+  font: string;
+  fillText(text: string, x: number, y: number): void;
+  measureText(text: string): { width: number };
+
   translate(x: number, y: number): void;
   scale(x: number, y: number): void;
   /**

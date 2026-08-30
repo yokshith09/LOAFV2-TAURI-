@@ -121,6 +121,23 @@ export class RecordingCtx implements Ctx2D {
   clip(): void {
     this.record("clip");
   }
+
+  font = "10px sans-serif";
+  /** Every string handed to fillText, in order, for assertions. */
+  readonly texts: string[] = [];
+
+  fillText(text: string, x: number, y: number): void {
+    this.touch(x, y);
+    this.texts.push(text);
+    this.record("fillText", x, y);
+  }
+
+  measureText(text: string): { width: number } {
+    // A stand-in metric: proportional to length, so layout maths that depends
+    // on width is exercised without a real font engine.
+    const px = parseFloat(this.font) || 10;
+    return { width: text.length * px * 0.6 };
+  }
   translate(x: number, y: number): void {
     this.record("translate", x, y);
   }
