@@ -59,6 +59,16 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # The bare version, for the filenames quoted in the notes below. These
+      # were hard-coded once and immediately went stale: the notes for 0.2.0
+      # still told people to download Loaf_0.1.0_universal.dmg, a file that
+      # does not exist in the release it was attached to.
+      - id: ver
+        shell: bash
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: echo "v=${TAG#v}" >> "$GITHUB_OUTPUT"
+
       # NOTE: unsigned and un-notarised. macOS testers must right-click -> Open
       # the first time, and Windows shows a SmartScreen warning. Signing is
       # Phase 4 — it needs a paid Apple Developer ID and a Windows cert.
@@ -80,7 +90,7 @@ jobs:
             verified"* and only offers you **Cancel**. The app is fine — macOS
             just cannot confirm who built it.
 
-            **Download `Loaf_0.1.0_universal.dmg`** (works on both Apple Silicon
+            **Download `Loaf_${{ steps.ver.outputs.v }}_universal.dmg`** (works on both Apple Silicon
             and Intel), open it, drag **Loaf** into **Applications**, then:
 
             **On macOS 14 (Sonoma) and earlier**
@@ -108,22 +118,46 @@ jobs:
 
             ## Windows
 
-            Download `Loaf_0.1.0_x64-setup.exe`. SmartScreen will warn because
+            Download `Loaf_${{ steps.ver.outputs.v }}_x64-setup.exe`. SmartScreen will warn because
             the build is unsigned — click **More info** → **Run anyway**.
 
             ---
 
             ## Using it
 
-            There is no window and no Dock icon. The cat appears in the
-            bottom-right of your screen. **Click** it to cycle through its seven
-            expressions, **shift-click** to change which cat.
+            There is no window and no Dock icon. The character appears in the
+            bottom-right of your screen.
 
-            ## What is NOT in this build
+            - **Click** him for your screen time. **Click twice** to close it.
+            - **Right-click** him for everything else: the closet, the focus
+              timer, and the rest.
+            - **Drag** him anywhere. He stays where you drop him.
+            - **Hover** for a second to see today at a glance.
 
-            This is an early spike to check the app works at all. Time tracking,
-            the privacy radar, the focus timer and the character closet are all
-            still to come.
+            ## What is in this build
+
+            Screen-time tracking with a full history, eighteen characters with
+            outfits and pixel art, the closet, the focus timer, speech bubbles,
+            ambient behaviour, and the privacy radar — on Windows as well as
+            macOS.
+
+            **Coming later:** your own sounds and hand-drawn character packs.
+            Both are labelled as such in the app.
+
+            ## Privacy
+
+            Loaf makes no network calls, keeps no account and uploads nothing.
+            The privacy radar is off until you switch it on, and it reads only
+            the DOMAIN of the frontmost browser tab — never page content, never
+            a screenshot. Starring the repo is an invitation: nothing checks
+            whether you did, and no feature depends on it.
+
+            ## Known gaps
+
+            - **macOS is unverified.** It compiles and its platform code is
+              tested, but this is the first build anyone has run on a Mac.
+              Please say what breaks.
+            - Unsigned on both platforms, hence the warnings above.
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
