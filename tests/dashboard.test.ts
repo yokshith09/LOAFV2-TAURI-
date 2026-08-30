@@ -34,6 +34,7 @@ function trackerWith(
 
 const radarOn = (over: Partial<RadarSnapshot> = {}): RadarSnapshot => ({
   available: true,
+  readsInsideBrowser: true,
   enabled: true,
   tabThreshold: 12,
   peakTabsNow: null,
@@ -309,6 +310,29 @@ describe("browser permissions", () => {
     expect(bodyOf(dashboardHTML(tracker, { radar: radarOn() }))).not.toContain(
       "class=\"perms\"",
     );
+  });
+});
+
+describe("saying how the domain is obtained", () => {
+  it("says nothing on a platform that truncates inside the browser", () => {
+    // There is nothing to disclose: the URL never crosses a process boundary.
+    const { tracker } = trackerWith({ Safari: 3 });
+    const html = dashboardHTML(tracker, {
+      radar: { ...disabledRadar(), readsInsideBrowser: true },
+    });
+    expect(html).not.toContain("address bar");
+  });
+
+  it("says so plainly where it reads the address bar instead", () => {
+    // The weaker of the two promises has to be the one that speaks up. Omitting
+    // this is exactly the kind of silence the whole feature exists not to keep.
+    const { tracker } = trackerWith({ Safari: 3 });
+    const html = dashboardHTML(tracker, {
+      radar: { ...disabledRadar(), readsInsideBrowser: false },
+      platform: "windows",
+    });
+    expect(html).toContain("address bar");
+    expect(html).toContain("while you are typing");
   });
 });
 

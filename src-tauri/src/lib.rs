@@ -17,6 +17,8 @@
 //! central promise and it is enforced by review, not by comment.
 
 pub mod browser;
+#[cfg(windows)]
+pub mod browser_windows;
 pub mod platform;
 pub mod storage;
 
@@ -72,10 +74,23 @@ fn probe_browser(bundle_id: String, safari: bool) -> browser::ProbeOutcome {
     browser::probe(&bundle_id, safari, 8)
 }
 
-/// Whether this build can read tabs at all. See `browser.rs`.
+/// Whether this build can read tabs, and whether it does so inside the browser.
+///
+/// The second half is not a detail: on macOS the URL is truncated before it
+/// leaves the browser, and on Windows it is not. The dashboard says which.
+#[derive(Debug, Serialize)]
+pub struct RadarSupport {
+    pub supported: bool,
+    #[serde(rename = "readsInsideBrowser")]
+    pub reads_inside_browser: bool,
+}
+
 #[tauri::command]
-fn browser_probe_supported() -> bool {
-    browser::supported()
+fn browser_probe_supported() -> RadarSupport {
+    RadarSupport {
+        supported: browser::supported(),
+        reads_inside_browser: browser::reads_inside_the_browser(),
+    }
 }
 
 #[tauri::command]

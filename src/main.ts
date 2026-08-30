@@ -358,6 +358,7 @@ curlDirector.canLoaf = canCurl(companion);
  */
 let radar: PrivacyRadar | null = null;
 let radarSupported = false;
+let radarReadsInsideBrowser = true;
 
 function announceRadar(): void {
   if (!hasTauriHost()) return;
@@ -370,6 +371,7 @@ function radarSnapshot(): RadarSnapshot {
   if (!radar || !radarSupported) return unavailableRadar();
   return {
     available: true,
+    readsInsideBrowser: radarReadsInsideBrowser,
     enabled: radar.settings.enabled,
     tabThreshold: radar.settings.tabThreshold,
     peakTabsNow: radar.peakTabsNow,
@@ -940,7 +942,12 @@ if (hasTauriHost()) {
 
 void loadHistory()
   .then(async () => {
-    radarSupported = (await invokeSafe<boolean>("browser_probe_supported")) ?? false;
+    const support = await invokeSafe<{
+      supported: boolean;
+      readsInsideBrowser: boolean;
+    }>("browser_probe_supported");
+    radarSupported = support?.supported ?? false;
+    radarReadsInsideBrowser = support?.readsInsideBrowser ?? true;
     announceRadar();
   })
   .then(() => void pollPlatform());

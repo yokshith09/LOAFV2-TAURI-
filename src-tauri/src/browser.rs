@@ -12,10 +12,12 @@
 //!    that was closed, so the caller only ever probes the app that is already in
 //!    front.
 //!
-//! macOS only. Windows has no equivalent: reading another application's address
-//! bar there means UI Automation or a browser extension, both of which are a
-//! different product decision rather than a port of this one. Until that is
-//! decided, Windows reports the radar as unsupported rather than pretending.
+//! Both platforms are supported, by different routes and with a difference
+//! worth stating: on macOS the truncation happens inside the browser, so the
+//! full URL never crosses a process boundary at all. Windows has no such route
+//! and reads the address bar as text, so the URL exists here briefly before
+//! being cut down. See `browser_windows.rs` for what that costs and the two
+//! mitigations that keep it small.
 
 use serde::Serialize;
 
@@ -37,8 +39,13 @@ pub enum ProbeOutcome {
 ///
 /// Checked before the radar is offered rather than after every browser fails:
 /// a list of five browsers all saying "couldn't be read" is a worse answer than
-/// one sentence saying the feature is not here yet.
+/// one sentence saying the feature is not here.
 pub const fn supported() -> bool {
+    cfg!(any(target_os = "macos", windows))
+}
+
+/// How the domain was obtained, so the dashboard can be honest about it.
+pub const fn reads_inside_the_browser() -> bool {
     cfg!(target_os = "macos")
 }
 
@@ -143,13 +150,24 @@ end timeout"#
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+mod imp {
+    use super::ProbeOutcome;
+
+    /// The bundle id and timeout are macOS's business; Windows reads whatever
+    /// window is in front, which the radar has already decided is a browser.
+    pub fn probe(_bundle_id: &str, _safari: bool, _timeout_secs: u32) -> ProbeOutcome {
+        crate::browser_windows::probe()
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 mod imp {
     use super::ProbeOutcome;
 
     pub fn probe(_bundle_id: &str, _safari: bool, _timeout_secs: u32) -> ProbeOutcome {
         ProbeOutcome::Unavailable {
-            why: "reading tabs is not supported on this platform yet".into(),
+            why: "reading tabs is not supported on this platform".into(),
         }
     }
 }

@@ -45,10 +45,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Tray menu | ✅ focus, today's time, closet, star the repo, quit |
 | Speech bubbles + hover preview | ✅ break nudge speaks; hovering shows today's card |
 | Closet | ✅ all 18 characters, 6 garments, seasonal, per-character names, pixel toggle |
-| Privacy radar | ✅ **macOS only** — domains, tab counts, tantrums. Windows reports it unsupported |
+| Privacy radar | ✅ both platforms — domains, tab counts, tantrums |
 | Next | sounds, onboarding, sprite packs |
 
-Tests: **517 frontend** (Vitest) + **32 Rust**. CI green on macOS and Windows.
+Tests: **519 frontend** (Vitest) + **39 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -131,7 +131,8 @@ src/                     Frontend (TypeScript, no framework)
 src-tauri/
   src/platform/          The OS seam. Everything native terminates here.
   src/storage.rs         The one file on disk, and the path it must keep using
-  src/browser.rs         Reading a tab's domain. macOS only — see the note there
+  src/browser.rs         Reading a tab's domain — AppleScript on macOS
+  src/browser_windows.rs UI Automation on Windows, and what that costs
   capabilities/          What the two windows may ask the Tauri core for
 tests/                   Vitest suites
   registry.test.ts       Contract tests every companion must satisfy
@@ -204,12 +205,15 @@ rather than error, and unlike the badge strip nothing competes for that space.
 key and refreshes it inside `tick`, so between midnight and the next tick the
 totals still answer for yesterday. Deriving it costs nothing, so this port does.
 
-**The privacy radar is macOS-only.** Reading another application's active tab
-means AppleScript on macOS and, on Windows, either UI Automation against the
-address bar or a browser extension — a different product decision rather than a
-port of this one. Until that is decided, Windows reports the feature as
-unsupported and the dashboard says so in one sentence, rather than listing five
-browsers that all "couldn't be read".
+**The radar reads tabs two different ways, and says which.** On macOS the
+AppleScript truncates the URL to its host *inside the browser*, so the path and
+query never cross a process boundary. Windows has no such route: UI Automation
+reads the address bar as text, so the full URL exists in Loaf for the few
+microseconds before `host_of` cuts it down. That is disclosed in the dashboard
+rather than glossed over, and two mitigations keep the gap small — the read is
+skipped entirely while the address bar has focus (a half-typed search query is
+not a domain), and the truncation happens in Rust before the value can reach the
+frontend, storage or a log.
 
 **No sample data anywhere.** The reference fills days it never recorded with a
 seeded 1.5–4.5h bar (hatched, captioned "sample") and falls back to an invented

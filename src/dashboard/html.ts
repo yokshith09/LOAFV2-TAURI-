@@ -58,6 +58,14 @@ export interface RadarSnapshot {
    * the user a button that does nothing.
    */
   readonly available: boolean;
+  /**
+   * Whether the URL is truncated inside the browser (macOS) or read out of the
+   * address bar and cut down here (Windows).
+   *
+   * Shown to the user, not just recorded: the two are a different promise, and
+   * the weaker one has to be the one that says so.
+   */
+  readonly readsInsideBrowser: boolean;
   readonly enabled: boolean;
   /** Tabs open before the tantrum. 0 = tantrums off. */
   readonly tabThreshold: number;
@@ -70,6 +78,7 @@ export interface RadarSnapshot {
 export function disabledRadar(): RadarSnapshot {
   return {
     available: true,
+    readsInsideBrowser: true,
     enabled: false,
     tabThreshold: 0,
     peakTabsNow: null,
@@ -313,6 +322,22 @@ function permissionRows(radar: RadarSnapshot, platform: Platform): string {
   return `<h2 class="sub">Browsers</h2><div class="perms">${items}</div>${fix}`;
 }
 
+/**
+ * One sentence on how the domain is obtained.
+ *
+ * Only shown where it is the weaker of the two: on macOS the truncation happens
+ * inside the browser and there is nothing to disclose. Saying nothing on Windows
+ * would be the kind of omission this whole feature is meant not to make.
+ */
+function howItReads(radar: RadarSnapshot): string {
+  if (radar.readsInsideBrowser) return "";
+  return (
+    `<p class="fine">On Windows the domain is read from your browser's address bar ` +
+    `and cut down to the host immediately. Loaf skips the read entirely while you ` +
+    `are typing there, so what you type into it is never seen.</p>`
+  );
+}
+
 function radarSection(
   tracker: Tracker,
   radar: RadarSnapshot,
@@ -350,6 +375,7 @@ function radarSection(
       `the actual list of sites that took those five hours.</p>` +
       `<p class="fine">Loaf reads the domain of your active tab and nothing else — not the ` +
       `page, not the path, not what you type. It stays on this computer.</p>` +
+      howItReads(radar) +
       cmdButton("cta", "radar:on", "Turn on privacy radar") +
       `${leftover}</div>`
     );
