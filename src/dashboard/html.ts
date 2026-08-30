@@ -7,16 +7,22 @@ import { BASE_CSS, PLUS_CSS, MINI_CSS } from "./css";
  * Regenerated fresh from the tracker every time one is opened — there is no
  * state here, and nothing to fetch.
  *
- * THE HONESTY RULE. Days and hours Loaf has not actually recorded are filled
- * with clearly-marked sample bars — hatched, labelled "(sample)", called out in
- * a note — so the charts look right on day one without ever passing invented
- * numbers off as measurements. The same rule governs the site breakdown:
- * browser time the radar could not attribute gets its own labelled row and is
- * never quietly distributed across the domains it did see. A guessed split
- * reads as data, and this is the one product that must not do that.
+ * THE HONESTY RULE: every number on this page was measured.
  *
- * TWO DELIBERATE DEPARTURES FROM THE REFERENCE, both forced by the move off
- * WebKit-on-macOS:
+ * The reference did not hold to that. Days it had never recorded were filled
+ * with a seeded 1.5–4.5h bar, hatched and captioned "(sample)", and the hour
+ * chart fell back to an invented knowledge-worker curve until two real hours
+ * had accumulated — so a fresh install opened onto a full-looking dashboard of
+ * fiction. Both are gone. Charts start at the first day actually recorded,
+ * unrecorded days inside that range are drawn empty, and no peak hour is named
+ * until there is enough measured time to name one.
+ *
+ * The same rule already governed the site breakdown and still does: browser
+ * time the radar could not attribute gets its own labelled row and is never
+ * quietly distributed across the domains it did see. A guessed split reads as
+ * data, and this is the one product that must not do that.
+ *
+ * TWO FURTHER DEPARTURES, both forced by the move off WebKit-on-macOS:
  *
  *  1. No inline event handlers. The reference wires buttons with
  *     `onclick="loaf('reset')"` calling `window.webkit.messageHandlers`, which
@@ -44,6 +50,14 @@ export interface BrowserStatus {
  * these. `disabledRadar()` is the honest state until then.
  */
 export interface RadarSnapshot {
+  /**
+   * Whether this build has a radar at all.
+   *
+   * Distinct from `enabled`: "off, turn it on" and "not written yet" are
+   * different sentences, and rendering the first while meaning the second gives
+   * the user a button that does nothing.
+   */
+  readonly available: boolean;
   readonly enabled: boolean;
   /** Tabs open before the tantrum. 0 = tantrums off. */
   readonly tabThreshold: number;
@@ -52,8 +66,20 @@ export interface RadarSnapshot {
   readonly statusRows: readonly BrowserStatus[];
 }
 
+/** The radar switched off in a build that has one. */
 export function disabledRadar(): RadarSnapshot {
-  return { enabled: false, tabThreshold: 0, peakTabsNow: null, statusRows: [] };
+  return {
+    available: true,
+    enabled: false,
+    tabThreshold: 0,
+    peakTabsNow: null,
+    statusRows: [],
+  };
+}
+
+/** The honest state until `PrivacyRadar.swift` is ported. */
+export function unavailableRadar(): RadarSnapshot {
+  return { ...disabledRadar(), available: false };
 }
 
 export type Platform = "macos" | "windows" | "other";
@@ -87,68 +113,69 @@ export function escapeHTML(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// --- Sample data -------------------------------------------------------------
+// --- History bars ------------------------------------------------------------
 
 /**
- * FNV-1a, 64-bit, matching the reference exactly so a given day seeds the same
- * illustrative bar in both apps.
+ * Below this much recorded time, the chart is drawn but no peak is claimed.
  *
- * Deterministic and not random on purpose: a sample bar that changed height on
- * every reload would look like data being updated.
+ * Not a threshold for inventing anything — the bars are always measured. It
+ * gates only the sentence that says when you are sharpest, because calling that
+ * off twenty minutes is a guess dressed as a finding.
  */
-export function fnvSample(seedKey: string, min: number, range: number): number {
-  const MASK = 0xffffffffffffffffn;
-  let x = 1469598103934665603n;
-  for (const byte of new TextEncoder().encode(seedKey)) {
-    x = ((x ^ BigInt(byte)) * 1099511628211n) & MASK;
-  }
-  return min + Number(x % BigInt(Math.max(range, 1)));
-}
-
-/**
- * An illustrative knowledge-worker curve: quiet overnight, a mid-morning peak,
- * a lunch dip, a smaller afternoon peak. Seconds per hour, 0 = midnight.
- */
-export const SAMPLE_HOUR_PATTERN: readonly number[] = [
-  0, 0, 0, 0, 0, 0, 300, 900, 1900, 2600, 2900, 2400, 1400, 2000, 2700, 2500,
-  1800, 1100, 700, 400, 150, 0, 0, 0,
-];
-
-/** Below this much real data the hour chart is illustrative rather than measured. */
-const REAL_HOURS_THRESHOLD = 2 * 3600;
+const CONFIDENT_AFTER = 2 * 3600;
 
 interface DayBar {
   readonly label: string;
   readonly seconds: number;
   readonly isToday: boolean;
-  readonly isSample: boolean;
+  /** Loaf was installed by this day but recorded nothing. Drawn empty. */
+  readonly noData: boolean;
 }
 
-function dayBars(days: readonly HistoryEntry[]): DayBar[] {
-  return days.map((d) =>
-    d.hasData
-      ? { label: d.label, seconds: d.total, isToday: d.isToday, isSample: false }
-      : {
-          label: d.label,
-          // 1.5h–4.5h: plausible enough to shape the chart, never presented as real.
-          seconds: fnvSample(dayKeyFor(d.date), 5400, 3 * 3600),
-          isToday: d.isToday,
-          isSample: true,
-        },
-  );
+/**
+ * Turn a history window into bars, dropping everything from before Loaf was
+ * first recording.
+ *
+ * THE REFERENCE FILLED THOSE DAYS WITH INVENTED NUMBERS — a seeded 1.5–4.5h per
+ * missing day, hatched and captioned "(sample)" — so a fresh install had a
+ * full-looking chart. That is gone. A chart that shows made-up bars is asking
+ * to be read as data, and the caption doing the disclaiming is smaller than the
+ * bars doing the lying. Days before the first record are not shown at all;
+ * days after it with nothing recorded are shown as empty slots, which is the
+ * true statement.
+ */
+function dayBars(
+  days: readonly HistoryEntry[],
+  firstRecorded: string | null,
+): DayBar[] {
+  return days
+    .filter((d) => firstRecorded !== null && dayKeyFor(d.date) >= firstRecorded)
+    .map((d) => ({
+      label: d.label,
+      seconds: d.hasData ? d.total : 0,
+      isToday: d.isToday,
+      noData: !d.hasData,
+    }));
 }
 
 function stripHTML(bars: readonly DayBar[], thin: boolean): string {
+  if (bars.length === 0) {
+    return `<p class="empty">No days recorded yet — this chart fills in as Loaf runs.</p>`;
+  }
   const maxV = Math.max(...bars.map((b) => b.seconds), 1);
   return bars
     .map((bar, i) => {
+      // An empty day gets the minimum stub too: a slot with nothing in it at all
+      // is indistinguishable from the chart having fewer days than it does.
       const h = Math.max(3, Math.floor((bar.seconds / maxV) * 64));
       let cls = "wbar";
-      if (bar.isSample) cls += " sample";
+      if (bar.noData) cls += " nodata";
       if (bar.isToday) cls += " today";
       const showLabel = !thin || bar.isToday || i % 5 === 0;
       const widthClass = thin ? "wday thin" : "wday";
-      const title = `${bar.label}: ${formatDuration(bar.seconds)}${bar.isSample ? " · sample" : ""}`;
+      const title = bar.noData
+        ? `${bar.label}: nothing recorded`
+        : `${bar.label}: ${formatDuration(bar.seconds)}`;
       return (
         `<div class="${widthClass}">` +
         `<div class="wbar-track"><div class="${cls}" style="height:${h}px" title="${escapeHTML(title)}"></div></div>` +
@@ -291,6 +318,24 @@ function radarSection(
   radar: RadarSnapshot,
   platform: Platform,
 ): string {
+  if (!radar.available) {
+    // No CTA: a button that cannot do anything is worse than the sentence
+    // explaining why there is no button.
+    const leftover = tracker.hasAnySiteData
+      ? `<p class="fine">Domains an earlier version recorded are still saved on ` +
+        `this computer. ` +
+        cmdButton("linkish", "sites:forget", "Forget them for good") +
+        `</p>`
+      : "";
+    return (
+      `<h2>Privacy radar</h2><div class="radar-off">` +
+      `<p><strong>Not in this build yet.</strong> When it lands, "Google Chrome — 5h" ` +
+      `becomes the actual list of sites that took those five hours — read from the ` +
+      `active tab's domain, nothing else, and kept on this computer.</p>` +
+      `${leftover}</div>`
+    );
+  }
+
   if (!radar.enabled) {
     // Anything already collected stays on disk. Say so plainly and put the
     // delete button right here, rather than letting "off" imply "erased".
@@ -370,8 +415,21 @@ function radarSection(
 
 // --- The two views -----------------------------------------------------------
 
-/** Today's breakdown, the site radar, history, and most-productive-time. */
-export function dashboardHTML(
+/** The complete stylesheet for the full view. */
+export const DASHBOARD_STYLES = BASE_CSS + PLUS_CSS;
+/** The complete stylesheet for the hover card. */
+export const MINI_STYLES = BASE_CSS + PLUS_CSS + MINI_CSS;
+
+/**
+ * Today's breakdown, the site radar, history, and most-productive-time — as
+ * markup only.
+ *
+ * Split from the document so the real window can render into a page that
+ * already exists, rather than replacing its own document wholesale. The
+ * document form is kept for tests and for anything that wants a standalone
+ * file.
+ */
+export function dashboardBody(
   tracker: Tracker,
   opts: DashboardOptions = {},
 ): string {
@@ -395,33 +453,45 @@ export function dashboardHTML(
       ? `<p class="empty">Nothing tracked yet today. Go do something — I'm watching.</p>`
       : "";
 
-  const weekBars = dayBars(tracker.history(7));
-  const monthBars = dayBars(tracker.history(30));
-  const anySampleWeek = weekBars.some((b) => b.isSample);
+  const firstRecorded = tracker.firstRecordedDay();
+  const weekBars = dayBars(tracker.history(7), firstRecorded);
+  const monthBars = dayBars(tracker.history(30), firstRecorded);
 
+  // A short strip needs an explanation, or it reads as a chart that lost some
+  // bars. Only shown while the window is actually clipped: on a full week it
+  // would be a line of text saying nothing.
+  const since =
+    firstRecorded !== null && weekBars.length < 7
+      ? `<p class="note">Recording since ${escapeHTML(
+          new Date(`${firstRecorded}T00:00:00`).toLocaleDateString(undefined, {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          }),
+        )}. Earlier days are not shown because Loaf was not there for them.</p>`
+      : "";
+
+  // Always the measured histogram. The only question is whether there is enough
+  // of it to name a peak out loud.
   const hist = tracker.hourlyHistogram();
-  const realHours = hist.reduce((a, b) => a + b, 0);
-  const usingSampleHours = realHours < REAL_HOURS_THRESHOLD;
-  const effective = usingSampleHours ? SAMPLE_HOUR_PATTERN : hist;
-  const peakHour = effective.reduce(
-    (best, v, i) => (v > effective[best]! ? i : best),
-    0,
-  );
-  const maxHour = Math.max(...effective, 1);
-  const hourBars = effective
+  const recorded = hist.reduce((a, b) => a + b, 0);
+  const confident = recorded >= CONFIDENT_AFTER;
+  const peakHour = hist.reduce((best, v, i) => (v > hist[best]! ? i : best), 0);
+  const maxHour = Math.max(...hist, 1);
+  const hourBars = hist
     .map((seconds, hour) => {
       const h = Math.max(3, Math.floor((seconds / maxHour) * 46));
-      const cls =
-        hour === peakHour ? "hbar peak" : usingSampleHours ? "hbar sample" : "hbar";
+      // Nothing is highlighted until the claim is one we would stand behind.
+      const cls = confident && hour === peakHour ? "hbar peak" : "hbar";
       return `<div class="hbar-track"><div class="${cls}" style="height:${h}px"></div></div>`;
     })
     .join("");
 
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Loaf — today</title>
-<style>${BASE_CSS}${PLUS_CSS}</style></head>
-<body>
-  <div class="wrap">
+  const peakCallout = confident
+    ? `<p class="peak-callout">You're sharpest around <strong>${hourRangeLabel(peakHour)}</strong></p>`
+    : `<p class="peak-callout note-inline">Still learning your hours — Loaf needs a couple more before it guesses.</p>`;
+
+  return `<div class="wrap">
     <h1>🐾 Loaf<span class="plus">+</span></h1>
     <div class="date">${escapeHTML(dateLabel)}</div>
     <div class="total-label">Time with you today</div>
@@ -441,12 +511,10 @@ export function dashboardHTML(
     </div>
     <div id="week" class="strip-panel">${stripHTML(weekBars, false)}</div>
     <div id="month" class="strip-panel month" style="display:none">${stripHTML(monthBars, true)}</div>
-    ${anySampleWeek ? `<p class="note">Hatched bars are illustrative — real history fills in the longer Loaf runs.</p>` : ""}
+    ${since}
 
     <h2>Most productive time</h2>
-    <p class="peak-callout">You're sharpest around <strong>${hourRangeLabel(peakHour)}</strong>${
-      usingSampleHours ? ` <span class="note-inline">(sample pattern)</span>` : ""
-    }</p>
+    ${peakCallout}
     <div class="hours">${hourBars}</div>
     <div class="hours-axis"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>
 
@@ -454,8 +522,18 @@ export function dashboardHTML(
       <p>Lives only on this computer.<br>No account, no network, no upload.</p>
       ${cmdButton("reset", "reset", "Reset today")}
     </div>
-  </div>
-</body></html>`;
+  </div>`;
+}
+
+/** The full view as a standalone document. */
+export function dashboardHTML(
+  tracker: Tracker,
+  opts: DashboardOptions = {},
+): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Loaf — today</title>
+<style>${DASHBOARD_STYLES}</style></head>
+<body>${dashboardBody(tracker, opts)}</body></html>`;
 }
 
 /**
@@ -467,7 +545,7 @@ export function dashboardHTML(
  * along with the others; sizing the window is the host's job, and the host can
  * measure the card it just created without being told.
  */
-export function miniDashboardHTML(
+export function miniBody(
   tracker: Tracker,
   opts: DashboardOptions = {},
 ): string {
@@ -491,15 +569,21 @@ export function miniDashboardHTML(
     extra += `<div class="mini-tabs${hot ? " hot" : ""}">${tabs} tabs open${hot ? " — really?" : ""}</div>`;
   }
 
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Loaf</title>
-<style>${BASE_CSS}${PLUS_CSS}${MINI_CSS}</style></head>
-<body class="mini">
-  <div class="wrap" id="wrap">
+  return `<div class="wrap" id="wrap">
     <div class="total-label">Today</div>
     <div class="total mini-total">${formatDuration(tracker.totalToday)}</div>
     ${rows}${emptyState}${extra}
     <p class="hint">Click for the full dashboard →</p>
-  </div>
-</body></html>`;
+  </div>`;
+}
+
+/** The hover card as a standalone document. */
+export function miniDashboardHTML(
+  tracker: Tracker,
+  opts: DashboardOptions = {},
+): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Loaf</title>
+<style>${MINI_STYLES}</style></head>
+<body class="mini">${miniBody(tracker, opts)}</body></html>`;
 }

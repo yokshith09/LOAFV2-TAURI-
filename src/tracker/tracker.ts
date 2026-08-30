@@ -247,6 +247,19 @@ export class Tracker {
     return Object.values(this.days).some((d) => Object.keys(d.sites).length > 0);
   }
 
+  /**
+   * The earliest day with a record, or null if nothing has ever been recorded.
+   *
+   * Stands in for an install date, and is better than one: a user migrating
+   * from the Swift app brings months of history with them, and an "installed
+   * today" marker would throw all of it off the left edge of every chart. Keys
+   * are `yyyy-MM-dd`, so lexical order is chronological order.
+   */
+  firstRecordedDay(): string | null {
+    const keys = Object.keys(this.days);
+    return keys.length === 0 ? null : keys.reduce((a, b) => (a < b ? a : b));
+  }
+
   /** Real per-day totals for the last `limit` calendar days, oldest first. */
   history(limit: number): HistoryEntry[] {
     const today = this.now();

@@ -4,10 +4,8 @@ import {
   dashboardHTML,
   miniDashboardHTML,
   escapeHTML,
-  fnvSample,
   hourRangeLabel,
   disabledRadar,
-  SAMPLE_HOUR_PATTERN,
   type RadarSnapshot,
 } from "../src/dashboard/html";
 
@@ -35,6 +33,7 @@ function trackerWith(
 }
 
 const radarOn = (over: Partial<RadarSnapshot> = {}): RadarSnapshot => ({
+  available: true,
   enabled: true,
   tabThreshold: 12,
   peakTabsNow: null,
@@ -102,79 +101,79 @@ describe("no script reaches the document", () => {
 });
 
 describe("the honesty rule", () => {
-  it("marks days it never recorded as samples", () => {
+  it("invents nothing for days it never recorded", () => {
+    // The reference filled every unrecorded day with a seeded 1.5-4.5h bar,
+    // hatched and captioned "(sample)", so a fresh install had a full-looking
+    // chart. A made-up bar is asking to be read as data, and the caption doing
+    // the disclaiming is smaller than the bars doing the lying.
     const { tracker } = trackerWith({ Xcode: 3 });
     const html = bodyOf(dashboardHTML(tracker));
-    expect(html).toContain("wbar sample");
-    expect(html).toContain("· sample");
+    expect(html).not.toContain("sample");
+    expect(html).not.toContain("illustrative");
   });
 
-  it("says in words that the hatched bars are illustrative", () => {
-    // The hatching alone is a visual convention nobody has been taught.
+  it("shows nothing at all from before the first recorded day", () => {
+    // One day of history must not be drawn as a week.
     const { tracker } = trackerWith({ Xcode: 3 });
-    expect(dashboardHTML(tracker)).toContain("illustrative");
-  });
-
-  it("drops the note once every day in the window is real", () => {
-    // Advance *between* ticks, never after the last one: a trailing advance
-    // leaves the clock on a day nothing was recorded, and that day is the right
-    // edge of the window the dashboard then draws.
-    const clock = clockAt("2026-08-24T10:00:00");
-    const tracker = new Tracker({ now: clock.now });
-    for (let d = 0; d < 8; d++) {
-      if (d > 0) clock.advance(24 * 3600);
-      tracker.tick("Xcode", 0);
-    }
     const html = bodyOf(dashboardHTML(tracker));
     const week = html.slice(html.indexOf('id="week"'), html.indexOf('id="month"'));
-    const month = html.slice(html.indexOf('id="month"'));
-
-    expect(week).not.toContain("wbar sample");
-    expect(html).not.toContain("illustrative");
-    // The 30-day strip still reaches back past the first recorded day, and the
-    // note is deliberately about the week — so samples there are correct, and
-    // this is the assertion that would catch the note being wired to the wrong
-    // strip.
-    expect(month).toContain("wbar sample");
+    expect(week.match(/class="wbar[ "]/g) ?? []).toHaveLength(1);
   });
 
-  it("labels the sample hour pattern as a sample", () => {
+  it("draws a day inside the window that recorded nothing as empty", () => {
+    // Loaf was installed by then and recorded nothing. That is an honest gap,
+    // and a different statement from "we were not here yet".
+    const clock = clockAt("2026-08-26T10:00:00");
+    const tracker = new Tracker({ now: clock.now });
+    tracker.tick("Xcode", 0);
+    clock.advance(2 * 24 * 3600); // the 27th passes unrecorded
+    tracker.tick("Xcode", 0);
+
+    const html = bodyOf(dashboardHTML(tracker));
+    const week = html.slice(html.indexOf('id="week"'), html.indexOf('id="month"'));
+    expect(week).toContain("wbar nodata");
+    expect(week).toContain("nothing recorded");
+    // Three slots: the 26th, the empty 27th, the 28th. Not seven.
+    expect(week.match(/class="wbar[ "]/g) ?? []).toHaveLength(3);
+  });
+
+  it("never hatches an empty day the way the reference hatched an invented one", () => {
+    // Reusing that treatment would resurrect the confusion the invented bars
+    // caused, with the opposite meaning.
+    const clock = clockAt("2026-08-26T10:00:00");
+    const tracker = new Tracker({ now: clock.now });
+    tracker.tick("Xcode", 0);
+    clock.advance(2 * 24 * 3600);
+    tracker.tick("Xcode", 0);
+    expect(bodyOf(dashboardHTML(tracker))).not.toContain("wbar sample");
+  });
+
+  it("says so plainly when there is no history at all", () => {
+    const clock = clockAt("2026-08-30T10:00:00");
+    const html = bodyOf(dashboardHTML(new Tracker({ now: clock.now })));
+    expect(html).toContain("No days recorded yet");
+    expect(html).not.toContain('class="wbar');
+  });
+
+  it("refuses to name a peak hour before it has grounds to", () => {
+    // This is exactly when a new user first opens the dashboard, and exactly
+    // where the reference reached for an invented curve.
     const { tracker } = trackerWith({ Xcode: 3 });
     const html = bodyOf(dashboardHTML(tracker));
-    expect(html).toContain("sample pattern");
-    expect(html).toContain("hbar sample");
+    expect(html).not.toContain("You're sharpest");
+    expect(html).toContain("Still learning your hours");
+    expect(html).not.toContain("hbar peak");
   });
 
-  it("switches to measured hours once there is enough real data", () => {
-    // Two hours is the threshold; below it the chart would be shaped almost
-    // entirely by one morning and read as a finding.
-    const { tracker } = trackerWith({ Xcode: (2 * 3600) / TICK_INTERVAL });
-    const html = bodyOf(dashboardHTML(tracker));
-    expect(html).not.toContain("sample pattern");
-    expect(html).not.toContain("hbar sample");
-  });
-
-  it("seeds a day's sample bar deterministically", () => {
-    // A bar that changed height on every reload would look like data updating.
-    const { tracker } = trackerWith({ Xcode: 3 });
-    expect(dashboardHTML(tracker)).toBe(dashboardHTML(tracker));
-    expect(fnvSample("2026-08-30", 5400, 10800)).toBe(
-      fnvSample("2026-08-30", 5400, 10800),
+  it("names the peak once there are a couple of hours behind it", () => {
+    const { tracker } = trackerWith(
+      { Xcode: (2 * 3600) / TICK_INTERVAL },
+      "2026-08-30T15:00:00",
     );
-  });
-
-  it("keeps sample days inside a plausible range", () => {
-    for (const key of ["2026-08-30", "2025-01-01", "1999-12-31"]) {
-      const v = fnvSample(key, 5400, 3 * 3600);
-      expect(v).toBeGreaterThanOrEqual(5400);
-      expect(v).toBeLessThan(5400 + 3 * 3600);
-    }
-  });
-
-  it("gives different days different sample bars", () => {
-    const a = fnvSample("2026-08-30", 5400, 10800);
-    const b = fnvSample("2026-08-29", 5400, 10800);
-    expect(a).not.toBe(b);
+    const html = bodyOf(dashboardHTML(tracker));
+    expect(html).toContain("You're sharpest around");
+    expect(html).toContain("3\u20134 PM");
+    expect(html).not.toContain("Still learning");
   });
 });
 
@@ -371,11 +370,11 @@ describe("the day itself", () => {
 
 describe("the hour chart", () => {
   it("reads noon-straddling ranges the way a person would", () => {
-    expect(hourRangeLabel(10)).toBe("10–11 AM");
-    expect(hourRangeLabel(11)).toBe("11 AM–12 PM");
-    expect(hourRangeLabel(23)).toBe("11 PM–12 AM");
-    expect(hourRangeLabel(0)).toBe("12–1 AM");
-    expect(hourRangeLabel(12)).toBe("12–1 PM");
+    expect(hourRangeLabel(10)).toBe("10\u201311 AM");
+    expect(hourRangeLabel(11)).toBe("11 AM\u201312 PM");
+    expect(hourRangeLabel(23)).toBe("11 PM\u201312 AM");
+    expect(hourRangeLabel(0)).toBe("12\u20131 AM");
+    expect(hourRangeLabel(12)).toBe("12\u20131 PM");
   });
 
   it("draws one bar per hour of the day", () => {
@@ -385,25 +384,33 @@ describe("the hour chart", () => {
   });
 
   it("highlights the busiest hour and only that one", () => {
-    const { tracker } = trackerWith({ Xcode: 3 });
+    const { tracker } = trackerWith(
+      { Xcode: (2 * 3600) / TICK_INTERVAL },
+      "2026-08-30T15:00:00",
+    );
     const peaks = bodyOf(dashboardHTML(tracker)).match(/hbar peak/g) ?? [];
     expect(peaks).toHaveLength(1);
   });
 
-  it("calls the peak from real data once it has enough", () => {
-    // 3pm, deliberately not where the sample pattern peaks (10am), so a chart
-    // still silently running on the sample would fail this.
+  it("calls the peak from where the time was actually spent", () => {
     const { tracker } = trackerWith(
       { Xcode: (2 * 3600) / TICK_INTERVAL + 1 },
       "2026-08-30T15:00:00",
     );
-    expect(dashboardHTML(tracker)).toContain("3–4 PM");
+    expect(dashboardHTML(tracker)).toContain("3\u20134 PM");
   });
 
-  it("peaks the sample pattern at its own mid-morning high", () => {
-    const busiest = SAMPLE_HOUR_PATTERN.indexOf(Math.max(...SAMPLE_HOUR_PATTERN));
-    const { tracker } = trackerWith({ Xcode: 3 });
-    expect(dashboardHTML(tracker)).toContain(hourRangeLabel(busiest));
+  it("leaves every unworked hour at the same empty stub", () => {
+    // With one busy hour, the other twenty-three must all sit at the minimum —
+    // any variation between them would be a shape nobody measured.
+    const { tracker } = trackerWith(
+      { Xcode: (2 * 3600) / TICK_INTERVAL },
+      "2026-08-30T15:00:00",
+    );
+    const body = bodyOf(dashboardHTML(tracker));
+    const hours = body.slice(body.indexOf('class="hours"'));
+    const stubs = hours.match(/class="hbar" style="height:3px"/g) ?? [];
+    expect(stubs).toHaveLength(23);
   });
 });
 
@@ -480,5 +487,31 @@ describe("the document itself", () => {
     const opens = (html.match(/<div\b/g) ?? []).length;
     const closes = (html.match(/<\/div>/g) ?? []).length;
     expect(opens).toBe(closes);
+  });
+});
+
+describe("explaining a short chart", () => {
+  it("says when recording started, so a stub chart is not a mystery", () => {
+    const { tracker } = trackerWith({ Xcode: 3 });
+    expect(bodyOf(dashboardHTML(tracker))).toContain("Recording since");
+  });
+
+  it("says nothing once the whole week is covered", () => {
+    // On a full strip that line would be text explaining an absence that is not
+    // there.
+    const clock = clockAt("2026-08-24T10:00:00");
+    const tracker = new Tracker({ now: clock.now });
+    for (let d = 0; d < 8; d++) {
+      if (d > 0) clock.advance(24 * 3600);
+      tracker.tick("Xcode", 0);
+    }
+    expect(bodyOf(dashboardHTML(tracker))).not.toContain("Recording since");
+  });
+
+  it("says nothing at all when there is no history to explain", () => {
+    const clock = clockAt("2026-08-30T10:00:00");
+    expect(bodyOf(dashboardHTML(new Tracker({ now: clock.now })))).not.toContain(
+      "Recording since",
+    );
   });
 });

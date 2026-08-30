@@ -53,16 +53,11 @@ export const BASE_CSS = `
   .wbar { width:14px; background:var(--edge); border-radius:4px; }
   .wday.thin .wbar { width:6px; border-radius:2px; }
   .wbar.today { background:var(--accent); }
-  .wbar.sample {
-    background-color: rgba(232,216,196,0.4);
-    background-image: repeating-linear-gradient(135deg, var(--edge), var(--edge) 3px, transparent 3px, transparent 6px);
-    border:1px solid var(--edge);
-  }
-  .wbar.sample.today {
-    background-color: rgba(255,178,94,0.22);
-    background-image: repeating-linear-gradient(135deg, var(--accent), var(--accent) 3px, transparent 3px, transparent 6px);
-    border:1px solid var(--accent);
-  }
+  /* A day Loaf was installed for but recorded nothing. Faint, so the eye reads
+     the gap, and never hatched — the reference used hatching for INVENTED bars
+     and reusing the treatment here would resurrect exactly the confusion the
+     invented bars caused. */
+  .wbar.nodata { background:var(--edge); opacity:.35; }
   .wlabel { font-size:10px; color:var(--ink-soft); height:12px; }
   .note { font-size:10.5px; color:var(--ink-soft); margin:0 0 18px; font-style:italic; }
   .note-inline { font-weight:400; font-style:italic; color:var(--ink-soft); font-size:12px; }
@@ -70,11 +65,7 @@ export const BASE_CSS = `
   .hours { display:flex; justify-content:space-between; align-items:flex-end; height:54px; margin-bottom:4px; }
   .hbar-track { flex:1; display:flex; align-items:flex-end; justify-content:center; }
   .hbar { width:8px; background:var(--edge); border-radius:2px 2px 0 0; }
-  .hbar.sample {
-    background-color: rgba(232,216,196,0.4);
-    background-image: repeating-linear-gradient(135deg, var(--edge), var(--edge) 2px, transparent 2px, transparent 4px);
-  }
-  .hbar.peak { background:var(--accent) !important; background-image:none !important; }
+  .hbar.peak { background:var(--accent); }
   .hours-axis { display:flex; justify-content:space-between; font-size:9.5px; color:var(--ink-soft); margin-bottom:20px; }
   .footer { border-top:1px solid var(--edge); padding-top:14px; display:flex; justify-content:space-between; align-items:center; gap:12px; }
   .footer p { font-size:11px; color:var(--ink-soft); margin:0; line-height:1.5; }

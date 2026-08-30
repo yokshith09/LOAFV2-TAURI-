@@ -126,11 +126,24 @@ fn park_bottom_right(window: &tauri::WebviewWindow) {
 /// and removing the Dock icon without adding this would have made it strictly
 /// worse.
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem};
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
 
+    let stats = MenuItem::with_id(app, "stats", "Today's time…", true, None::<&str>)?;
+    // Phrased as an invitation and placed with the other ordinary items — not a
+    // prompt, not a gate, and never checked at runtime. See STAR_URL.
+    let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Loaf", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &stats,
+            &PredefinedMenuItem::separator(app)?,
+            &star,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
 
     let mut builder = TrayIconBuilder::new()
         .menu(&menu)
@@ -140,13 +153,108 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         builder = builder.icon(icon.clone());
     }
     builder
-        .on_menu_event(|app, event| {
-            if event.id.as_ref() == "quit" {
-                app.exit(0);
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "stats" => {
+                if let Err(e) = show_dashboard(app) {
+                    eprintln!("could not open the dashboard: {e}");
+                }
             }
+            "star" => open_star_page(),
+            "quit" => app.exit(0),
+            _ => {}
         })
         .build(app)?;
     Ok(())
+}
+
+/// The dashboard window.
+///
+/// A normal decorated window on purpose: this one is a document you read,
+/// scroll and close, not the pet. Closing destroys it — Tauri's default — and
+/// reopening builds it again, which costs a page load and buys a guarantee that
+/// what you are looking at was read from disk just now.
+///
+/// If it already exists, it is raised instead of duplicated. Without that check
+/// a second menu click fails on the duplicate label rather than doing the
+/// obvious thing.
+fn show_dashboard(app: &tauri::AppHandle) -> tauri::Result<()> {
+    // On macOS the app runs as an Accessory (no Dock icon), and an Accessory
+    // app's new windows open behind whatever is in front and never take
+    // keyboard focus. A real window needs a real application around it, so the
+    // policy goes back to Regular while one is open, and returns to Accessory
+    // when it closes.
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
+    if let Some(window) = app.get_webview_window(DASHBOARD_LABEL) {
+        window.unminimize()?;
+        window.show()?;
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        DASHBOARD_LABEL,
+        tauri::WebviewUrl::App("dashboard.html".into()),
+    )
+    .title("Loaf — today")
+    .inner_size(560.0, 760.0)
+    .min_inner_size(420.0, 480.0)
+    .resizable(true)
+    .build()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                // Back to being a pet. Unconditional because the dashboard is
+                // the only window that wants a Dock icon — the companion is
+                // deliberately hidden from it. A second such window would need
+                // this to count them instead.
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+        });
+    }
+    // The binding is only used on macOS; naming it `_window` elsewhere would
+    // read as an oversight rather than a platform difference.
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+
+    Ok(())
+}
+
+const DASHBOARD_LABEL: &str = "dashboard";
+
+/// The repository, opened in the user's browser from the tray menu.
+///
+/// A CONSTANT, and the open function takes no argument. The menu item is an
+/// invitation to star the project — it is never a condition of running Loaf,
+/// nothing checks whether it was clicked, and no network call is made to find
+/// out. Beyond that being the product decision, gating an app on stars is rank
+/// abuse under GitHub's Acceptable Use Policies.
+///
+/// Hard-coding it also removes the injection surface: `open_star_page` cannot
+/// be handed a path or a `file://` URL because it cannot be handed anything.
+const STAR_URL: &str = "https://github.com/yokshith09/LOAFV2-TAURI-";
+
+fn open_star_page() {
+    // Deliberately not the opener plugin: this is one fixed URL, and a new
+    // dependency is a new way for a build to fail on a machine that already
+    // cannot compile locally.
+    #[cfg(windows)]
+    let result = std::process::Command::new("cmd")
+        .args(["/C", "start", "", STAR_URL])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(STAR_URL).spawn();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(STAR_URL).spawn();
+
+    if let Err(e) = result {
+        eprintln!("could not open {STAR_URL}: {e}");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -482,3 +482,32 @@ describe("the persistence seam", () => {
     expect(reloaded.totalToday).toBe(15);
   });
 });
+
+describe("the first recorded day", () => {
+  it("is null before anything has been recorded", () => {
+    const clock = at("2026-08-30T10:00:00");
+    expect(new Tracker({ now: clock.now }).firstRecordedDay()).toBeNull();
+  });
+
+  it("is the earliest day on file, not the earliest key written", () => {
+    // Object key order follows insertion, and a migrated file can arrive in any
+    // order at all, so this cannot just take the first key.
+    const json = JSON.stringify({
+      "2026-08-30": { apps: { Xcode: 5 } },
+      "2026-08-01": { apps: { Xcode: 5 } },
+      "2026-08-15": { apps: { Xcode: 5 } },
+    });
+    const clock = at("2026-08-30T10:00:00");
+    expect(new Tracker({ json, now: clock.now }).firstRecordedDay()).toBe("2026-08-01");
+  });
+
+  it("reaches back past an upgrade rather than starting at today", () => {
+    // Standing in for an install date. A real "installed today" marker would
+    // throw a migrating user's months of history off the left of every chart.
+    const json = JSON.stringify({ "2025-11-04": { apps: { Xcode: 60 } } });
+    const clock = at("2026-08-30T10:00:00");
+    const t = new Tracker({ json, now: clock.now });
+    t.tick("Xcode", 0);
+    expect(t.firstRecordedDay()).toBe("2025-11-04");
+  });
+});

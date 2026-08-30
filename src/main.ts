@@ -27,6 +27,8 @@ import {
   hasTauriHost,
   type StatsStore,
 } from "./tracker/statsStore";
+import { emit, listen } from "@tauri-apps/api/event";
+import { COMMAND_EVENT, STATS_CHANGED_EVENT, isCommand } from "./dashboard/events";
 import { ALL_MOODS, type Mood, type Outfit, type SceneState } from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
@@ -122,6 +124,37 @@ function saveHistory(): void {
   if (!tracker) return;
   statsStore.save(tracker.serialize());
   ticksSinceSave = 0;
+}
+
+/**
+ * Apply a command from the dashboard window.
+ *
+ * The companion window is the SINGLE OWNER of the tracker. The dashboard reads
+ * the same file but never writes it: two windows mutating one JSON document
+ * loses an update the first time someone presses "Reset today" while a tick is
+ * in flight. So the dashboard asks, this applies and saves, and the reply tells
+ * it to re-read.
+ */
+function applyCommand(cmd: unknown): void {
+  if (!tracker || !isCommand(cmd)) return;
+  switch (cmd) {
+    case "reset":
+      tracker.resetToday();
+      break;
+    case "sites:forget":
+      tracker.forgetAllSites();
+      break;
+    case "radar:on":
+      // No radar in this build. The dashboard knows and does not offer the
+      // button; this arm exists so a stale window cannot silently do nothing
+      // that looks like something.
+      console.warn("the privacy radar is not in this build yet");
+      return;
+  }
+  saveHistory();
+  void emit(STATS_CHANGED_EVENT).catch(() => {
+    // Only costs the dashboard a refresh; the change itself is already saved.
+  });
 }
 
 const curlDirector = new CurlDirector();
@@ -525,6 +558,16 @@ window.addEventListener("pagehide", saveHistory);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") saveHistory();
 });
+
+// The dashboard window's buttons arrive here. Guarded rather than caught: in a
+// plain browser preview there is no event bus at all, and a rejected promise on
+// every launch would bury the errors that matter.
+if (hasTauriHost()) {
+  void listen(COMMAND_EVENT, (e) => applyCommand(e.payload)).catch((err) => {
+    // Not fatal — it only means the dashboard is read-only.
+    console.error("dashboard commands unavailable", err);
+  });
+}
 
 void loadHistory().then(() => void pollPlatform());
 // Five seconds, matching the reference: the interval IS the unit of time

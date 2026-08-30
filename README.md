@@ -41,10 +41,11 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Ambient behaviour, curl, fur ball, window walk | ✅ |
 | Focus timer, ring and pill | ✅ (session logic; the presets window is UI still to come) |
 | Screen-time tracker | ✅ accumulation and storage |
-| Dashboard + hover preview | ✅ both views generated; the window to host them is still to come |
-| Next | the dashboard window, privacy radar, closet UI, tray menus, speech bubbles |
+| Dashboard + hover preview | ✅ both views; the dashboard opens in its own window |
+| Tray menu | ✅ today's time, star the repo, quit |
+| Next | privacy radar, closet UI, speech bubbles, the focus presets window |
 
-Tests: **389 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
+Tests: **397 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -114,10 +115,13 @@ src/                     Frontend (TypeScript, no framework)
   behaviour/             Ambient layer: curl, play, wander, the fur ball
   focus/timer.ts         Focus sessions, counted to a wall-clock deadline
   tracker/tracker.ts     Screen time. Pure: a string in, a string out.
-  dashboard/html.ts      Both dashboard views, as self-contained HTML
+  dashboard/html.ts      Both dashboard views, as markup
+  dashboard/page.ts      The dashboard window's entry point
+  dashboard/events.ts    The two events the two windows speak over
 src-tauri/
   src/platform/          The OS seam. Everything native terminates here.
   src/storage.rs         The one file on disk, and the path it must keep using
+  capabilities/          What the two windows may ask the Tauri core for
 tests/                   Vitest suites
   registry.test.ts       Contract tests every companion must satisfy
 ```
@@ -189,16 +193,26 @@ rather than error, and unlike the badge strip nothing competes for that space.
 key and refreshes it inside `tick`, so between midnight and the next tick the
 totals still answer for yesterday. Deriving it costs nothing, so this port does.
 
+**No sample data anywhere.** The reference fills days it never recorded with a
+seeded 1.5–4.5h bar (hatched, captioned "sample") and falls back to an invented
+knowledge-worker curve for the hour chart until two real hours exist — so a
+fresh install opens onto a full-looking dashboard of fiction. Removed. Charts
+begin at the first day actually recorded and say so; unrecorded days inside that
+range are drawn empty; no peak hour is named until there is measured time behind
+it. A caption disclaiming a chart is smaller than the chart doing the claiming.
+
 ## Not done yet
 
 Signing and notarisation (macOS), code signing (Windows), the privacy radar, the
 dashboards, the closet UI, the tray menus, speech bubbles, onboarding, the focus
 presets window, and everything else in Priorities 1–6 of the product direction.
 
-The screen-time tracker records and persists, and the dashboard that displays it
-is generated and tested — but nothing yet *opens* that dashboard, so in the app
-today the numbers still only surface in the debug overlay. The break nudge has no
-visible form until speech bubbles land.
+The break nudge has no visible form until speech bubbles land — the tracker
+returns it and only the debug overlay shows it.
+
+The hover preview (`miniBody`) is generated and tested but has no window yet;
+that needs a borderless window positioned above the companion, which is the same
+machinery speech bubbles will want.
 
 ## Licence
 
