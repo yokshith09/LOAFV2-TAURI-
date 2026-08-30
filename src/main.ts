@@ -45,6 +45,7 @@ import {
   HOVER_DWELL_MS,
   PromptRotation,
   mayNudge,
+  tantrumLine,
 } from "./bubble/prompts";
 import {
   CLOSET_PICK_EVENT,
@@ -60,6 +61,9 @@ import {
   normaliseName,
   NO_OUTFIT,
 } from "./closet/settings";
+import { PrivacyRadar, type ProbeOutcome } from "./radar/radar";
+import { unavailableRadar, type RadarSnapshot } from "./dashboard/html";
+import { RADAR_STATE_EVENT, RADAR_HELLO_EVENT } from "./dashboard/events";
 import { ALL_MOODS, asCtx2D, type Mood, type Outfit, type SceneState } from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
@@ -268,6 +272,15 @@ const SAVE_EVERY = 12; // once a minute at a five-second tick
 async function loadHistory(): Promise<void> {
   try {
     tracker = new Tracker({ json: await statsStore.load() });
+    // The radar files its domains into the tracker, so it cannot exist before
+    // the history has been read — the ledger it writes to is that object.
+    radar = new PrivacyRadar(tracker);
+    radar.onTantrumBegan = (alert) => {
+      say({ kind: "speech", text: tantrumLine(alert.count, alert.browser), seconds: 10 });
+    };
+    radar.onTantrumEnded = (count) => {
+      say({ kind: "speech", text: `Down to ${count}. Thank you. Genuinely.`, seconds: 7 });
+    };
   } catch (err) {
     // A read that failed is NOT an empty history. Leaving `tracker` null means
     // we never save, so a file we could not open is never overwritten.
@@ -299,12 +312,23 @@ function applyCommand(cmd: unknown): void {
       break;
     case "sites:forget":
       tracker.forgetAllSites();
+      radar?.forget();
+      announceRadar();
       break;
     case "radar:on":
-      // No radar in this build. The dashboard knows and does not offer the
-      // button; this arm exists so a stale window cannot silently do nothing
-      // that looks like something.
-      console.warn("the privacy radar is not in this build yet");
+      if (!radar || !radarSupported) {
+        // A stale window, or one on a platform that cannot read tabs. Better a
+        // line in the console than a button that silently does nothing.
+        console.warn("the privacy radar is not available in this build");
+        return;
+      }
+      radar.settings.enabled = true;
+      announceRadar();
+      say({
+        kind: "speech",
+        text: "Radar on. Domains only — never the page.",
+        seconds: 8,
+      });
       return;
   }
   saveHistory();
@@ -322,6 +346,58 @@ curlDirector.settings = behaviour;
 playDirector.settings = behaviour;
 curlDirector.canLoaf = canCurl(companion);
 
+// --- The privacy radar -------------------------------------------------------
+
+/**
+ * Off by default and unbuilt on Windows.
+ *
+ * The radar is the one part of Loaf that needs a permission, so it is the one
+ * part that has to be switched on deliberately. `supported` is asked once at
+ * startup: telling someone the radar is "off, turn it on" when this build
+ * cannot read a tab at all would be a button that does nothing.
+ */
+let radar: PrivacyRadar | null = null;
+let radarSupported = false;
+
+function announceRadar(): void {
+  if (!hasTauriHost()) return;
+  void emit(RADAR_STATE_EVENT, radarSnapshot()).catch(() => {
+    // The dashboard shows what it last heard; it is a refresh behind, not wrong.
+  });
+}
+
+function radarSnapshot(): RadarSnapshot {
+  if (!radar || !radarSupported) return unavailableRadar();
+  return {
+    available: true,
+    enabled: radar.settings.enabled,
+    tabThreshold: radar.settings.tabThreshold,
+    peakTabsNow: radar.peakTabsNow,
+    statusRows: radar.statusRows(),
+  };
+}
+
+/**
+ * Ask the frontmost browser about its tabs, if it is one and if it is time.
+ *
+ * Only ever the app already in front: `tell application` would launch a browser
+ * that was closed, and a pet that opens Chrome to count its tabs has become the
+ * problem it was reporting on.
+ */
+async function pollRadar(raw: string | null, name: string, seconds: number): Promise<void> {
+  if (!radar || raw === null) return;
+  radar.expireStaleReadings();
+  const browser = radar.target(raw);
+  if (!browser) return;
+
+  const outcome = await invokeSafe<ProbeOutcome>("probe_browser", {
+    bundleId: browser.bundleId,
+    safari: browser.flavour === "safari",
+  });
+  if (!outcome) return;
+  radar.absorb(browser, name, outcome, seconds);
+}
+
 // --- Speaking ----------------------------------------------------------------
 
 const breakPrompts = new PromptRotation(BREAK_PROMPTS);
@@ -337,7 +413,13 @@ const breakPrompts = new PromptRotation(BREAK_PROMPTS);
 let moodOverride: Mood | null = null;
 
 function currentMood(): Mood {
-  return resolveMood({ hovering, override: moodOverride, sleeping, debug: debugMood });
+  return resolveMood({
+    hovering,
+    tabAlert: radar?.tabAlert != null,
+    override: moodOverride,
+    sleeping,
+    debug: debugMood,
+  });
 }
 
 /**
@@ -408,7 +490,11 @@ function tickAmbient(nowMs: number, mood: Mood): void {
   pollFocusState();
   const licence = resolveLicence(
     licenceInputs({
-      mood,
+      // `mood` reports happy while you are petting him even mid-tantrum — a
+      // deliberate lie, and the right one for the FACE. The ambient layer gets
+      // the truth: forty-seven tabs are still forty-seven tabs, and a ball
+      // rolling around under a flashing badge undercuts its own warning.
+      mood: radar?.tabAlert != null ? "tantrum" : mood,
       hovering,
       dragging: draggingWindow,
       focus: focus.display,
@@ -745,10 +831,13 @@ function updateProbeLabel(extra?: string): void {
 }
 
 /** Call a Tauri command, tolerating running in a plain browser. */
-async function invokeSafe<T>(cmd: string): Promise<T | null> {
+async function invokeSafe<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T | null> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    return (await invoke(cmd)) as T;
+    return (await invoke(cmd, args)) as T;
   } catch {
     return null;
   }
@@ -765,7 +854,7 @@ async function invokeSafe<T>(cmd: string): Promise<T | null> {
  */
 async function pollPlatform(): Promise<void> {
   const report = await invokeSafe<{
-    app: { name: string; pid: number } | null;
+    app: { name: string; raw: string; pid: number } | null;
     reason: string | null;
     platform: string;
   }>("foreground_app");
@@ -787,6 +876,15 @@ async function pollPlatform(): Promise<void> {
     lastTickResult = tracker.tick(report.app?.name ?? null, idle ?? null);
     sleeping = lastTickResult === "idle";
     if (lastTickResult === "breakDue") nudge();
+
+    // Away from the keyboard means the browser is not earning time either, so
+    // the radar sits out idle ticks rather than crediting a domain for a lunch
+    // break.
+    void pollRadar(
+      report.app?.raw ?? null,
+      report.app?.name ?? "",
+      lastTickResult === "idle" ? 0 : TICK_INTERVAL,
+    );
     if (++ticksSinceSave >= SAVE_EVERY) saveHistory();
   }
 
@@ -820,6 +918,9 @@ if (hasTauriHost()) {
   void listen(FOCUS_COMMAND_EVENT, (e) => applyFocusCommand(e.payload)).catch((err) => {
     console.error("focus commands unavailable", err);
   });
+  void listen(RADAR_HELLO_EVENT, () => announceRadar()).catch(() => {
+    // The dashboard falls back to showing the radar as unavailable.
+  });
   void listen(FOCUS_HELLO_EVENT, () => announceFocus()).catch(() => {
     // The focus window falls back to showing an idle timer.
   });
@@ -837,7 +938,12 @@ if (hasTauriHost()) {
   });
 }
 
-void loadHistory().then(() => void pollPlatform());
+void loadHistory()
+  .then(async () => {
+    radarSupported = (await invokeSafe<boolean>("browser_probe_supported")) ?? false;
+    announceRadar();
+  })
+  .then(() => void pollPlatform());
 // Five seconds, matching the reference: the interval IS the unit of time
 // credited, so changing it changes what a recorded second means.
 setInterval(() => void pollPlatform(), TICK_INTERVAL * 1000);

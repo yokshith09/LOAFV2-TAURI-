@@ -2,8 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { Tracker } from "../tracker/tracker";
 import { dashboardBody, DASHBOARD_STYLES, unavailableRadar } from "./html";
+import type { RadarSnapshot } from "./html";
 import type { Platform } from "./html";
-import { COMMAND_EVENT, STATS_CHANGED_EVENT } from "./events";
+import {
+  COMMAND_EVENT,
+  STATS_CHANGED_EVENT,
+  RADAR_STATE_EVENT,
+  RADAR_HELLO_EVENT,
+  isRadarSnapshot,
+} from "./events";
 
 /**
  * The dashboard window's entry point.
@@ -31,6 +38,14 @@ async function detectPlatform(): Promise<Platform> {
 
 let platform: Platform = "other";
 
+/**
+ * What the companion last said about the radar.
+ *
+ * Unavailable until it answers, which is also the truthful state if it never
+ * does: this window cannot read a tab and must not imply otherwise.
+ */
+let radar: RadarSnapshot = unavailableRadar();
+
 async function render(): Promise<void> {
   let json: string | null;
   try {
@@ -48,12 +63,7 @@ async function render(): Promise<void> {
   }
 
   const tracker = new Tracker({ json });
-  root!.innerHTML = dashboardBody(tracker, {
-    // The radar is not ported yet, and saying "off — turn it on" would put a
-    // button here that does nothing.
-    radar: unavailableRadar(),
-    platform,
-  });
+  root!.innerHTML = dashboardBody(tracker, { radar, platform });
 }
 
 /**
@@ -86,9 +96,21 @@ root.addEventListener("click", (ev) => {
 // than patching what is on screen keeps this window's picture identical to what
 // is actually on disk.
 void listen(STATS_CHANGED_EVENT, () => void render());
+void listen(RADAR_STATE_EVENT, (e) => {
+  // Rendered straight from the payload: the radar has never been on disk, so
+  // there is nothing here to re-read even if this wanted to. Checked first —
+  // this decides whether the page tells the user their domains are being read.
+  if (!isRadarSnapshot(e.payload)) return;
+  radar = e.payload;
+  void render();
+});
 
 void detectPlatform()
   .then((p) => {
     platform = p;
   })
-  .then(render);
+  .then(render)
+  .then(() => emit(RADAR_HELLO_EVENT))
+  .catch(() => {
+    // No companion listening; the unavailable state above stands.
+  });

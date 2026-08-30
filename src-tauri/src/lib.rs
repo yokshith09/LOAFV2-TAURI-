@@ -16,6 +16,7 @@
 //! No network code exists in this crate, and none should. That is the product's
 //! central promise and it is enforced by review, not by comment.
 
+pub mod browser;
 pub mod platform;
 pub mod storage;
 
@@ -57,6 +58,24 @@ fn foreground_app() -> ForegroundReport {
 #[tauri::command]
 fn idle_seconds() -> Option<f64> {
     platform::native().idle_seconds().ok().flatten()
+}
+
+/// Ask a browser what its active tab's domain is, and how many tabs are open.
+///
+/// The caller passes the bundle identifier it already matched, rather than this
+/// searching for a browser itself — the radar decides who is worth asking and
+/// when, and the answer must never be "some browser I found running".
+#[tauri::command]
+fn probe_browser(bundle_id: String, safari: bool) -> browser::ProbeOutcome {
+    // Long enough that a first-time permission prompt can be read and answered,
+    // short enough that a wedged browser does not hold a tick open.
+    browser::probe(&bundle_id, safari, 8)
+}
+
+/// Whether this build can read tabs at all. See `browser.rs`.
+#[tauri::command]
+fn browser_probe_supported() -> bool {
+    browser::supported()
 }
 
 #[tauri::command]
@@ -599,6 +618,8 @@ pub fn run() {
             start_drag,
             read_stats,
             write_stats,
+            probe_browser,
+            browser_probe_supported,
             open_dashboard,
             fit_closet,
             fit_focus,

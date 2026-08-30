@@ -29,6 +29,24 @@ export class PromptRotation {
   }
 }
 
+/**
+ * What he says about your tabs. `%d` is the count, `%s` the browser.
+ *
+ * Rotated like the break prompts, and for the same reason — but this one is
+ * seen far less often, so the rotation matters more per line, not less.
+ */
+export const TANTRUM_PROMPTS: readonly string[] = [
+  "%d tabs. I counted them. Twice.",
+  "%d tabs open in %s. Pick five. Close them.",
+  "%d tabs. Your computer is fine. I am not.",
+];
+
+const tantrumRotation = new PromptRotation(TANTRUM_PROMPTS);
+
+export function tantrumLine(count: number, browser: string): string {
+  return tantrumRotation.next().replace("%d", String(count)).replace("%s", browser);
+}
+
 /** How long a nudge stays up, in seconds. Matches the reference. */
 export const BREAK_BUBBLE_SECONDS = 12;
 

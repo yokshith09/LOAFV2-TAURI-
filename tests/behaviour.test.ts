@@ -329,12 +329,27 @@ describe("the curl state machine", () => {
 
 describe("the mood ladder", () => {
   const ladder = (over: Partial<MoodInputs>): Mood =>
-    resolveMood({ hovering: false, override: null, sleeping: false, debug: null, ...over });
+    resolveMood({
+      hovering: false,
+      tabAlert: false,
+      override: null,
+      sleeping: false,
+      debug: null,
+      ...over,
+    });
 
   it("lets petting outrank whatever else is going on", () => {
     // "Petting calms even a tantrum" — the reference puts hovering at the top on
     // purpose, and it is the rung most likely to be demoted by accident.
-    expect(ladder({ hovering: true, override: "worried", sleeping: true })).toBe("happy");
+    expect(
+      ladder({ hovering: true, tabAlert: true, override: "worried", sleeping: true }),
+    ).toBe("happy");
+  });
+
+  it("lets a tantrum outrank a spoken line", () => {
+    // Forty tabs is a louder fact than a break reminder, and the reference
+    // orders it that way.
+    expect(ladder({ tabAlert: true, override: "worried" })).toBe("tantrum");
   });
 
   it("lets a spoken line outrank being asleep", () => {

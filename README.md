@@ -45,9 +45,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Tray menu | ✅ focus, today's time, closet, star the repo, quit |
 | Speech bubbles + hover preview | ✅ break nudge speaks; hovering shows today's card |
 | Closet | ✅ all 18 characters, 6 garments, seasonal, per-character names, pixel toggle |
-| Next | privacy radar, sounds, onboarding, sprite packs |
+| Privacy radar | ✅ **macOS only** — domains, tab counts, tantrums. Windows reports it unsupported |
+| Next | sounds, onboarding, sprite packs |
 
-Tests: **483 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
+Tests: **517 frontend** (Vitest) + **32 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -126,9 +127,11 @@ src/                     Frontend (TypeScript, no framework)
   bubble/prompts.ts      What it says, and when it stays quiet
   closet/settings.ts     The persisted choices, and the only writer of them
   closet/view.ts         The picker's markup — thumbnails are live canvases
+  radar/radar.ts         Tab counts, tantrum hysteresis, per-browser permission
 src-tauri/
   src/platform/          The OS seam. Everything native terminates here.
   src/storage.rs         The one file on disk, and the path it must keep using
+  src/browser.rs         Reading a tab's domain. macOS only — see the note there
   capabilities/          What the two windows may ask the Tauri core for
 tests/                   Vitest suites
   registry.test.ts       Contract tests every companion must satisfy
@@ -200,6 +203,13 @@ rather than error, and unlike the badge strip nothing competes for that space.
 **Day rollover is computed, not cached.** The reference caches the current day
 key and refreshes it inside `tick`, so between midnight and the next tick the
 totals still answer for yesterday. Deriving it costs nothing, so this port does.
+
+**The privacy radar is macOS-only.** Reading another application's active tab
+means AppleScript on macOS and, on Windows, either UI Automation against the
+address bar or a browser extension — a different product decision rather than a
+port of this one. Until that is decided, Windows reports the feature as
+unsupported and the dashboard says so in one sentence, rather than listing five
+browsers that all "couldn't be read".
 
 **No sample data anywhere.** The reference fills days it never recorded with a
 seeded 1.5–4.5h bar (hatched, captioned "sample") and falls back to an invented
