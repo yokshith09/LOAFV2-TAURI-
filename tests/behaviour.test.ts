@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { resolveMood, type MoodInputs } from "../src/behaviour/mood";
+import type { Mood } from "../src/core/types";
 import {
   resolveLicence,
   licenceInputs,
@@ -322,5 +324,37 @@ describe("the curl state machine", () => {
     const d = new CurlDirector(midpoint);
     d.tick(1 / 60, idle, 9.0, 100);
     expect(d.state.peeking).toBe(false);
+  });
+});
+
+describe("the mood ladder", () => {
+  const ladder = (over: Partial<MoodInputs>): Mood =>
+    resolveMood({ hovering: false, override: null, sleeping: false, debug: null, ...over });
+
+  it("lets petting outrank whatever else is going on", () => {
+    // "Petting calms even a tantrum" — the reference puts hovering at the top on
+    // purpose, and it is the rung most likely to be demoted by accident.
+    expect(ladder({ hovering: true, override: "worried", sleeping: true })).toBe("happy");
+  });
+
+  it("lets a spoken line outrank being asleep", () => {
+    // A nudge that arrived just as you stepped away must still show the worried
+    // face rather than a sleeping one.
+    expect(ladder({ override: "worried", sleeping: true })).toBe("worried");
+  });
+
+  it("sleeps when the tracker says you are away", () => {
+    // The tracker reported this on every tick from the day it landed and nothing
+    // was listening, so the character stayed wide awake through a lunch break.
+    expect(ladder({ sleeping: true })).toBe("sleeping");
+  });
+
+  it("keeps the development cycle underneath every real signal", () => {
+    expect(ladder({ debug: "proud" })).toBe("proud");
+    expect(ladder({ debug: "proud", sleeping: true })).toBe("sleeping");
+  });
+
+  it("is idle when nothing at all is happening", () => {
+    expect(ladder({})).toBe("idle");
   });
 });

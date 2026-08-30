@@ -1,9 +1,11 @@
 /**
- * Phase 0 / Phase 1 entry point.
+ * The companion window — the pet itself, and the owner of everything the other
+ * windows only display.
  *
- * Proves the window behaves like a desktop pet on both platforms, and drives
- * the ported companions. Feature work (tantrums, the closet, the dashboard)
- * still lives outside this file.
+ * It draws the character, runs the ambient layer, ticks the tracker, and is the
+ * single writer of both the screen-time file and the closet's choices. The
+ * dashboard, bubble and closet windows send it validated events and render what
+ * it broadcasts back; none of them writes state of its own.
  */
 
 import { COMPANIONS, findCompanion } from "./companions/registry";
@@ -16,6 +18,7 @@ import { WanderController } from "./behaviour/wander";
 import { drawBall, drawSwipe } from "./behaviour/furBall";
 import { resolveLicence, licenceInputs } from "./behaviour/licence";
 import { defaultBehaviourSettings } from "./behaviour/settings";
+import { resolveMood } from "./behaviour/mood";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
 import { FocusTimer } from "./focus/timer";
@@ -60,7 +63,14 @@ if (!canvas) throw new Error("missing #stage canvas");
 const ctx = canvas.getContext("2d");
 if (!ctx) throw new Error("2d context unavailable — webview is too old");
 
-let moodIndex = 0;
+/**
+ * Overridden by the alt-click development shortcut, and nothing else.
+ *
+ * Sits at the bottom of the ladder in `currentMood`, in place of `idle`, so
+ * cycling through the faces still works while every real signal keeps
+ * precedence over it.
+ */
+let debugMood: Mood | null = null;
 
 // --- The wardrobe ------------------------------------------------------------
 
@@ -271,6 +281,18 @@ const breakPrompts = new PromptRotation(BREAK_PROMPTS);
  */
 let moodOverride: Mood | null = null;
 
+function currentMood(): Mood {
+  return resolveMood({ hovering, override: moodOverride, sleeping, debug: debugMood });
+}
+
+/**
+ * Away from the keyboard for longer than the tracker's idle threshold.
+ *
+ * The tracker has been reporting this on every tick since it landed and nobody
+ * was listening, so the character stayed wide awake through a lunch break.
+ */
+let sleeping = false;
+
 function say(payload: BubblePayload): void {
   if (!hasTauriHost()) return;
   void emit(BUBBLE_SHOW_EVENT, payload).catch((err) => {
@@ -452,9 +474,7 @@ function frame(nowMs: number): void {
     nextBlinkAt = nowMs + 2500 + Math.random() * 4000;
   }
 
-  // An override wins over the cycled mood: while the character is telling you
-  // to drink water it should not be beaming.
-  const mood = moodOverride ?? (ALL_MOODS[moodIndex]! as Mood);
+  const mood = currentMood();
   tickAmbient(nowMs, mood);
 
   const state: SceneState = {
@@ -603,7 +623,9 @@ function wireInteraction(): void {
       const next = COMPANIONS[(i + 1) % COMPANIONS.length]!;
       applyClosetPick({ kind: "companion", id: next.id });
     } else if (e.altKey) {
-      moodIndex = (moodIndex + 1) % ALL_MOODS.length;
+      const at = debugMood === null ? -1 : ALL_MOODS.indexOf(debugMood);
+      const next = ALL_MOODS[(at + 1) % ALL_MOODS.length]!;
+      debugMood = next === "idle" ? null : next;
     } else {
       // What the hover card has been promising since it landed: "Click for the
       // full dashboard →". Until now a click cycled the mood instead, which
@@ -661,7 +683,7 @@ function updateProbeLabel(extra?: string): void {
   if (!debugVisible) return;
   const wearing = currentOutfit()?.name ?? "bare";
   probeEl.textContent =
-    `${companionName()} · ${ALL_MOODS[moodIndex]}` +
+    `${companionName()} · ${currentMood()}` +
     `\n${wearing}${pixelated ? " · pixel" : ""}` +
     `\n${lastProbeLine}`;
 }
@@ -707,6 +729,7 @@ async function pollPlatform(): Promise<void> {
     // not be flattened into a guess on the way there.
     const idle = await invokeSafe<number | null>("idle_seconds");
     lastTickResult = tracker.tick(report.app?.name ?? null, idle ?? null);
+    sleeping = lastTickResult === "idle";
     if (lastTickResult === "breakDue") nudge();
     if (++ticksSinceSave >= SAVE_EVERY) saveHistory();
   }

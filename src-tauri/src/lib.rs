@@ -1,11 +1,17 @@
 //! Loaf — a private desktop companion.
 //!
-//! Phase 0 of the Tauri rewrite. The goal of this phase is not features: it is
-//! to prove the three things that would invalidate the whole architecture if
-//! they did not hold —
-//!   1. a transparent, always-on-top, undecorated window on both platforms,
-//!   2. the character rendering smoothly in a webview canvas,
-//!   3. one platform-adapter seam that hides the OS from everything above it.
+//! The native half: four windows, the tray, the platform probe, and the one
+//! file on disk.
+//!
+//!   companion  the pet. Transparent, undecorated, always on top, no taskbar
+//!              or Dock entry. Owns all state; the others only display it.
+//!   dashboard  today's time. A normal window you read and close.
+//!   closet     who is on duty and what they are wearing.
+//!   bubble     speech and the hover preview. Transparent, never takes focus.
+//!
+//! Everything OS-specific below the window layer terminates in `platform`.
+//! Adding a window means adding it to `capabilities/default.json` too, or its
+//! core calls are denied at runtime with no error the user would ever see.
 //!
 //! No network code exists in this crate, and none should. That is the product's
 //! central promise and it is enforced by review, not by comment.
