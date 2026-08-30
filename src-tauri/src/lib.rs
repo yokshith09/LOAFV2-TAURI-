@@ -11,6 +11,7 @@
 //! central promise and it is enforced by review, not by comment.
 
 pub mod platform;
+pub mod storage;
 
 use platform::{ForegroundApp, PlatformProbe};
 use serde::Serialize;
@@ -68,6 +69,30 @@ fn platform_name() -> &'static str {
 #[tauri::command]
 fn start_drag(window: tauri::Window) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
+}
+
+/// The OS data directory — `~/Library/Application Support` or `%APPDATA%`.
+///
+/// Note this is `data_dir`, not `app_data_dir`: the latter appends the bundle
+/// identifier, and the history we have to keep reading lives under a literal
+/// `LoafPlus` folder. See [`storage`] for why that matters.
+fn data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path().data_dir().map_err(|e| e.to_string())
+}
+
+/// The whole screen-time history as written on disk, or `null` if there is none.
+///
+/// Errors are returned rather than swallowed. "Could not read the file" must not
+/// arrive at the tracker looking like "you have no history", or the next save
+/// overwrites months of data with an empty day.
+#[tauri::command]
+fn read_stats(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    storage::read_or_inherit(&data_dir(&app)?)
+}
+
+#[tauri::command]
+fn write_stats(app: tauri::AppHandle, json: String) -> Result<(), String> {
+    storage::write_atomic(&data_dir(&app)?, &json)
 }
 
 /// Park the companion in the bottom-right of the work area, the way the Swift
@@ -146,7 +171,9 @@ pub fn run() {
             foreground_app,
             idle_seconds,
             platform_name,
-            start_drag
+            start_drag,
+            read_stats,
+            write_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running Loaf");

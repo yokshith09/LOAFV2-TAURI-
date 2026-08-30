@@ -2,8 +2,8 @@
  * Phase 0 / Phase 1 entry point.
  *
  * Proves the window behaves like a desktop pet on both platforms, and drives
- * the ported companions. Feature work (tracking, tantrums, the timer) still
- * lives outside this file.
+ * the ported companions. Feature work (tantrums, the closet, the dashboard)
+ * still lives outside this file.
  */
 
 import { COMPANIONS } from "./companions/registry";
@@ -20,6 +20,13 @@ import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
 import { FocusTimer } from "./focus/timer";
 import { drawFocusRing, drawFocusPill } from "./render/focusRing";
+import { Tracker, TICK_INTERVAL, formatDuration } from "./tracker/tracker";
+import {
+  MemoryStatsStore,
+  TauriStatsStore,
+  hasTauriHost,
+  type StatsStore,
+} from "./tracker/statsStore";
 import { ALL_MOODS, type Mood, type Outfit, type SceneState } from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
@@ -78,6 +85,45 @@ const focus = new FocusTimer({
     },
   },
 });
+
+// --- Screen time -------------------------------------------------------------
+
+/**
+ * Nothing is tracked until the file on disk has been read.
+ *
+ * The read is a round trip to Rust, so there is a window at launch with no
+ * tracker at all. Deliberately: a tracker built before the read finishes would
+ * hold an empty history, and its first save would put that empty file where
+ * months of the user's data used to be. Losing the first few seconds of a
+ * session is the cheaper mistake by a wide margin.
+ */
+const statsStore: StatsStore = hasTauriHost()
+  ? new TauriStatsStore()
+  : new MemoryStatsStore();
+let tracker: Tracker | null = null;
+let ticksSinceSave = 0;
+let lastTickResult = "starting";
+
+/** Ticks between saves. The whole file is rewritten, so not every tick. */
+const SAVE_EVERY = 12; // once a minute at a five-second tick
+
+async function loadHistory(): Promise<void> {
+  try {
+    tracker = new Tracker({ json: await statsStore.load() });
+  } catch (err) {
+    // A read that failed is NOT an empty history. Leaving `tracker` null means
+    // we never save, so a file we could not open is never overwritten.
+    console.error("could not read screen time; not tracking this session", err);
+    lastTickResult = "history unreadable";
+  }
+}
+
+function saveHistory(): void {
+  if (!tracker) return;
+  statsStore.save(tracker.serialize());
+  ticksSinceSave = 0;
+}
+
 const curlDirector = new CurlDirector();
 const playDirector = new PlayDirector();
 const wander = new WanderController();
@@ -419,6 +465,15 @@ async function invokeSafe<T>(cmd: string): Promise<T | null> {
   }
 }
 
+/**
+ * One tracker tick: ask the OS what is in front and how long since you touched
+ * anything, credit the time, and label the result.
+ *
+ * The foreground query and the idle query are the same round trip the debug
+ * label already needed, so this replaced the separate probe poll rather than
+ * running alongside it — two independent pollers would have asked the OS the
+ * same question twice a second apart and disagreed about it in the UI.
+ */
 async function pollPlatform(): Promise<void> {
   const report = await invokeSafe<{
     app: { name: string; pid: number } | null;
@@ -430,10 +485,28 @@ async function pollPlatform(): Promise<void> {
     updateProbeLabel("no tauri host (browser preview)");
     return;
   }
+
+  const where = report.app
+    ? `${report.platform}: ${report.app.name || "(unnamed)"} #${report.app.pid}`
+    : `${report.platform}: ${report.reason ?? "nothing focused"}`;
+
+  if (tracker) {
+    // `null` for either reading means the OS would not say, which is not the
+    // same as "nothing" — the tracker decides what to do with that, and it must
+    // not be flattened into a guess on the way there.
+    const idle = await invokeSafe<number | null>("idle_seconds");
+    lastTickResult = tracker.tick(report.app?.name ?? null, idle ?? null);
+
+    // The visible break nudge waits on speech bubbles; for now the result is
+    // only surfaced in the debug label, so this is a known gap rather than a
+    // finished feature.
+    if (++ticksSinceSave >= SAVE_EVERY) saveHistory();
+  }
+
   updateProbeLabel(
-    report.app
-      ? `${report.platform}: ${report.app.name || "(unnamed)"} #${report.app.pid}`
-      : `${report.platform}: ${report.reason ?? "nothing focused"}`,
+    tracker
+      ? `${where}\n${formatDuration(tracker.totalToday)} today · ${lastTickResult}`
+      : `${where}\n${lastTickResult}`,
   );
 }
 
@@ -442,6 +515,19 @@ resize();
 watchPixelRatio();
 wireInteraction();
 updateProbeLabel("starting…");
-void pollPlatform();
-setInterval(() => void pollPlatform(), 3000);
+
+/**
+ * The last chance to write. A quit between two saves would otherwise cost up to
+ * a minute of the day, and `pagehide` is the event that actually fires when a
+ * webview goes away — `beforeunload` is unreliable in an embedded one.
+ */
+window.addEventListener("pagehide", saveHistory);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveHistory();
+});
+
+void loadHistory().then(() => void pollPlatform());
+// Five seconds, matching the reference: the interval IS the unit of time
+// credited, so changing it changes what a recorded second means.
+setInterval(() => void pollPlatform(), TICK_INTERVAL * 1000);
 requestAnimationFrame(frame);

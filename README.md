@@ -15,24 +15,35 @@ deliberately. None of its code ships here.
 
 ## Status
 
-**Phase 0 (de-risk spike) — complete on Windows, pending on macOS.**
+**Phase 0 (de-risk spike) — complete on both platforms.**
 **Phase 1 (port the core) — in progress.**
 
 | Phase 0 goal | Windows | macOS |
 |---|---|---|
-| Transparent window | ✅ verified | ⏳ awaiting testers |
-| Always-on-top | ✅ verified | ⏳ |
-| Undecorated, no taskbar/Dock entry | ✅ verified | ⏳ |
-| Character renders and animates | ✅ verified | ⏳ |
-| Platform adapter (foreground app, idle) | ✅ builds and runs | ⏳ |
+| Transparent window | ✅ verified | ✅ verified |
+| Always-on-top | ✅ verified | ✅ verified |
+| Undecorated, no taskbar/Dock entry | ✅ verified | ✅ verified |
+| Character renders and animates | ✅ verified | ✅ verified |
+| Draggable, with a tray quit | ✅ verified | ✅ verified |
+| Platform adapter (foreground app, idle) | ✅ builds and runs | ✅ builds and runs |
+
+The first Mac build failed four of these. What it took to fix them is written up
+in `Known deviations` and in the commit that fixed them — the short version is
+that transparency needs a Cargo feature as well as a config flag, and that
+`-webkit-app-region` is an Electron API Tauri ignores entirely.
 
 | Phase 1 | |
 |---|---|
-| Characters ported | **11 of 18** — 6 cats, 4 dogs, 1 ghost |
-| Remaining | shiba, capybara, duck, fairy, droid, robot, plane |
-| Then | outfits, pixel-art mode, ambient behaviour |
+| Characters | ✅ **18 of 18** — 6 cats, 4 dogs, shiba, ghost, capybara, duck, fairy, droid, robot, plane |
+| Drawing-area overshoots | ✅ all five fixed, contract test has no exemptions left |
+| Outfits + seasonal calendar | ✅ 6 garments |
+| Pixel-art mode | ✅ |
+| Ambient behaviour, curl, fur ball, window walk | ✅ |
+| Focus timer, ring and pill | ✅ (session logic; the presets window is UI still to come) |
+| Screen-time tracker | ✅ accumulation and storage; the dashboard is still to come |
+| Next | privacy radar, dashboards, closet UI, tray menus, speech bubbles |
 
-Tests: **120 frontend** (Vitest) + **19 Rust**. CI green on macOS and Windows.
+Tests: **343 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -99,13 +110,17 @@ src/                     Frontend (TypeScript, no framework)
   companions/registry.ts The closet's stock — one line per character
   render/scene.ts        Fit transform and the y-up -> y-down flip
   render/face.ts         Shared mood/eye system, species-agnostic
+  behaviour/             Ambient layer: curl, play, wander, the fur ball
+  focus/timer.ts         Focus sessions, counted to a wall-clock deadline
+  tracker/tracker.ts     Screen time. Pure: a string in, a string out.
 src-tauri/
   src/platform/          The OS seam. Everything native terminates here.
+  src/storage.rs         The one file on disk, and the path it must keep using
 tests/                   Vitest suites
   registry.test.ts       Contract tests every companion must satisfy
 ```
 
-### Three contracts worth knowing before changing anything
+### Four contracts worth knowing before changing anything
 
 **1. The design space.** All art is authored in a fixed **170 x 190** space with
 **y pointing up**, inherited unchanged from the Swift original so ported bezier
@@ -126,29 +141,61 @@ be recorded as a guess.
 mood, balanced save/restore, clears the badge strip while cross. If a new
 character needs changes to the renderer, the contract has been broken somewhere.
 
+**4. `stats.json` is real users' history.** People already running the Swift app
+have months of screen time at `<data dir>/LoafPlus/stats.json`. This must keep
+reading that file and keep writing one the Swift app can still read. Two
+consequences that look like tidying and are not: the path is spelled out
+literally rather than derived from the bundle identifier (Tauri's
+`app_data_dir()` resolves elsewhere and would silently start everyone over), and
+parsing tolerates every missing key rather than validating a schema. The Swift
+hand-writes its decoder for exactly this reason — a synthesised one treats every
+key as required and throws the whole history away when it meets an older file.
+Both are pinned by tests.
+
 ## Known deviations from the reference
 
-**Latent ear overshoot — both drawing engines.** In the `scrolling` pose the ears
-lean *up*; in `tantrum` they lean *down*. For the tallest ears in each engine the
-scrolling tip lands inside the reserved tab-badge strip:
+**Five badge-strip overshoots — fixed, not ported.** The reference lets five
+characters draw into the reserved tab-badge strip. These are corrected here
+rather than reproduced, because the strip is a contract and a faithful port of a
+collision is just a collision:
 
-| | scrolling | tantrum |
+| | reference | here |
 |---|---|---|
-| `cat-indie` | y = 169.24 ❌ | 158.8 ✅ |
-| `dog-husky` | y = 170.00 ❌ | 159.0 ✅ |
+| `cat-indie` ears (scrolling) | y = 169.24 | clamped, lean kept |
+| `dog-husky` ears (scrolling) | y = 170.00 | clamped, lean kept |
+| droid antenna | 172 | 165 |
+| robot aerials | 180 | assembly 14pt lower |
+| fairy horns (tantrum) | 178 | 165, squashed not truncated |
 
-Neither engine bounds-checks the scrolling lean, so this is a pattern in the
-reference rather than a one-off. It is currently unreachable — a tab alert forces
-the `tantrum` pose (`CompanionView.swift:113`), which pulls the same ears clear —
-so it has been ported faithfully rather than silently corrected, and pinned by a
-test in both engines so it cannot quietly worsen. It becomes visible if the badge
-is ever shown outside `tantrum`, or if a character gets taller ears.
+The ears were clamped in height only, so the scrolling pose still tips them
+forward — it just stops them growing. The other three were structural, and a
+clamp would have flattened each tip into a flat chord, so they were shortened
+instead. The fairy's mattered most: her horns exist *only* in the tantrum pose,
+which is exactly the pose a tab alert forces, so the transformation announcing
+"too many tabs" and the badge counting them were drawn into the same space by
+construction, every time.
+
+Every fix has a test that proves it, plus two that guard the lazy version — that
+clamping did not flatten the scrolling lean into idle, and that shortening did
+not remove the horns.
+
+**Robot feet at y = 12** — one point under the ground plane, left as the
+reference has it. A single point of overlap with the floor reads as contact
+rather than error, and unlike the badge strip nothing competes for that space.
+
+**Day rollover is computed, not cached.** The reference caches the current day
+key and refreshes it inside `tick`, so between midnight and the next tick the
+totals still answer for yesterday. Deriving it costs nothing, so this port does.
 
 ## Not done yet
 
-Signing and notarisation (macOS), code signing (Windows), tracking, the privacy
-radar, the focus timer, the closet UI, the tray, and everything else in
-Priorities 1–6 of the product direction.
+Signing and notarisation (macOS), code signing (Windows), the privacy radar, the
+dashboards, the closet UI, the tray menus, speech bubbles, onboarding, the focus
+presets window, and everything else in Priorities 1–6 of the product direction.
+
+The screen-time tracker records and persists, but nothing yet *displays* it
+beyond the debug overlay, and the break nudge has no visible form until speech
+bubbles land.
 
 ## Licence
 
