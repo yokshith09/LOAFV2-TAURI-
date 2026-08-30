@@ -39,15 +39,15 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Outfits + seasonal calendar | ✅ 6 garments |
 | Pixel-art mode | ✅ |
 | Ambient behaviour, curl, fur ball, window walk | ✅ |
-| Focus timer, ring and pill | ✅ (session logic; the presets window is UI still to come) |
+| Focus timer | ✅ session logic, ring and pill on the character, and its own window |
 | Screen-time tracker | ✅ accumulation and storage |
 | Dashboard + hover preview | ✅ both views; the dashboard opens in its own window |
-| Tray menu | ✅ today's time, closet, star the repo, quit |
+| Tray menu | ✅ focus, today's time, closet, star the repo, quit |
 | Speech bubbles + hover preview | ✅ break nudge speaks; hovering shows today's card |
 | Closet | ✅ all 18 characters, 6 garments, seasonal, per-character names, pixel toggle |
-| Next | privacy radar, onboarding, the focus presets window |
+| Next | privacy radar, sounds, onboarding, sprite packs |
 
-Tests: **449 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
+Tests: **483 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -116,6 +116,7 @@ src/                     Frontend (TypeScript, no framework)
   render/face.ts         Shared mood/eye system, species-agnostic
   behaviour/             Ambient layer: curl, play, wander, the fur ball
   focus/timer.ts         Focus sessions, counted to a wall-clock deadline
+  focus/view.ts          The dial's words and numbers, derived from a snapshot
   tracker/tracker.ts     Screen time. Pure: a string in, a string out.
   dashboard/html.ts      Both dashboard views, as markup
   dashboard/page.ts      The dashboard window's entry point

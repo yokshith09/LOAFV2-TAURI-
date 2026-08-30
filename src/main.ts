@@ -22,6 +22,12 @@ import { resolveMood } from "./behaviour/mood";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
 import { FocusTimer } from "./focus/timer";
+import {
+  FOCUS_COMMAND_EVENT,
+  FOCUS_STATE_EVENT,
+  FOCUS_HELLO_EVENT,
+  isFocusCommand,
+} from "./focus/events";
 import { drawFocusRing, drawFocusPill } from "./render/focusRing";
 import { Tracker, TICK_INTERVAL, formatDuration } from "./tracker/tracker";
 import {
@@ -189,6 +195,55 @@ const focus = new FocusTimer({
   },
 });
 
+/**
+ * Apply a click from the focus window and broadcast where the timer now is.
+ *
+ * Same division as the closet: that window owns no timer, because this one
+ * already has one that persists across a quit and draws the ring at the
+ * character's feet.
+ */
+function applyFocusCommand(raw: unknown): void {
+  if (!isFocusCommand(raw)) return;
+  switch (raw.kind) {
+    case "preset":
+      focus.setDurationMinutes(raw.minutes);
+      break;
+    case "adjust":
+      focus.adjust(raw.minutes);
+      break;
+    case "toggle":
+      focus.toggle();
+      break;
+    case "reset":
+      focus.reset();
+      break;
+  }
+  announceFocus();
+}
+
+function announceFocus(): void {
+  if (!hasTauriHost()) return;
+  void emit(FOCUS_STATE_EVENT, focus.snapshot).catch(() => {
+    // The window recomputes from its last snapshot; a dropped broadcast costs a
+    // stale state name, not a wrong clock.
+  });
+}
+
+/**
+ * The state the focus window last heard about.
+ *
+ * Compared each tick so a session ending on its own — nobody clicked anything —
+ * still reaches the window. Only the state is watched: the clock needs no
+ * message at all, because the window derives it from the deadline.
+ */
+let lastAnnouncedFocusState: string | null = null;
+
+function pollFocusState(): void {
+  if (focus.state === lastAnnouncedFocusState) return;
+  lastAnnouncedFocusState = focus.state;
+  announceFocus();
+}
+
 // --- Screen time -------------------------------------------------------------
 
 /**
@@ -350,6 +405,7 @@ function tickAmbient(nowMs: number, mood: Mood): void {
   if (dt <= 0) return;
 
   focus.poll();
+  pollFocusState();
   const licence = resolveLicence(
     licenceInputs({
       mood,
@@ -761,6 +817,12 @@ document.addEventListener("visibilitychange", () => {
 // plain browser preview there is no event bus at all, and a rejected promise on
 // every launch would bury the errors that matter.
 if (hasTauriHost()) {
+  void listen(FOCUS_COMMAND_EVENT, (e) => applyFocusCommand(e.payload)).catch((err) => {
+    console.error("focus commands unavailable", err);
+  });
+  void listen(FOCUS_HELLO_EVENT, () => announceFocus()).catch(() => {
+    // The focus window falls back to showing an idle timer.
+  });
   void listen(CLOSET_PICK_EVENT, (e) => applyClosetPick(e.payload)).catch((err) => {
     console.error("closet picks unavailable", err);
   });

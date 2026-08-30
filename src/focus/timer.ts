@@ -162,6 +162,28 @@ export class FocusTimer {
     return this.stateValue === "running" || this.stateValue === "paused";
   }
 
+  /**
+   * Everything another window needs to show this timer without owning it.
+   *
+   * The deadline goes across as an absolute time, not a countdown: a countdown
+   * is stale the instant it crosses the bus and drifts further every second the
+   * other window stays open. With the deadline, that window derives the clock
+   * itself and stays exact without anyone sending it a tick.
+   */
+  get snapshot(): {
+    state: TimerState;
+    duration: number;
+    endsAt: number | null;
+    pausedRemaining: number | null;
+  } {
+    return {
+      state: this.stateValue,
+      duration: this.durationValue,
+      endsAt: this.stateValue === "running" ? this.endAt : null,
+      pausedRemaining: this.stateValue === "paused" ? this.pausedRemaining : null,
+    };
+  }
+
   /** The shape the behaviour licence consumes. */
   get display(): { remaining: number; paused: boolean } | null {
     if (!this.isActive) return null;

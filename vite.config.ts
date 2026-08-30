@@ -19,7 +19,7 @@ export default defineConfig({
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     rollupOptions: {
-      // Four windows, four documents. Each is opened by Rust as its own
+      // Five windows, five documents. Each is opened by Rust as its own
       // WebviewWindow, so each needs a real file at a URL the webview can be
       // pointed at — a client-side route would have nothing to point to.
       input: {
@@ -27,6 +27,7 @@ export default defineConfig({
         dashboard: resolve(__dirname, "dashboard.html"),
         bubble: resolve(__dirname, "bubble.html"),
         closet: resolve(__dirname, "closet.html"),
+        focus: resolve(__dirname, "focus.html"),
       },
     },
   },

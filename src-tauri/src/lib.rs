@@ -137,6 +137,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
     let stats = MenuItem::with_id(app, "stats", "Today's time…", true, None::<&str>)?;
     let closet = MenuItem::with_id(app, "closet", "Closet…", true, None::<&str>)?;
+    let focus = MenuItem::with_id(app, "focus", "Focus timer…", true, None::<&str>)?;
     // Phrased as an invitation and placed with the other ordinary items — not a
     // prompt, not a gate, and never checked at runtime. See STAR_URL.
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
@@ -144,6 +145,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
+            &focus,
             &stats,
             &closet,
             &PredefinedMenuItem::separator(app)?,
@@ -170,6 +172,11 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             "closet" => {
                 if let Err(e) = show_closet(app) {
                     eprintln!("could not open the closet: {e}");
+                }
+            }
+            "focus" => {
+                if let Err(e) = show_focus(app) {
+                    eprintln!("could not open the focus timer: {e}");
                 }
             }
             "star" => open_star_page(),
@@ -241,6 +248,7 @@ fn show_dashboard(app: &tauri::AppHandle) -> tauri::Result<()> {
 const DASHBOARD_LABEL: &str = "dashboard";
 const BUBBLE_LABEL: &str = "bubble";
 const CLOSET_LABEL: &str = "closet";
+const FOCUS_LABEL: &str = "focus";
 const COMPANION_LABEL: &str = "companion";
 
 /// Where the bubble ended up, so the page can point its tail at the character.
@@ -451,9 +459,77 @@ fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
 /// and gone.
 #[tauri::command]
 fn fit_closet(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    fit_window(&app, CLOSET_LABEL, CLOSET_WIDTH, height, 320.0)
+}
+
+/// The focus timer's window: a ring, a countdown, and six opinions about how
+/// long a session should be.
+///
+/// Floating like the closet, and for the same reason — the dial and the ring at
+/// the character's feet show the same session, and watching one while the other
+/// is buried behind an editor defeats both.
+fn show_focus(app: &tauri::AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
+    if let Some(window) = app.get_webview_window(FOCUS_LABEL) {
+        window.unminimize()?;
+        window.show()?;
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        FOCUS_LABEL,
+        tauri::WebviewUrl::App("focus.html".into()),
+    )
+    .title("Focus")
+    .inner_size(FOCUS_WIDTH, 620.0)
+    .min_inner_size(FOCUS_WIDTH, 380.0)
+    .always_on_top(true)
+    .resizable(true)
+    .build()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+
+    Ok(())
+}
+
+const FOCUS_WIDTH: f64 = 420.0;
+
+/// Size the focus window to its content. Same reasoning as `fit_closet`: a
+/// guessed height clips the footer the day the copy grows by a line.
+#[tauri::command]
+fn fit_focus(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    fit_window(&app, FOCUS_LABEL, FOCUS_WIDTH, height, 380.0)
+}
+
+/// Resize one of the content-sized windows, clamped to the monitor.
+///
+/// Shared because the closet and the focus window want exactly the same
+/// behaviour, and two copies of a clamp is how one of them ends up able to open
+/// taller than the screen.
+fn fit_window(
+    app: &tauri::AppHandle,
+    label: &str,
+    width: f64,
+    height: f64,
+    minimum: f64,
+) -> Result<(), String> {
     let window = app
-        .get_webview_window(CLOSET_LABEL)
-        .ok_or_else(|| "no closet window".to_string())?;
+        .get_webview_window(label)
+        .ok_or_else(|| format!("no {label} window"))?;
 
     let available = match window.current_monitor() {
         Ok(Some(m)) => (m.size().height as f64 / m.scale_factor()) - 80.0,
@@ -461,8 +537,8 @@ fn fit_closet(app: tauri::AppHandle, height: f64) -> Result<(), String> {
     };
     window
         .set_size(tauri::LogicalSize::new(
-            CLOSET_WIDTH,
-            height.clamp(320.0, available.max(320.0)),
+            width,
+            height.clamp(minimum, available.max(minimum)),
         ))
         .map_err(|e| e.to_string())
 }
@@ -525,6 +601,7 @@ pub fn run() {
             write_stats,
             open_dashboard,
             fit_closet,
+            fit_focus,
             place_bubble,
             reveal_bubble,
             hide_bubble
