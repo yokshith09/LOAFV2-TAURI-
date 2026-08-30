@@ -62,6 +62,69 @@ export function defaultRadarSettings(): RadarSettings {
   return { enabled: false, tabThreshold: 40 };
 }
 
+/**
+ * Just enough of a key/value store to remember two fields.
+ *
+ * Structurally identical to the closet's `SettingsStore`, so the same
+ * `browserStore()` satisfies both without either module importing the other.
+ */
+export interface RadarStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+export const RADAR_SETTINGS_KEY = "loaf.radar.settings";
+
+/**
+ * What was chosen last time, or the defaults.
+ *
+ * Tolerant in exactly the way the stats file is: anything unreadable, absent or
+ * the wrong shape falls back to a default rather than throwing. A settings file
+ * that can crash the app on launch is worse than one that forgets.
+ *
+ * The one asymmetry is deliberate. `enabled` is only ever restored as `true` if
+ * that is literally what was stored — every other value, including a corrupt
+ * one, reads as off. A bad parse must not be able to switch a privacy feature
+ * ON; it may only ever fail closed.
+ */
+export function loadRadarSettings(store: RadarStore): RadarSettings {
+  const fallback = defaultRadarSettings();
+  let raw: string | null;
+  try {
+    raw = store.getItem(RADAR_SETTINGS_KEY);
+  } catch {
+    return fallback;
+  }
+  if (raw === null) return fallback;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+  if (typeof parsed !== "object" || parsed === null) return fallback;
+
+  const rec = parsed as Record<string, unknown>;
+  const threshold = rec["tabThreshold"];
+  return {
+    enabled: rec["enabled"] === true,
+    tabThreshold:
+      typeof threshold === "number" && Number.isFinite(threshold) && threshold >= 0
+        ? threshold
+        : fallback.tabThreshold,
+  };
+}
+
+export function saveRadarSettings(store: RadarStore, settings: RadarSettings): void {
+  try {
+    store.setItem(RADAR_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // The choice lasts for this session. Not being able to write is not a
+    // reason to stop the radar working right now.
+  }
+}
+
 export class PrivacyRadar {
   private statuses = new Map<string, BrowserStatus>();
   private alert: TabAlert | null = null;

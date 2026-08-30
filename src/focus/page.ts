@@ -10,6 +10,7 @@ import {
   parseCommand,
 } from "./events";
 
+
 /**
  * The focus window.
  *

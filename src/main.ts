@@ -67,7 +67,12 @@ import {
   normaliseName,
   NO_OUTFIT,
 } from "./closet/settings";
-import { PrivacyRadar, type ProbeOutcome } from "./radar/radar";
+import {
+  PrivacyRadar,
+  loadRadarSettings,
+  saveRadarSettings,
+  type ProbeOutcome,
+} from "./radar/radar";
 import {
   loadPacks,
   mergeCompanions,
@@ -416,6 +421,9 @@ async function loadHistory(): Promise<void> {
     // The radar files its domains into the tracker, so it cannot exist before
     // the history has been read — the ledger it writes to is that object.
     radar = new PrivacyRadar(tracker);
+    // What was chosen last time. Without this the consent screen reappears
+    // every launch and the tantrum threshold silently returns to 40.
+    radar.settings = loadRadarSettings(browserStore());
     radar.onTantrumBegan = (alert) => {
       makeNoise("tantrum");
       say({ kind: "speech", text: tantrumLine(alert.count, alert.browser), seconds: 10 });
@@ -456,6 +464,7 @@ function applyCommand(cmd: unknown): void {
     const n = Number(cmd.slice("tantrum:".length));
     if (radar && Number.isFinite(n)) {
       radar.settings.tabThreshold = n;
+      persistRadar();
       announceRadar();
     }
     return;
@@ -482,6 +491,7 @@ function applyCommand(cmd: unknown): void {
       return;
     case "radar:off":
       if (radar) radar.settings.enabled = false;
+      persistRadar();
       announceRadar();
       say({ kind: "speech", text: LINES.radarOff, seconds: 8 });
       return;
@@ -543,6 +553,17 @@ function makeNoise(occasion: Occasion): void {
  * cannot read a tab at all would be a button that does nothing.
  */
 let radar: PrivacyRadar | null = null;
+
+/**
+ * Write the radar's choice down.
+ *
+ * Called after every mutation rather than on a timer or at exit: the settings
+ * are two fields, and a consent that survives only a clean shutdown is a
+ * consent the user will be asked for again after any crash.
+ */
+function persistRadar(): void {
+  if (radar) saveRadarSettings(browserStore(), radar.settings);
+}
 let radarSupported = false;
 let radarReadsInsideBrowser = true;
 
@@ -604,6 +625,7 @@ function applyDecision(raw: unknown): void {
     return;
   }
   radar.settings.enabled = true;
+  persistRadar();
   announceRadar();
   say({ kind: "speech", text: LINES.radarOn, seconds: 8 });
 
@@ -655,6 +677,8 @@ function radarSnapshot(): RadarSnapshot {
  */
 async function pollRadar(raw: string | null, name: string, seconds: number): Promise<void> {
   if (!radar || raw === null) return;
+  if (radar.settings.enabled) {
+  }
   radar.expireStaleReadings();
   const browser = radar.target(raw);
   if (!browser) return;
@@ -997,17 +1021,33 @@ function wireInteraction(): void {
   let downAt: { x: number; y: number } | null = null;
   let dragging = false;
 
-  window.addEventListener("mousedown", (e) => {
+  // Pointer events WITH CAPTURE, not mouse events.
+  //
+  // The window is 134x150. A drag leaves those bounds within a few pixels, and
+  // once the pointer is outside them plain `mousemove` stops being delivered —
+  // so the threshold below was never reached and the window could never be
+  // picked up at all. `setPointerCapture` keeps events coming to this element
+  // wherever the pointer goes, which is exactly what a drag needs.
+  canvas!.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+    canvas!.setPointerCapture(e.pointerId);
     downAt = { x: e.screenX, y: e.screenY };
     dragging = false;
   });
 
-  window.addEventListener("mousemove", (e) => {
+  canvas!.addEventListener("pointermove", (e) => {
     if (!downAt || dragging) return;
     const moved = Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y);
     if (moved < DRAG_THRESHOLD_PX) return;
     dragging = true;
+    // Hand the pointer back BEFORE the OS takes the gesture. Once
+    // `start_dragging` runs, Windows owns the drag and no `pointerup` ever
+    // reaches this window — so a capture still held here is never released, and
+    // every later gesture is delivered to a element that is still capturing.
+    // That is what made the drag work once and then stop.
+    if (canvas!.hasPointerCapture(e.pointerId)) {
+      canvas!.releasePointerCapture(e.pointerId);
+    }
     // The user is placing the window: stop any walk dead rather than animating
     // it out from under them, and treat where they drop it as the new home.
     draggingWindow = true;
@@ -1028,8 +1068,13 @@ function wireInteraction(): void {
   // The preview waits for a dwell rather than firing on entry: the cursor
   // crosses the companion on its way to everything in that corner of the
   // screen, and a card that appeared each time would be a strobe.
+  //
+  // Bound to the CANVAS, not to `window`. `mouseenter` does not bubble and is
+  // not delivered to `window` in Chromium, so the card could never appear and
+  // `hovering` never became true — which also kept the "happy" mood rung, the
+  // one the hover is supposed to trigger, permanently unreachable.
   let dwell: number | undefined;
-  window.addEventListener("mouseenter", () => {
+  canvas!.addEventListener("mouseenter", () => {
     hovering = true;
     clearTimeout(dwell);
     dwell = window.setTimeout(() => {
@@ -1038,7 +1083,7 @@ function wireInteraction(): void {
       say({ kind: "preview", stats: tracker.serialize() });
     }, HOVER_DWELL_MS);
   });
-  window.addEventListener("mouseleave", () => {
+  canvas!.addEventListener("mouseleave", () => {
     hovering = false;
     clearTimeout(dwell);
     // Only the preview follows the cursor away. A nudge you moved the mouse
@@ -1046,7 +1091,32 @@ function wireInteraction(): void {
     if (moodOverride === null) hush();
   });
 
-  window.addEventListener("mouseup", (e) => {
+  // If capture is lost for any reason — the OS taking it, a pointercancel — the
+  // gesture is over. Without this, `downAt` stays set and the next click is read
+  // as the continuation of a drag that is no longer happening.
+  for (const ending of ["pointercancel", "lostpointercapture"] as const) {
+    canvas!.addEventListener(ending, () => {
+      downAt = null;
+      dragging = false;
+    });
+  }
+
+  // Right-click anywhere on the character shows the whole menu.
+  //
+  // This is the entry point people find. The tray icon is the other one, and on
+  // Windows it is hidden in an overflow flyout by default, which made the
+  // closet and the focus timer unreachable for a real user on a real machine.
+  // The menu here is the same one the tray builds, so it can never offer less.
+  window.addEventListener("contextmenu", (e) => {
+    // Otherwise the webview's own "Reload / Inspect" menu appears over ours.
+    e.preventDefault();
+    void invokeSafe("show_companion_menu");
+  });
+
+  canvas!.addEventListener("pointerup", (e) => {
+    if (canvas!.hasPointerCapture(e.pointerId)) {
+      canvas!.releasePointerCapture(e.pointerId);
+    }
     if (e.button !== 0) return;
     const wasClick = downAt !== null && !dragging;
     downAt = null;
@@ -1180,7 +1250,8 @@ async function pollPlatform(): Promise<void> {
       report.app?.name ?? "",
       lastTickResult === "idle" ? 0 : TICK_INTERVAL,
     );
-    if (++ticksSinceSave >= SAVE_EVERY) saveHistory();
+    ticksSinceSave++;
+    if (ticksSinceSave >= SAVE_EVERY) saveHistory();
   }
 
   updateProbeLabel(
@@ -1260,4 +1331,6 @@ setInterval(() => {
     secondsSinceScroll = s;
   });
 }, SCROLL_POLL_MS);
+setInterval(() => {
+}, 5000);
 requestAnimationFrame(frame);

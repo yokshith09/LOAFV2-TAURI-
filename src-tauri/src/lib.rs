@@ -70,7 +70,12 @@ fn idle_seconds() -> Option<f64> {
 /// The caller passes the bundle identifier it already matched, rather than this
 /// searching for a browser itself — the radar decides who is worth asking and
 /// when, and the answer must never be "some browser I found running".
-#[tauri::command]
+// `(async)` on a synchronous function is what moves it to Tauri's thread pool;
+// without it the body runs inline on the main thread. A UI Automation walk of a
+// browser's window tree takes long enough to be seen as a stutter, and freezing
+// the companion is not an acceptable price for reading a domain. `Apartment`
+// already assumes it is running on a pool thread and enters COM per call.
+#[tauri::command(async)]
 fn probe_browser(bundle_id: String, safari: bool) -> browser::ProbeOutcome {
     // Long enough that a first-time permission prompt can be read and answered,
     // short enough that a wedged browser does not hold a tick open.
@@ -120,6 +125,14 @@ fn platform_name() -> &'static str {
 /// ignores entirely — the first Mac build could not be moved at all.
 #[tauri::command]
 fn start_drag(window: tauri::Window) -> Result<(), String> {
+    // Windows runs the WM_NCLBUTTONDOWN move loop only for a foreground window,
+    // and it grants SetForegroundWindow only to the process that received the
+    // last input event. The click that got us here IS that input, so this is the
+    // one moment the request is granted. The companion is created unfocused on
+    // purpose — an ambient pet must not steal focus at launch — which means it
+    // otherwise never holds foreground rights and `start_dragging` returns Ok
+    // while Windows quietly does nothing.
+    let _ = window.set_focus();
     window.start_dragging().map_err(|e| e.to_string())
 }
 
@@ -236,9 +249,16 @@ fn park_bottom_right(window: &tauri::WebviewWindow) {
 /// left to quit — the first Mac tester had to force it closed from the Dock,
 /// and removing the Dock icon without adding this would have made it strictly
 /// worse.
-fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+/// The one menu, built in one place.
+///
+/// The tray shows it and so does a right-click on the companion. Two menus
+/// listing the same commands would drift the first time an item was added to
+/// one of them, and on Windows the tray icon is filed into a hidden overflow
+/// flyout by default — an entry point most users never find. Right-clicking the
+/// character is the discoverable route, and it has to offer everything, not a
+/// convenience subset.
+fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-    use tauri::tray::TrayIconBuilder;
 
     let stats = MenuItem::with_id(app, "stats", "Today's time…", true, None::<&str>)?;
     let closet = MenuItem::with_id(app, "closet", "Closet…", true, None::<&str>)?;
@@ -271,6 +291,13 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             &quit,
         ],
     )?;
+    Ok(menu)
+}
+
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::tray::TrayIconBuilder;
+
+    let menu = build_menu(app)?;
 
     let mut builder = TrayIconBuilder::new()
         .menu(&menu)
@@ -280,41 +307,43 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         builder = builder.icon(icon.clone());
     }
     builder
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "stats" => {
-                if let Err(e) = show_dashboard(app) {
-                    eprintln!("could not open the dashboard: {e}");
+        .on_menu_event(|app, event| {
+            match event.id.as_ref() {
+                "stats" => {
+                    if let Err(e) = show_dashboard(app) {
+                        eprintln!("could not open the dashboard: {e}");
+                    }
                 }
-            }
-            "closet" => {
-                if let Err(e) = show_closet(app) {
-                    eprintln!("could not open the closet: {e}");
+                "closet" => {
+                    if let Err(e) = show_closet(app) {
+                        eprintln!("could not open the closet: {e}");
+                    }
                 }
-            }
-            "focus" => {
-                if let Err(e) = show_focus(app) {
-                    eprintln!("could not open the focus timer: {e}");
+                "focus" => {
+                    if let Err(e) = show_focus(app) {
+                        eprintln!("could not open the focus timer: {e}");
+                    }
                 }
-            }
-            "sounds" => {
-                if let Err(e) = open_sounds_folder(app.clone()) {
-                    eprintln!("could not open the sounds folder: {e}");
+                "sounds" => {
+                    if let Err(e) = open_sounds_folder(app.clone()) {
+                        eprintln!("could not open the sounds folder: {e}");
+                    }
                 }
-            }
-            "packs" => {
-                if let Err(e) = open_packs_folder(app.clone()) {
-                    eprintln!("could not open the characters folder: {e}");
+                "packs" => {
+                    if let Err(e) = open_packs_folder(app.clone()) {
+                        eprintln!("could not open the characters folder: {e}");
+                    }
                 }
+                // These three are the same commands the dashboard sends, delivered
+                // on the same channel — one handler for them, wherever they came
+                // from, rather than a second path that can drift from the first.
+                "reset" => send_command(app, "reset"),
+                "forget" => send_command(app, "sites:forget"),
+                "about" => send_command(app, "about"),
+                "star" => open_star_page(),
+                "quit" => app.exit(0),
+                _ => {}
             }
-            // These three are the same commands the dashboard sends, delivered
-            // on the same channel — one handler for them, wherever they came
-            // from, rather than a second path that can drift from the first.
-            "reset" => send_command(app, "reset"),
-            "forget" => send_command(app, "sites:forget"),
-            "about" => send_command(app, "about"),
-            "star" => open_star_page(),
-            "quit" => app.exit(0),
-            _ => {}
         })
         .build(app)?;
     Ok(())
@@ -362,6 +391,10 @@ fn show_dashboard(app: &tauri::AppHandle) -> tauri::Result<()> {
     .inner_size(560.0, 760.0)
     .min_inner_size(420.0, 480.0)
     .resizable(true)
+    // Opened because the user asked for it, so it opens in FRONT. Activating
+    // at creation beats raising afterwards, which races the window that spawned
+    // it — that race is what buried the consent screen under the dashboard.
+    .focused(true)
     .build()?;
 
     #[cfg(target_os = "macos")]
@@ -379,8 +412,10 @@ fn show_dashboard(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     // The binding is only used on macOS; naming it `_window` elsewhere would
     // read as an oversight rather than a platform difference.
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
+    // A window built by a process that does not hold foreground rights opens
+    // BEHIND everything and reads to the user as "it did not open" — while its
+    // webview loads and runs perfectly, which is exactly how this hid.
+    let _ = window.set_focus();
 
     Ok(())
 }
@@ -563,6 +598,10 @@ fn show_closet(app: &tauri::AppHandle) -> tauri::Result<()> {
     // picker you have to alt-tab away from to see the result of.
     .always_on_top(true)
     .resizable(true)
+    // Opened because the user asked for it, so it opens in FRONT. Activating
+    // at creation beats raising afterwards, which races the window that spawned
+    // it — that race is what buried the consent screen under the dashboard.
+    .focused(true)
     .build()?;
 
     #[cfg(target_os = "macos")]
@@ -574,8 +613,9 @@ fn show_closet(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         });
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
+    // See show_dashboard: a process without foreground rights opens its windows
+    // behind everything, which is indistinguishable from not opening at all.
+    let _ = window.set_focus();
 
     Ok(())
 }
@@ -587,7 +627,12 @@ const CLOSET_WIDTH: f64 = 500.0;
 /// Wraps the same function the tray menu calls, rather than duplicating the
 /// window setup, so the two entry points cannot drift into opening two
 /// differently configured windows.
-#[tauri::command]
+// `(async)` moves this to Tauri's thread pool. `show()`, `unminimize()` and
+// `set_focus()` dispatch to the event loop and BLOCK until it answers; run from
+// a synchronous command they block the very thread that has to answer them, and
+// the whole app deadlocks — the IPC queue included, which is why the trace goes
+// silent rather than showing an error.
+#[tauri::command(async)]
 fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
     show_dashboard(&app).map_err(|e| e.to_string())
 }
@@ -598,7 +643,12 @@ fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
 /// gives: guessing a pixel height means clipping the last row of cards the day
 /// someone adds a fifth animal. There are eighteen now, so that day has been
 /// and gone.
-#[tauri::command]
+// `(async)` moves this to Tauri's thread pool. `show()`, `unminimize()` and
+// `set_focus()` dispatch to the event loop and BLOCK until it answers; run from
+// a synchronous command they block the very thread that has to answer them, and
+// the whole app deadlocks — the IPC queue included, which is why the trace goes
+// silent rather than showing an error.
+#[tauri::command(async)]
 fn fit_closet(app: tauri::AppHandle, height: f64) -> Result<(), String> {
     fit_window(&app, CLOSET_LABEL, CLOSET_WIDTH, height, 320.0)
 }
@@ -630,6 +680,10 @@ fn show_focus(app: &tauri::AppHandle) -> tauri::Result<()> {
     .min_inner_size(FOCUS_WIDTH, 380.0)
     .always_on_top(true)
     .resizable(true)
+    // Opened because the user asked for it, so it opens in FRONT. Activating
+    // at creation beats raising afterwards, which races the window that spawned
+    // it — that race is what buried the consent screen under the dashboard.
+    .focused(true)
     .build()?;
 
     #[cfg(target_os = "macos")]
@@ -641,8 +695,9 @@ fn show_focus(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         });
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
+    // See show_dashboard: a process without foreground rights opens its windows
+    // behind everything, which is indistinguishable from not opening at all.
+    let _ = window.set_focus();
 
     Ok(())
 }
@@ -677,6 +732,10 @@ fn show_onboarding(app: &tauri::AppHandle) -> tauri::Result<()> {
     .min_inner_size(ONBOARDING_WIDTH, 360.0)
     .resizable(true)
     .center()
+    // Opened because the user asked for it, so it opens in FRONT. Activating
+    // at creation beats raising afterwards, which races the window that spawned
+    // it — that race is what buried the consent screen under the dashboard.
+    .focused(true)
     .build()?;
 
     #[cfg(target_os = "macos")]
@@ -688,15 +747,63 @@ fn show_onboarding(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         });
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
+    // See show_dashboard: a process without foreground rights opens its windows
+    // behind everything, which is indistinguishable from not opening at all.
+    let _ = window.set_focus();
 
     Ok(())
 }
 
 /// Open the consent screen from the frontend — what the dashboard's "turn on
 /// privacy radar" button does, rather than switching it on without asking.
-#[tauri::command]
+/// Open the closet without going through the tray.
+///
+/// The tray stays the product's entry point, but it cannot be the only one. An
+/// icon Windows has filed into the overflow flyout is an entry point the user
+/// cannot find, and until now the closet and the focus timer were reachable
+/// from nowhere else — one hidden icon made two whole windows unreachable.
+// `(async)` moves this to Tauri's thread pool. `show()`, `unminimize()` and
+// `set_focus()` dispatch to the event loop and BLOCK until it answers; run from
+// a synchronous command they block the very thread that has to answer them, and
+// the whole app deadlocks — the IPC queue included, which is why the trace goes
+// silent rather than showing an error.
+#[tauri::command(async)]
+fn open_closet(app: tauri::AppHandle) -> Result<(), String> {
+    show_closet(&app).map_err(|e| e.to_string())
+}
+
+/// Show the whole menu where the user actually is: on the character.
+///
+/// Right-clicking the companion is the entry point people find without being
+/// told. The menu is the same object the tray builds, so the two can never
+/// list different commands, and its clicks land in the same handler — the
+/// tray's `on_menu_event` is registered in Tauri's GLOBAL listener list, not a
+/// tray-private one, so a popup menu's events reach it with nothing extra
+/// wired up.
+#[tauri::command(async)]
+fn show_companion_menu(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
+    use tauri::menu::ContextMenu;
+    let menu = build_menu(&app).map_err(|e| e.to_string())?;
+    menu.popup(window).map_err(|e| e.to_string())
+}
+
+/// The focus timer's window, for the same reason as [`open_closet`].
+// `(async)` moves this to Tauri's thread pool. `show()`, `unminimize()` and
+// `set_focus()` dispatch to the event loop and BLOCK until it answers; run from
+// a synchronous command they block the very thread that has to answer them, and
+// the whole app deadlocks — the IPC queue included, which is why the trace goes
+// silent rather than showing an error.
+#[tauri::command(async)]
+fn open_focus(app: tauri::AppHandle) -> Result<(), String> {
+    show_focus(&app).map_err(|e| e.to_string())
+}
+
+// `(async)` moves this to Tauri's thread pool. `show()`, `unminimize()` and
+// `set_focus()` dispatch to the event loop and BLOCK until it answers; run from
+// a synchronous command they block the very thread that has to answer them, and
+// the whole app deadlocks — the IPC queue included, which is why the trace goes
+// silent rather than showing an error.
+#[tauri::command(async)]
 fn open_onboarding(app: tauri::AppHandle) -> Result<(), String> {
     show_onboarding(&app).map_err(|e| e.to_string())
 }
@@ -727,7 +834,12 @@ fn open_automation_settings() {
 
 /// Size the focus window to its content. Same reasoning as `fit_closet`: a
 /// guessed height clips the footer the day the copy grows by a line.
-#[tauri::command]
+// `(async)` moves this to Tauri's thread pool. `show()`, `unminimize()` and
+// `set_focus()` dispatch to the event loop and BLOCK until it answers; run from
+// a synchronous command they block the very thread that has to answer them, and
+// the whole app deadlocks — the IPC queue included, which is why the trace goes
+// silent rather than showing an error.
+#[tauri::command(async)]
 fn fit_focus(app: tauri::AppHandle, height: f64) -> Result<(), String> {
     fit_window(&app, FOCUS_LABEL, FOCUS_WIDTH, height, 380.0)
 }
@@ -818,6 +930,9 @@ pub fn run() {
             seconds_since_scroll,
             platform_name,
             start_drag,
+            open_closet,
+            open_focus,
+            show_companion_menu,
             read_stats,
             write_stats,
             probe_browser,

@@ -24,8 +24,7 @@
         "shadow": false,
         "skipTaskbar": true,
         "center": false,
-        "focus": false,
-        "additionalBrowserArgs": "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows"
+        "focus": false
       }
     ],
     "security": {

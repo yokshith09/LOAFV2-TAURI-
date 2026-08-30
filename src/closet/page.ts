@@ -16,6 +16,7 @@ import {
 } from "./events";
 import { asCtx2D, type Outfit } from "../core/types";
 
+
 /**
  * The closet window.
  *

@@ -4,9 +4,14 @@ import {
   CALM_DOWN_MARGIN,
   READING_LIFETIME_MS,
   DENIED_RETRY_MS,
+  RADAR_SETTINGS_KEY,
+  defaultRadarSettings,
+  loadRadarSettings,
+  saveRadarSettings,
   type SiteLedger,
   type TabAlert,
 } from "../src/radar/radar";
+import { MemorySettingsStore } from "../src/closet/settings";
 import { normaliseDomain, browserFor, KNOWN_BROWSERS } from "../src/radar/domain";
 import { isRadarSnapshot } from "../src/dashboard/events";
 import { unavailableRadar, disabledRadar } from "../src/dashboard/html";
@@ -299,5 +304,63 @@ describe("the snapshot the dashboard renders from", () => {
     ]) {
       expect(isRadarSnapshot(junk)).toBe(false);
     }
+  });
+});
+
+describe("remembering the choice", () => {
+  const store = (seed?: string): MemorySettingsStore => {
+    const s = new MemorySettingsStore();
+    if (seed !== undefined) s.setItem(RADAR_SETTINGS_KEY, seed);
+    return s;
+  };
+
+  it("defaults to off when nothing has been stored", () => {
+    expect(loadRadarSettings(store())).toEqual(defaultRadarSettings());
+  });
+
+  it("survives a round trip, which is the whole point", () => {
+    const s = store();
+    saveRadarSettings(s, { enabled: true, tabThreshold: 20 });
+    expect(loadRadarSettings(s)).toEqual({ enabled: true, tabThreshold: 20 });
+  });
+
+  // The asymmetry is deliberate: a bad parse may switch the radar OFF, never on.
+  it.each([
+    ["not json at all", "{{{"],
+    ["a bare string", '"enabled"'],
+    ["null", "null"],
+    ["an array", "[true]"],
+    ["enabled as the string true", '{"enabled":"true"}'],
+    ["enabled as 1", '{"enabled":1}'],
+  ])("fails closed on %s", (_name, seed) => {
+    expect(loadRadarSettings(store(seed)).enabled).toBe(false);
+  });
+
+  it("keeps a good threshold even when enabled is junk", () => {
+    const got = loadRadarSettings(store('{"enabled":"yes","tabThreshold":25}'));
+    expect(got).toEqual({ enabled: false, tabThreshold: 25 });
+  });
+
+  it("rejects a nonsense threshold rather than storing it", () => {
+    for (const bad of ['{"tabThreshold":-5}', '{"tabThreshold":"40"}']) {
+      expect(loadRadarSettings(store(bad)).tabThreshold).toBe(40);
+    }
+  });
+
+  it("treats 0 as a real threshold, since 0 means never", () => {
+    expect(loadRadarSettings(store('{"tabThreshold":0}')).tabThreshold).toBe(0);
+  });
+
+  it("does not throw when the store itself is broken", () => {
+    const hostile = {
+      getItem: () => {
+        throw new Error("no storage");
+      },
+      setItem: () => {
+        throw new Error("no storage");
+      },
+    };
+    expect(loadRadarSettings(hostile)).toEqual(defaultRadarSettings());
+    expect(() => saveRadarSettings(hostile, defaultRadarSettings())).not.toThrow();
   });
 });

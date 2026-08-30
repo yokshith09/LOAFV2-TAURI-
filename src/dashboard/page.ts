@@ -63,7 +63,11 @@ async function render(): Promise<void> {
   }
 
   const tracker = new Tracker({ json });
-  root!.innerHTML = dashboardBody(tracker, { radar, platform });
+  try {
+    root!.innerHTML = dashboardBody(tracker, { radar, platform });
+  } catch (err) {
+    throw err;
+  }
 }
 
 /**
