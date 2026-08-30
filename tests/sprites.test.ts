@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parsePack, frameAt, frameRect, type SpriteClip } from "../src/sprites/manifest";
+import { loadPacks, mergeCompanions, FAILURE_NOTES } from "../src/sprites/load";
 import { DESIGN_HEIGHT } from "../src/core/types";
 
 const sheet = { file: "sheet.png", scale: 2, frameWidth: 128, frameHeight: 142, columns: 4, rows: 2 };
@@ -207,5 +208,68 @@ describe("anchors measured the other way up", () => {
     expect(down.hatAnchor).toEqual(up.hatAnchor);
     expect(down.headEllipse).toEqual(up.headEllipse);
     expect(down.neckY).toEqual(up.neckY);
+  });
+});
+
+describe("loading a folder of packs", () => {
+  const sheetImage = async () => ({ width: 512, height: 284 });
+  const raw = (folder: string, manifestObj: unknown) => ({
+    folder,
+    manifest: typeof manifestObj === "string" ? manifestObj : JSON.stringify(manifestObj),
+    sheet: "data:image/png;base64,AA==",
+  });
+
+  it("turns a good pack into a companion", async () => {
+    const { companions, failures } = await loadPacks([raw("fox", manifest())], sheetImage);
+    expect(failures).toEqual([]);
+    expect(companions[0]!.id).toBe("pack-fox");
+    expect(companions[0]!.isPreRendered).toBe(true);
+  });
+
+  it("skips a broken pack without losing the good ones", async () => {
+    // One half-finished character must not cost the user the rest, and must not
+    // stop Loaf starting.
+    const { companions, failures } = await loadPacks(
+      [raw("broken", "{not json"), raw("fox", manifest()), raw("empty", { id: "x" })],
+      sheetImage,
+    );
+    expect(companions).toHaveLength(1);
+    expect(failures.map((f) => f.folder).sort()).toEqual(["broken", "empty"]);
+  });
+
+  it("says why, in words the person who drew it can act on", async () => {
+    const { failures } = await loadPacks([raw("broken", "{not json")], sheetImage);
+    expect(FAILURE_NOTES[failures[0]!.reason]).toContain("valid JSON");
+    // Every reason has a note; a failure with no explanation is a silent one.
+    for (const reason of Object.keys(FAILURE_NOTES)) {
+      expect(FAILURE_NOTES[reason as keyof typeof FAILURE_NOTES]).toBeTruthy();
+    }
+  });
+
+  it("reports a sheet it cannot decode rather than drawing nothing", async () => {
+    const failing = async () => {
+      throw new Error("nope");
+    };
+    const { companions, failures } = await loadPacks([raw("fox", manifest())], failing);
+    expect(companions).toEqual([]);
+    expect(failures[0]!.reason).toBe("bad-image");
+  });
+});
+
+describe("packs beside the shipped characters", () => {
+  const fake = (id: string) => ({ id }) as never;
+
+  it("adds a pack to the list", () => {
+    const merged = mergeCompanions([fake("cat-ginger")], [fake("pack-fox")]);
+    expect(merged.map((c) => c.id)).toEqual(["cat-ginger", "pack-fox"]);
+  });
+
+  it("lets a pack replace a built-in rather than duplicating its id", () => {
+    // Two characters with one id makes "which is on duty" unanswerable, and
+    // someone who names their pack after a shipped cat meant to.
+    const mine = fake("cat-ginger");
+    const merged = mergeCompanions([fake("cat-ginger"), fake("dog-husky")], [mine]);
+    expect(merged).toHaveLength(2);
+    expect(merged.find((c) => c.id === "cat-ginger")).toBe(mine);
   });
 });

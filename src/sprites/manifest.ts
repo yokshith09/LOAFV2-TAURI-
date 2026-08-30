@@ -1,4 +1,12 @@
-import { DESIGN_HEIGHT, type CompanionGroup, type Mood, type Point, type Rect } from "../core/types";
+import {
+  DESIGN_HEIGHT,
+  type CompanionGroup,
+  type CompanionPalette,
+  type Mood,
+  type Point,
+  type Rect,
+} from "../core/types";
+import { hex } from "../core/color";
 
 /**
  * Hand-drawn characters, dropped in as a folder. Ported from `SpriteCompanion.swift`.
@@ -48,6 +56,7 @@ export interface SpritePack {
   readonly neckY: number;
   readonly handLeft: Point;
   readonly handRight: Point;
+  readonly palette: CompanionPalette;
   readonly drawsOwnFace: boolean;
   readonly castsShadow: boolean;
   readonly pixelArt: boolean;
@@ -195,6 +204,37 @@ function resolveClips(
   return out;
 }
 
+/**
+ * The pack's palette.
+ *
+ * These do NOT colour the artwork — the artwork colours itself. They tint the
+ * *shared* pieces drawn around it: the tantrum fur spikes, the paws gripping the
+ * scroll, the sleeping z's. A pack that declares none gets a neutral set, which
+ * looks deliberate next to almost any art.
+ */
+function readPalette(v: unknown): CompanionPalette {
+  const raw = isObject(v) ? v : {};
+  const colour = (key: string, fallback: number) => {
+    const written = raw[key];
+    if (typeof written !== "string") return hex(fallback);
+    const cleaned = written.trim().replace(/^#/, "");
+    // Six digits or nothing. A three-digit shorthand or a stray "rgb(...)"
+    // would parse to some other colour entirely, and a companion tinted a
+    // colour nobody chose is harder to diagnose than one left at the default.
+    if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) return hex(fallback);
+    return hex(parseInt(cleaned, 16));
+  };
+  return {
+    fur: colour("fur", 0xd8c3a5),
+    furDark: colour("furDark", 0xb09a7c),
+    furLight: colour("furLight", 0xf0e4d2),
+    inner: colour("accent", 0xe8b4a0),
+    ink: colour("ink", 0x33261d),
+    nose: colour("nose", 0x8a6a55),
+    blush: colour("blush", 0xe9a7a0),
+  };
+}
+
 /** Defaults roughly matching a cat, so a pack that declares no anchors still works. */
 const DEFAULT_ANCHORS = {
   head: { x: 55, y: 96, width: 60, height: 52 } as Rect,
@@ -267,6 +307,7 @@ export function parsePack(raw: unknown): PackResult {
         : num(anchors.neckY, DEFAULT_ANCHORS.neckY),
       handLeft: readPoint(anchors.handLeft, topLeft, DEFAULT_ANCHORS.handLeft),
       handRight: readPoint(anchors.handRight, topLeft, DEFAULT_ANCHORS.handRight),
+      palette: readPalette(raw.palette),
       // A sprite pack draws its own face by default: the art already has one,
       // and the shared eye system drawing a second pair on top of it is the most
       // likely way for a pack to look broken on arrival.

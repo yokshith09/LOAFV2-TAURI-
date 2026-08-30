@@ -48,9 +48,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Privacy radar | ✅ both platforms — domains, tab counts, tantrums |
 | Sounds | ✅ four occasions, synthesised placeholders, your own files win |
 | Onboarding | ✅ the radar's consent screen, honest per platform |
-| Next | sprite packs |
+| Sprite packs | ✅ hand-drawn characters load from a folder, beside the shipped 18 |
+| Next | **parity reached** — see `Not done yet` for what deliberately differs |
 
-Tests: **568 frontend** (Vitest) + **48 Rust**. CI green on macOS and Windows.
+Tests: **598 frontend** (Vitest) + **55 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -136,6 +137,7 @@ src/                     Frontend (TypeScript, no framework)
   behaviour/habits.ts    The four habits a user can switch, and remembering them
   sound/voice.ts         What Loaf sounds like — placeholders, and when to be quiet
   onboarding/view.ts     The radar's consent screen, and the deal it states
+  sprites/manifest.ts    character.json, validated — the gate a pack must pass
   closet/settings.ts     The persisted choices, and the only writer of them
   closet/view.ts         The picker's markup — thumbnails are live canvases
   radar/radar.ts         Tab counts, tantrum hysteresis, per-browser permission
@@ -145,6 +147,7 @@ src-tauri/
   src/browser.rs         Reading a tab's domain — AppleScript on macOS
   src/browser_windows.rs UI Automation on Windows, and what that costs
   src/sounds.rs          The user's own sound files, and the folder README
+  src/packs.rs           Hand-drawn characters, read off disk
   capabilities/          What the two windows may ask the Tauri core for
 tests/                   Vitest suites
   registry.test.ts       Contract tests every companion must satisfy

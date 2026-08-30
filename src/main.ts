@@ -63,6 +63,13 @@ import {
   NO_OUTFIT,
 } from "./closet/settings";
 import { PrivacyRadar, type ProbeOutcome } from "./radar/radar";
+import {
+  loadPacks,
+  mergeCompanions,
+  browserImageLoader,
+  FAILURE_NOTES,
+  type RawPack,
+} from "./sprites/load";
 import { SoundKit, loadSoundSettings, saveSoundSettings } from "./sound/soundKit";
 import {
   ONBOARD_DECISION_EVENT,
@@ -74,7 +81,14 @@ import type { OnboardingStep, OnboardingPlatform } from "./onboarding/view";
 import { isOccasion, type Occasion } from "./sound/voice";
 import { unavailableRadar, type RadarSnapshot } from "./dashboard/html";
 import { RADAR_STATE_EVENT, RADAR_HELLO_EVENT } from "./dashboard/events";
-import { ALL_MOODS, asCtx2D, type Mood, type Outfit, type SceneState } from "./core/types";
+import {
+  ALL_MOODS,
+  asCtx2D,
+  type Companion,
+  type Mood,
+  type Outfit,
+  type SceneState,
+} from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
 const probeEl = document.getElementById("probe") as HTMLDivElement | null;
@@ -102,6 +116,39 @@ let debugMood: Mood | null = null;
  * characters and garments were all ported and tested but a real user had no way
  * to reach any of them.
  */
+/**
+ * The closet's stock: the eighteen shipped characters, plus whatever the user
+ * has drawn.
+ *
+ * Mutable because packs arrive after a round trip to disk — the app starts on
+ * the built-ins and the drawn ones join a moment later, rather than the window
+ * waiting on a folder that is usually empty.
+ */
+let roster: readonly Companion[] = COMPANIONS;
+
+/**
+ * Load hand-drawn characters and put them on the shelf.
+ *
+ * A pack that fails is named in the console with the reason, and costs nothing
+ * else — the app has already started on the built-ins by the time this runs.
+ */
+async function loadSpritePacks(): Promise<void> {
+  const raw = await invokeSafe<RawPack[]>("sprite_packs");
+  if (!raw || raw.length === 0) return;
+
+  const { companions, failures } = await loadPacks(raw, browserImageLoader());
+  for (const failure of failures) {
+    console.warn(`character "${failure.folder}" was skipped: ${FAILURE_NOTES[failure.reason]}`);
+  }
+  if (companions.length === 0) return;
+
+  roster = mergeCompanions(COMPANIONS, companions);
+  // A pack replacing the character already on duty has to take over now, not at
+  // the next restart.
+  adoptClosetState();
+  announceCloset();
+}
+
 const closet = new ClosetSettings(browserStore());
 let closetState = closet.read();
 let companion = findCompanion(closetState.companionId);
@@ -199,7 +246,11 @@ function announceCloset(): void {
 /** Re-read the stored choices and make the live character match. */
 function adoptClosetState(): void {
   closetState = closet.read();
-  const next = findCompanion(closetState.companionId);
+  // Resolved against the roster, not just the built-ins, so a drawn character
+  // can be the one on duty.
+  const next =
+    roster.find((c) => c.id === closetState.companionId) ??
+    findCompanion(closetState.companionId);
   if (next.id !== companion.id) {
     companion = next;
     // Curling is a property of the animal — a plane does not loaf — so this has
@@ -928,8 +979,8 @@ function wireInteraction(): void {
     if (e.shiftKey) {
       // Development shortcut, routed through the closet so there is one writer
       // of the choice and it still survives a restart.
-      const i = COMPANIONS.findIndex((c) => c.id === companion.id);
-      const next = COMPANIONS[(i + 1) % COMPANIONS.length]!;
+      const i = roster.findIndex((c) => c.id === companion.id);
+      const next = roster[(i + 1) % roster.length]!;
       applyClosetPick({ kind: "companion", id: next.id });
     } else if (e.altKey) {
       const at = debugMood === null ? -1 : ALL_MOODS.indexOf(debugMood);
@@ -1118,6 +1169,7 @@ void loadHistory()
       readsInsideBrowser: boolean;
     }>("browser_probe_supported");
     void loadUserSounds();
+    void loadSpritePacks();
     radarSupported = support?.supported ?? false;
     radarReadsInsideBrowser = support?.readsInsideBrowser ?? true;
     onboardingPlatform = radarReadsInsideBrowser ? "macos" : "windows";

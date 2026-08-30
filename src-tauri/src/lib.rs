@@ -19,6 +19,7 @@
 pub mod browser;
 #[cfg(windows)]
 pub mod browser_windows;
+pub mod packs;
 pub mod platform;
 pub mod sounds;
 pub mod storage;
@@ -164,14 +165,20 @@ fn read_sound(
 #[tauri::command]
 fn open_sounds_folder(app: tauri::AppHandle) -> Result<(), String> {
     let dir = sounds::ensure(&data_dir(&app)?)?;
-    let path = dir.to_string_lossy().to_string();
+    open_in_file_manager(&dir.to_string_lossy())
+}
 
+/// Show a folder we made, in whatever the platform calls its file manager.
+///
+/// Only ever called with a path this app just created, never with one that came
+/// from the frontend.
+fn open_in_file_manager(path: &str) -> Result<(), String> {
     #[cfg(windows)]
-    let result = std::process::Command::new("explorer").arg(&path).spawn();
+    let result = std::process::Command::new("explorer").arg(path).spawn();
     #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(&path).spawn();
+    let result = std::process::Command::new("open").arg(path).spawn();
     #[cfg(not(any(windows, target_os = "macos")))]
-    let result = std::process::Command::new("xdg-open").arg(&path).spawn();
+    let result = std::process::Command::new("xdg-open").arg(path).spawn();
 
     result.map(|_| ()).map_err(|e| e.to_string())
 }
@@ -225,6 +232,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             &stats,
             &closet,
             &sounds_item,
+            &packs_item,
             &PredefinedMenuItem::separator(app)?,
             &star,
             &PredefinedMenuItem::separator(app)?,
@@ -259,6 +267,11 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             "sounds" => {
                 if let Err(e) = open_sounds_folder(app.clone()) {
                     eprintln!("could not open the sounds folder: {e}");
+                }
+            }
+            "packs" => {
+                if let Err(e) = open_packs_folder(app.clone()) {
+                    eprintln!("could not open the characters folder: {e}");
                 }
             }
             "star" => open_star_page(),
@@ -760,6 +773,8 @@ pub fn run() {
             write_stats,
             probe_browser,
             browser_probe_supported,
+            sprite_packs,
+            open_packs_folder,
             user_sounds,
             read_sound,
             open_sounds_folder,
