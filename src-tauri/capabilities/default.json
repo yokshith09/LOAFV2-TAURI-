@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What Loaf's three windows are allowed to ask the core for. Commands defined by this app are always reachable; everything listed here is a Tauri core API, and each one is named individually rather than pulling in a default set.",
-  "windows": ["companion", "dashboard", "bubble"],
+  "description": "What Loaf's four windows are allowed to ask the core for. Commands defined by this app are always reachable; everything listed here is a Tauri core API, and each one is named individually rather than pulling in a default set.",
+  "windows": ["companion", "dashboard", "bubble", "closet"],
   "permissions": [
     "core:event:allow-emit",
     "core:event:allow-listen",

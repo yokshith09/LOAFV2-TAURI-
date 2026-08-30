@@ -130,6 +130,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::tray::TrayIconBuilder;
 
     let stats = MenuItem::with_id(app, "stats", "Today's time…", true, None::<&str>)?;
+    let closet = MenuItem::with_id(app, "closet", "Closet…", true, None::<&str>)?;
     // Phrased as an invitation and placed with the other ordinary items — not a
     // prompt, not a gate, and never checked at runtime. See STAR_URL.
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
@@ -138,6 +139,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         app,
         &[
             &stats,
+            &closet,
             &PredefinedMenuItem::separator(app)?,
             &star,
             &PredefinedMenuItem::separator(app)?,
@@ -157,6 +159,11 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             "stats" => {
                 if let Err(e) = show_dashboard(app) {
                     eprintln!("could not open the dashboard: {e}");
+                }
+            }
+            "closet" => {
+                if let Err(e) = show_closet(app) {
+                    eprintln!("could not open the closet: {e}");
                 }
             }
             "star" => open_star_page(),
@@ -227,6 +234,7 @@ fn show_dashboard(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 const DASHBOARD_LABEL: &str = "dashboard";
 const BUBBLE_LABEL: &str = "bubble";
+const CLOSET_LABEL: &str = "closet";
 const COMPANION_LABEL: &str = "companion";
 
 /// Where the bubble ended up, so the page can point its tail at the character.
@@ -371,6 +379,88 @@ fn build_bubble_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The closet: who sits on your desktop, and what they are wearing.
+///
+/// Same lifecycle as the dashboard — destroyed on close, rebuilt on reopen —
+/// and the same macOS activation dance, for the same reason: an Accessory app's
+/// windows open behind everything and never take focus.
+fn show_closet(app: &tauri::AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
+    if let Some(window) = app.get_webview_window(CLOSET_LABEL) {
+        window.unminimize()?;
+        window.show()?;
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        CLOSET_LABEL,
+        tauri::WebviewUrl::App("closet.html".into()),
+    )
+    .title("Closet")
+    .inner_size(CLOSET_WIDTH, 560.0)
+    .min_inner_size(CLOSET_WIDTH, 320.0)
+    // Floating, because the whole point is to watch the character in the corner
+    // change as you click. A closet behind the window you were reading is a
+    // picker you have to alt-tab away from to see the result of.
+    .always_on_top(true)
+    .resizable(true)
+    .build()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+
+    Ok(())
+}
+
+const CLOSET_WIDTH: f64 = 500.0;
+
+/// Open the dashboard from the frontend — what clicking the companion does.
+///
+/// Wraps the same function the tray menu calls, rather than duplicating the
+/// window setup, so the two entry points cannot drift into opening two
+/// differently configured windows.
+#[tauri::command]
+fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
+    show_dashboard(&app).map_err(|e| e.to_string())
+}
+
+/// Size the closet to its own content, and keep it on the screen.
+///
+/// The reference does the same through a `loafSize` message, for the reason it
+/// gives: guessing a pixel height means clipping the last row of cards the day
+/// someone adds a fifth animal. There are eighteen now, so that day has been
+/// and gone.
+#[tauri::command]
+fn fit_closet(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    let window = app
+        .get_webview_window(CLOSET_LABEL)
+        .ok_or_else(|| "no closet window".to_string())?;
+
+    let available = match window.current_monitor() {
+        Ok(Some(m)) => (m.size().height as f64 / m.scale_factor()) - 80.0,
+        _ => 800.0,
+    };
+    window
+        .set_size(tauri::LogicalSize::new(
+            CLOSET_WIDTH,
+            height.clamp(320.0, available.max(320.0)),
+        ))
+        .map_err(|e| e.to_string())
+}
+
 /// The repository, opened in the user's browser from the tray menu.
 ///
 /// A CONSTANT, and the open function takes no argument. The menu item is an
@@ -427,6 +517,8 @@ pub fn run() {
             start_drag,
             read_stats,
             write_stats,
+            open_dashboard,
+            fit_closet,
             place_bubble,
             reveal_bubble,
             hide_bubble

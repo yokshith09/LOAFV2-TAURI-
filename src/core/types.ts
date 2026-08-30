@@ -277,3 +277,20 @@ export function blushLeft(c: Companion): Rect {
 export function blushRight(c: Companion): Rect {
   return rect(rectMaxX(c.headEllipse) - 20, c.eyeRight.y - 14, 15, 8);
 }
+
+/**
+ * Treat a real canvas context as a [`Ctx2D`].
+ *
+ * A cast is unavoidable and is not a widening: `Ctx2D` is deliberately
+ * *narrower* than the DOM interface — `fillStyle` here is `string`, where the
+ * DOM allows a gradient or a pattern too. Nothing in the companions assigns
+ * anything but a string, and keeping the narrow type is what lets the whole
+ * renderer be tested against a recording stub with no canvas anywhere.
+ *
+ * Named rather than written inline at each call site so there is one place to
+ * explain why it is safe, instead of three bare `as unknown as` that read like
+ * someone silencing the compiler.
+ */
+export function asCtx2D(ctx: CanvasRenderingContext2D): Ctx2D {
+  return ctx as unknown as Ctx2D;
+}

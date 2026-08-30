@@ -6,8 +6,8 @@
  * still lives outside this file.
  */
 
-import { COMPANIONS } from "./companions/registry";
-import { OUTFITS, findOutfit, SEASONAL_ID } from "./outfits/registry";
+import { COMPANIONS, findCompanion } from "./companions/registry";
+import { OUTFITS, findOutfit, SEASONAL_ID, seasonalOutfit } from "./outfits/registry";
 import { renderScene } from "./render/scene";
 import { renderPixelScene } from "./render/pixelate";
 import { CurlDirector, canCurl } from "./behaviour/curl";
@@ -37,7 +37,21 @@ import {
   PromptRotation,
   mayNudge,
 } from "./bubble/prompts";
-import { ALL_MOODS, type Mood, type Outfit, type SceneState } from "./core/types";
+import {
+  CLOSET_PICK_EVENT,
+  CLOSET_CHANGED_EVENT,
+  CLOSET_HELLO_EVENT,
+  isClosetPick,
+} from "./closet/events";
+import {
+  ClosetSettings,
+  browserStore,
+  displayName,
+  isSeasonal,
+  normaliseName,
+  NO_OUTFIT,
+} from "./closet/settings";
+import { ALL_MOODS, asCtx2D, type Mood, type Outfit, type SceneState } from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
 const probeEl = document.getElementById("probe") as HTMLDivElement | null;
@@ -46,27 +60,96 @@ if (!canvas) throw new Error("missing #stage canvas");
 const ctx = canvas.getContext("2d");
 if (!ctx) throw new Error("2d context unavailable — webview is too old");
 
-let characterIndex = 0;
 let moodIndex = 0;
-let companion = COMPANIONS[characterIndex]!;
+
+// --- The wardrobe ------------------------------------------------------------
 
 /**
- * Wardrobe selection, as the closet will store it: null = bare, the seasonal
- * sentinel = follow the calendar, anything else = a garment id. Cycling walks
- * bare -> each garment -> seasonal -> bare.
+ * The closet's choices, and the only writer of them.
+ *
+ * The closet window reports clicks and this applies them, exactly as the
+ * reference divides it. Everything here used to be a debug key-cycle; the
+ * characters and garments were all ported and tested but a real user had no way
+ * to reach any of them.
+ */
+const closet = new ClosetSettings(browserStore());
+let closetState = closet.read();
+let companion = findCompanion(closetState.companionId);
+let pixelated = closetState.pixelated;
+
+/**
+ * The keyboard cycle, kept for development only.
+ *
+ * Walks bare -> each garment -> seasonal -> bare. The closet is the real way in
+ * now, so this exists to flip through eighteen characters quickly while working
+ * on the art, not as a feature.
  */
 const OUTFIT_CYCLE: ReadonlyArray<string | null> = [
   null,
   ...OUTFITS.map((o) => o.id),
   SEASONAL_ID,
 ];
-let outfitIndex = 0;
-
-/** Style toggle, not a second set of sprites — see render/pixelate.ts. */
-let pixelated = false;
 
 function currentOutfit(): Outfit | null {
-  return findOutfit(OUTFIT_CYCLE[outfitIndex]!);
+  if (closetState.outfitId === NO_OUTFIT) return null;
+  // Resolved every frame rather than cached, so someone who leaves Loaf running
+  // across a month boundary sees the wardrobe change under them — the same
+  // reason the reference re-checks this on every tick.
+  if (isSeasonal(closetState.outfitId)) return seasonalOutfit();
+  return findOutfit(closetState.outfitId);
+}
+
+/** What this character is called: the user's name for it, or its own. */
+function companionName(): string {
+  return displayName(closetState, companion.id, companion.defaultName);
+}
+
+/**
+ * Apply a click from the closet window, persist it, and say so.
+ *
+ * The broadcast is what keeps the closet's selection and its thumbnails — which
+ * all wear the current outfit — in step with the character in the corner.
+ */
+function applyClosetPick(raw: unknown): void {
+  if (!isClosetPick(raw)) return;
+  switch (raw.kind) {
+    case "companion":
+      closet.setCompanion(raw.id);
+      break;
+    case "outfit":
+      closet.setOutfit(raw.id);
+      break;
+    case "pixelated":
+      closet.setPixelated(raw.on);
+      break;
+    case "rename":
+      // Names are per character: renaming the cat must not rename the dog.
+      closet.setName(closetState.companionId, normaliseName(raw.name));
+      break;
+  }
+  adoptClosetState();
+  announceCloset();
+}
+
+/** Tell the closet what the state is now. It renders from this, not from storage. */
+function announceCloset(): void {
+  if (!hasTauriHost()) return;
+  void emit(CLOSET_CHANGED_EVENT, closetState).catch(() => {
+    // The closet will still be right the next time it is opened.
+  });
+}
+
+/** Re-read the stored choices and make the live character match. */
+function adoptClosetState(): void {
+  closetState = closet.read();
+  const next = findCompanion(closetState.companionId);
+  if (next.id !== companion.id) {
+    companion = next;
+    // Curling is a property of the animal — a plane does not loaf — so this has
+    // to be re-asked on every change, not once at startup.
+    curlDirector.canLoaf = canCurl(companion);
+  }
+  pixelated = closetState.pixelated;
 }
 
 // --- The ambient layer -------------------------------------------------------
@@ -393,7 +476,7 @@ function frame(nowMs: number): void {
     );
   } else {
     renderScene(
-      ctx as unknown as Parameters<typeof renderScene>[0],
+      asCtx2D(ctx!),
       companion,
       state,
       window.innerWidth,
@@ -514,27 +597,41 @@ function wireInteraction(): void {
     if (!wasClick) return;
 
     if (e.shiftKey) {
-      characterIndex = (characterIndex + 1) % COMPANIONS.length;
-      companion = COMPANIONS[characterIndex]!;
-      // The closet swapping the character out changes whether it can curl.
-      curlDirector.canLoaf = canCurl(companion);
-    } else {
+      // Development shortcut, routed through the closet so there is one writer
+      // of the choice and it still survives a restart.
+      const i = COMPANIONS.findIndex((c) => c.id === companion.id);
+      const next = COMPANIONS[(i + 1) % COMPANIONS.length]!;
+      applyClosetPick({ kind: "companion", id: next.id });
+    } else if (e.altKey) {
       moodIndex = (moodIndex + 1) % ALL_MOODS.length;
+    } else {
+      // What the hover card has been promising since it landed: "Click for the
+      // full dashboard →". Until now a click cycled the mood instead, which
+      // made the card's own invitation a lie.
+      void invokeSafe("open_dashboard");
     }
     updateProbeLabel();
   });
 
-  // Spike controls, until the closet window exists to own these properly.
+  // Development shortcuts. The closet window owns all of this properly now;
+  // these stay because flipping through eighteen characters with a keypress is
+  // how the art gets worked on.
   window.addEventListener("keydown", (e) => {
     switch (e.key.toLowerCase()) {
       case "d": // diagnostics, off unless asked for
         debugVisible = !debugVisible;
         break;
-      case "o": // cycle the wardrobe: bare -> garments -> seasonal -> bare
-        outfitIndex = (outfitIndex + 1) % OUTFIT_CYCLE.length;
+      case "o": {
+        // Cycle the wardrobe: bare -> garments -> seasonal -> bare.
+        const at = OUTFIT_CYCLE.indexOf(
+          closetState.outfitId === NO_OUTFIT ? null : closetState.outfitId,
+        );
+        const next = OUTFIT_CYCLE[(at + 1) % OUTFIT_CYCLE.length];
+        applyClosetPick({ kind: "outfit", id: next ?? NO_OUTFIT });
         break;
+      }
       case "p": // pixel art
-        pixelated = !pixelated;
+        applyClosetPick({ kind: "pixelated", on: !pixelated });
         break;
       case "b": // force a game of fetch, which otherwise takes minutes
         playDirector.forcePlay();
@@ -562,9 +659,9 @@ function updateProbeLabel(extra?: string): void {
   if (extra !== undefined) lastProbeLine = extra;
   probeEl.hidden = !debugVisible;
   if (!debugVisible) return;
-  const wearing = currentOutfit()?.name ?? OUTFIT_CYCLE[outfitIndex] ?? "bare";
+  const wearing = currentOutfit()?.name ?? "bare";
   probeEl.textContent =
-    `${companion.defaultName} · ${ALL_MOODS[moodIndex]}` +
+    `${companionName()} · ${ALL_MOODS[moodIndex]}` +
     `\n${wearing}${pixelated ? " · pixel" : ""}` +
     `\n${lastProbeLine}`;
 }
@@ -641,6 +738,14 @@ document.addEventListener("visibilitychange", () => {
 // plain browser preview there is no event bus at all, and a rejected promise on
 // every launch would bury the errors that matter.
 if (hasTauriHost()) {
+  void listen(CLOSET_PICK_EVENT, (e) => applyClosetPick(e.payload)).catch((err) => {
+    console.error("closet picks unavailable", err);
+  });
+  // A freshly opened closet asks who is on duty rather than assuming its own
+  // storage is in step with this window's.
+  void listen(CLOSET_HELLO_EVENT, () => announceCloset()).catch(() => {
+    // The closet falls back to reading storage itself.
+  });
   void listen(COMMAND_EVENT, (e) => applyCommand(e.payload)).catch((err) => {
     // Not fatal — it only means the dashboard is read-only.
     console.error("dashboard commands unavailable", err);

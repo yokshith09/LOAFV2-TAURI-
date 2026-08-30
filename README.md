@@ -42,11 +42,12 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Focus timer, ring and pill | ✅ (session logic; the presets window is UI still to come) |
 | Screen-time tracker | ✅ accumulation and storage |
 | Dashboard + hover preview | ✅ both views; the dashboard opens in its own window |
-| Tray menu | ✅ today's time, star the repo, quit |
+| Tray menu | ✅ today's time, closet, star the repo, quit |
 | Speech bubbles + hover preview | ✅ break nudge speaks; hovering shows today's card |
-| Next | privacy radar, closet UI, onboarding, the focus presets window |
+| Closet | ✅ all 18 characters, 6 garments, seasonal, per-character names, pixel toggle |
+| Next | privacy radar, onboarding, the focus presets window |
 
-Tests: **421 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
+Tests: **449 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -122,6 +123,8 @@ src/                     Frontend (TypeScript, no framework)
   bubble/geometry.ts     Where the bubble goes — y-DOWN, unlike the reference
   bubble/render.ts       The speech bubble's card and tail
   bubble/prompts.ts      What it says, and when it stays quiet
+  closet/settings.ts     The persisted choices, and the only writer of them
+  closet/view.ts         The picker's markup — thumbnails are live canvases
 src-tauri/
   src/platform/          The OS seam. Everything native terminates here.
   src/storage.rs         The one file on disk, and the path it must keep using
