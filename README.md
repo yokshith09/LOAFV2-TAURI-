@@ -47,9 +47,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Closet | ✅ all 18 characters, 6 garments, seasonal, per-character names, pixel toggle, habits |
 | Privacy radar | ✅ both platforms — domains, tab counts, tantrums |
 | Sounds | ✅ four occasions, synthesised placeholders, your own files win |
-| Next | onboarding, sprite packs |
+| Onboarding | ✅ the radar's consent screen, honest per platform |
+| Next | sprite packs |
 
-Tests: **551 frontend** (Vitest) + **48 Rust**. CI green on macOS and Windows.
+Tests: **568 frontend** (Vitest) + **48 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -66,8 +67,14 @@ npm install
 npm run tauri:dev     # run the app
 npm test              # frontend unit tests
 npm run typecheck
-cd src-tauri && cargo test   # platform-adapter tests
+cd src-tauri && cargo fmt --all   # CI fails on this before it runs anything else
+cd src-tauri && cargo test        # platform-adapter tests
 ```
+
+`cargo fmt` needs no compilation, so it works on this machine even though
+`cargo build` does not — and it is the first step of the Rust CI job, which
+means an unformatted file fails the run before clippy or the tests get a chance
+to say anything useful. Run it before every push.
 
 Most of Phase 1 is TypeScript and needs no Rust at all — `npm run dev` opens the
 companion in a browser, which is enough for character and outfit work.
@@ -128,6 +135,7 @@ src/                     Frontend (TypeScript, no framework)
   bubble/prompts.ts      What it says, and when it stays quiet
   behaviour/habits.ts    The four habits a user can switch, and remembering them
   sound/voice.ts         What Loaf sounds like — placeholders, and when to be quiet
+  onboarding/view.ts     The radar's consent screen, and the deal it states
   closet/settings.ts     The persisted choices, and the only writer of them
   closet/view.ts         The picker's markup — thumbnails are live canvases
   radar/radar.ts         Tab counts, tantrum hysteresis, per-browser permission

@@ -150,7 +150,10 @@ fn user_sounds(app: tauri::AppHandle) -> Result<Vec<String>, String> {
 
 /// One user sound, as a mime type and bytes, for the frontend to wrap in a blob.
 #[tauri::command]
-fn read_sound(app: tauri::AppHandle, occasion: String) -> Result<Option<(String, Vec<u8>)>, String> {
+fn read_sound(
+    app: tauri::AppHandle,
+    occasion: String,
+) -> Result<Option<(String, Vec<u8>)>, String> {
     Ok(sounds::read(&data_dir(&app)?, &occasion))
 }
 
@@ -210,8 +213,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let stats = MenuItem::with_id(app, "stats", "Today's time…", true, None::<&str>)?;
     let closet = MenuItem::with_id(app, "closet", "Closet…", true, None::<&str>)?;
     let focus = MenuItem::with_id(app, "focus", "Focus timer…", true, None::<&str>)?;
-    let sounds_item =
-        MenuItem::with_id(app, "sounds", "Add your own sounds…", true, None::<&str>)?;
+    let sounds_item = MenuItem::with_id(app, "sounds", "Add your own sounds…", true, None::<&str>)?;
     // Phrased as an invitation and placed with the other ordinary items — not a
     // prompt, not a gate, and never checked at runtime. See STAR_URL.
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
@@ -329,6 +331,7 @@ const DASHBOARD_LABEL: &str = "dashboard";
 const BUBBLE_LABEL: &str = "bubble";
 const CLOSET_LABEL: &str = "closet";
 const FOCUS_LABEL: &str = "focus";
+const ONBOARDING_LABEL: &str = "onboarding";
 const COMPANION_LABEL: &str = "companion";
 
 /// Where the bubble ended up, so the page can point its tail at the character.
@@ -587,6 +590,82 @@ fn show_focus(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 const FOCUS_WIDTH: f64 = 420.0;
+const ONBOARDING_WIDTH: f64 = 560.0;
+
+/// The privacy radar's consent screen.
+///
+/// Shown once, before the radar has looked at anything. Not always-on-top,
+/// unlike the closet and the focus window: this one is a decision to read, not
+/// something to watch the character react to, and a consent screen that floats
+/// over everything while you try to look something up is a dark pattern.
+fn show_onboarding(app: &tauri::AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
+    if let Some(window) = app.get_webview_window(ONBOARDING_LABEL) {
+        window.unminimize()?;
+        window.show()?;
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        ONBOARDING_LABEL,
+        tauri::WebviewUrl::App("onboarding.html".into()),
+    )
+    .title("Loaf — privacy radar")
+    .inner_size(ONBOARDING_WIDTH, 620.0)
+    .min_inner_size(ONBOARDING_WIDTH, 360.0)
+    .resizable(true)
+    .center()
+    .build()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+
+    Ok(())
+}
+
+/// Open the consent screen from the frontend — what the dashboard's "turn on
+/// privacy radar" button does, rather than switching it on without asking.
+#[tauri::command]
+fn open_onboarding(app: tauri::AppHandle) -> Result<(), String> {
+    show_onboarding(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn close_onboarding(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(ONBOARDING_LABEL) {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn fit_onboarding(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    fit_window(&app, ONBOARDING_LABEL, ONBOARDING_WIDTH, height, 360.0)
+}
+
+/// Open the macOS Automation settings pane, where a refused browser is undone.
+#[tauri::command]
+fn open_automation_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
+            .spawn();
+    }
+}
 
 /// Size the focus window to its content. Same reasoning as `fit_closet`: a
 /// guessed height clips the footer the day the copy grows by a line.
@@ -687,6 +766,10 @@ pub fn run() {
             open_dashboard,
             fit_closet,
             fit_focus,
+            fit_onboarding,
+            open_onboarding,
+            close_onboarding,
+            open_automation_settings,
             place_bubble,
             reveal_bubble,
             hide_bubble

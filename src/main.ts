@@ -64,6 +64,13 @@ import {
 } from "./closet/settings";
 import { PrivacyRadar, type ProbeOutcome } from "./radar/radar";
 import { SoundKit, loadSoundSettings, saveSoundSettings } from "./sound/soundKit";
+import {
+  ONBOARD_DECISION_EVENT,
+  ONBOARD_STATE_EVENT,
+  ONBOARD_HELLO_EVENT,
+  isDecision,
+} from "./onboarding/events";
+import type { OnboardingStep, OnboardingPlatform } from "./onboarding/view";
 import { isOccasion, type Occasion } from "./sound/voice";
 import { unavailableRadar, type RadarSnapshot } from "./dashboard/html";
 import { RADAR_STATE_EVENT, RADAR_HELLO_EVENT } from "./dashboard/events";
@@ -374,19 +381,8 @@ function applyCommand(cmd: unknown): void {
       announceRadar();
       break;
     case "radar:on":
-      if (!radar || !radarSupported) {
-        // A stale window, or one on a platform that cannot read tabs. Better a
-        // line in the console than a button that silently does nothing.
-        console.warn("the privacy radar is not available in this build");
-        return;
-      }
-      radar.settings.enabled = true;
-      announceRadar();
-      say({
-        kind: "speech",
-        text: "Radar on. Domains only — never the page.",
-        seconds: 8,
-      });
+      // Opens the consent screen rather than switching it on. See onboardingStep.
+      void invokeSafe("open_onboarding");
       return;
   }
   saveHistory();
@@ -454,6 +450,86 @@ function announceRadar(): void {
   void emit(RADAR_STATE_EVENT, radarSnapshot()).catch(() => {
     // The dashboard shows what it last heard; it is a refresh behind, not wrong.
   });
+}
+
+/**
+ * Which screen the consent window is on, and whether it has ever been answered.
+ *
+ * The radar is never switched on without this: the dashboard's "turn on privacy
+ * radar" button opens the screen rather than flipping the setting, because a
+ * feature that reads what sites you visit should not be one click away from
+ * being on before the deal has been read.
+ */
+let onboardingStep: OnboardingStep = { step: "intro" };
+const K_ONBOARDED = "radar.onboarded";
+
+function announceOnboarding(): void {
+  if (!hasTauriHost()) return;
+  void emit(ONBOARD_STATE_EVENT, {
+    step: onboardingStep,
+    platform: onboardingPlatform,
+  }).catch(() => {});
+}
+
+let onboardingPlatform: OnboardingPlatform = "other";
+
+/**
+ * Answer the consent screen.
+ *
+ * "No" is a real answer and is remembered: someone who declined should not be
+ * asked again every launch, which is how a consent screen turns into nagging.
+ */
+function applyDecision(raw: unknown): void {
+  if (!isDecision(raw)) return;
+  switch (raw) {
+    case "no":
+      browserStore().setItem(K_ONBOARDED, "1");
+      void invokeSafe("close_onboarding");
+      return;
+    case "settings":
+      void invokeSafe("open_automation_settings");
+      return;
+    case "close":
+      void invokeSafe("close_onboarding");
+      return;
+    case "yes":
+      break;
+  }
+
+  browserStore().setItem(K_ONBOARDED, "1");
+  if (!radar || !radarSupported) {
+    void invokeSafe("close_onboarding");
+    return;
+  }
+  radar.settings.enabled = true;
+  announceRadar();
+  say({ kind: "speech", text: "Radar on. Domains only — never the page.", seconds: 8 });
+
+  // The screen stays up through the asking so the user can see what happened,
+  // and lands on a list of which browsers answered.
+  onboardingStep = { step: "asking" };
+  announceOnboarding();
+  void finishOnboarding();
+}
+
+/**
+ * Ask every known browser once, then report back.
+ *
+ * On macOS each of these raises the OS's own Automation prompt, which is why
+ * the screen says so and why it waits. On Windows nothing is prompted and this
+ * simply finds out what can be read.
+ */
+async function finishOnboarding(): Promise<void> {
+  const report = await invokeSafe<{ app: { name: string; raw: string } | null }>(
+    "foreground_app",
+  );
+  if (radar && report?.app) {
+    // Only the browser in front, as ever: nothing here may launch one.
+    await pollRadar(report.app.raw, report.app.name, 0);
+  }
+  onboardingStep = { step: "done", statuses: radar?.statusRows() ?? [] };
+  announceOnboarding();
+  announceRadar();
 }
 
 function radarSnapshot(): RadarSnapshot {
@@ -1010,6 +1086,11 @@ if (hasTauriHost()) {
   void listen(FOCUS_COMMAND_EVENT, (e) => applyFocusCommand(e.payload)).catch((err) => {
     console.error("focus commands unavailable", err);
   });
+  void listen(ONBOARD_DECISION_EVENT, (e) => applyDecision(e.payload)).catch(() => {
+    // The consent screen falls back to doing nothing, which is the safe way for
+    // this particular window to fail.
+  });
+  void listen(ONBOARD_HELLO_EVENT, () => announceOnboarding()).catch(() => {});
   void listen(RADAR_HELLO_EVENT, () => announceRadar()).catch(() => {
     // The dashboard falls back to showing the radar as unavailable.
   });
@@ -1039,6 +1120,7 @@ void loadHistory()
     void loadUserSounds();
     radarSupported = support?.supported ?? false;
     radarReadsInsideBrowser = support?.readsInsideBrowser ?? true;
+    onboardingPlatform = radarReadsInsideBrowser ? "macos" : "windows";
     announceRadar();
   })
   .then(() => void pollPlatform());

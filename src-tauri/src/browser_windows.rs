@@ -29,13 +29,11 @@ use crate::browser::ProbeOutcome;
 use windows::core::{Interface, VARIANT};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_MULTITHREADED,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationValuePattern, TreeScope_Descendants,
-    UIA_ControlTypePropertyId, UIA_EditControlTypeId, UIA_TabItemControlTypeId,
-    UIA_ValuePatternId,
+    UIA_ControlTypePropertyId, UIA_EditControlTypeId, UIA_TabItemControlTypeId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -267,6 +265,9 @@ mod tests {
 
     #[test]
     fn sheds_a_leading_www() {
-        assert_eq!(host_of("https://www.example.com/").as_deref(), Some("example.com"));
+        assert_eq!(
+            host_of("https://www.example.com/").as_deref(),
+            Some("example.com")
+        );
     }
 }

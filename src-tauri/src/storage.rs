@@ -153,7 +153,11 @@ mod tests {
     fn inherits_the_free_apps_history_on_a_first_launch() {
         let dir = scratch("inherit");
         fs::create_dir_all(dir.join(LEGACY_DIR)).unwrap();
-        fs::write(legacy_path(&dir), r#"{"2026-08-01":{"apps":{"Safari":60}}}"#).unwrap();
+        fs::write(
+            legacy_path(&dir),
+            r#"{"2026-08-01":{"apps":{"Safari":60}}}"#,
+        )
+        .unwrap();
 
         let text = read_or_inherit(&dir).unwrap().expect("inherited history");
         assert!(text.contains("Safari"));
