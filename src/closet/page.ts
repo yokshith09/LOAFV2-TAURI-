@@ -95,6 +95,12 @@ function render(state: ClosetState): void {
     el.addEventListener("click", () => send({ kind: "outfit", id: el.dataset.outfit! }));
   });
 
+  root.querySelectorAll<HTMLInputElement>("[data-habit]").forEach((el) => {
+    el.addEventListener("change", () =>
+      send({ kind: "habit", habit: el.dataset.habit!, on: el.checked }),
+    );
+  });
+
   const pixel = root.querySelector<HTMLInputElement>("#pixel");
   pixel?.addEventListener("change", () =>
     send({ kind: "pixelated", on: pixel.checked }),

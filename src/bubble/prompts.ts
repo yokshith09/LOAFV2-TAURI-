@@ -29,6 +29,8 @@ export class PromptRotation {
   }
 }
 
+import { spell } from "../focus/timer";
+
 /**
  * What he says about your tabs. `%d` is the count, `%s` the browser.
  *
@@ -45,6 +47,18 @@ const tantrumRotation = new PromptRotation(TANTRUM_PROMPTS);
 
 export function tantrumLine(count: number, browser: string): string {
   return tantrumRotation.next().replace("%d", String(count)).replace("%s", browser);
+}
+
+/**
+ * What he says when a focus session runs out.
+ *
+ * `planned` is the time the session actually took, not the length it was
+ * started at — the timer keeps `duration` at spent + left precisely so this
+ * quotes a number the user would recognise even after a "-5".
+ */
+export function sessionDoneLine(planned: number): string {
+  return `${spell(planned)} done. 🍅
+Stand up. Look out a window. I'll be here.`;
 }
 
 /** How long a nudge stays up, in seconds. Matches the reference. */

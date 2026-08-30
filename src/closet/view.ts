@@ -2,6 +2,8 @@ import { escapeHTML } from "../dashboard/html";
 import { grouped, GROUP_NOTES } from "../companions/registry";
 import { OUTFITS, SEASONAL_ID, seasonalLabel } from "../outfits/registry";
 import { displayName, NO_OUTFIT, MAX_NAME_LENGTH, type ClosetState } from "./settings";
+import { habitsFor, HABIT_LABELS } from "../behaviour/habits";
+import { findCompanion } from "../companions/registry";
 
 /**
  * The closet's markup. Ported from `ClosetWindow.html`.
@@ -61,6 +63,13 @@ export const CLOSET_CSS = `
   .chip.on { background:var(--site); border-color:var(--site); color:#fff; }
   .chip .glyph { font-size:14px; line-height:1; }
 
+  .habits { display:flex; flex-direction:column; gap:8px; }
+  .habit { display:flex; align-items:center; gap:9px; cursor:pointer; font-size:13px;
+           border:1px solid var(--edge); border-radius:11px; padding:10px 13px;
+           background:var(--card); color:var(--ink-soft); }
+  .habit.on { border-color:var(--site); background:rgba(138,80,128,.055); color:var(--ink); font-weight:600; }
+  .habit input { accent-color:var(--site); margin:0; }
+
   .fine { font-size:10.5px; color:var(--ink-soft); line-height:1.5; margin:11px 0 0; }
   .foot { font-size:11px; color:var(--ink-soft); line-height:1.55;
           margin:18px 0 0; padding-top:13px; border-top:1px solid var(--edge); }
@@ -86,6 +95,27 @@ export const CLOSET_CSS = `
   .toggle.on { background:var(--site); border-color:var(--site); color:#fff; font-weight:600; }
   .toggle input { accent-color:var(--site); margin:0; }
 `;
+
+/**
+ * The habit toggles.
+ *
+ * Drifting is only offered to characters that drift. On anything else it would
+ * be a switch wired to nothing, and its default is the opposite of wandering's,
+ * which would be baffling sitting right next to it on a cat.
+ */
+function habitRows(state: ClosetState): string {
+  const companion = findCompanion(state.companionId);
+  return habitsFor(companion.drifts)
+    .map((habit) => {
+      const on = state.habits[habit] === true;
+      return (
+        `<label class="habit${on ? " on" : ""}">` +
+        `<input type="checkbox" data-habit="${escapeHTML(habit)}"${on ? " checked" : ""}>` +
+        `<span>${escapeHTML(HABIT_LABELS[habit])}</span></label>`
+      );
+    })
+    .join("");
+}
 
 function chip(id: string, glyph: string, label: string, selected: boolean): string {
   return (
@@ -154,6 +184,12 @@ export function closetBody(state: ClosetState): string {
   Names are kept per character, so renaming this one won't rename the rest.</p>
 
   ${shelves}
+
+  <h2>Habits <span class="shelf-note">what they get up to on their own</span></h2>
+  <div class="habits">${habitRows(state)}</div>
+  <p class="fine">Wandering is off until you say otherwise — you put the window
+  where it is, and a pet that starts crossing a screen you're working on, unasked,
+  is a bug report.</p>
 
   <h2>What they wear</h2>
   <div class="chips">${chips}</div>

@@ -17,7 +17,7 @@ import { PlayDirector } from "./behaviour/play";
 import { WanderController } from "./behaviour/wander";
 import { drawBall, drawSwipe } from "./behaviour/furBall";
 import { resolveLicence, licenceInputs } from "./behaviour/licence";
-import { defaultBehaviourSettings } from "./behaviour/settings";
+import { loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/habits";
 import { resolveMood } from "./behaviour/mood";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
@@ -46,6 +46,7 @@ import {
   PromptRotation,
   mayNudge,
   tantrumLine,
+  sessionDoneLine,
 } from "./bubble/prompts";
 import {
   CLOSET_PICK_EVENT,
@@ -146,6 +147,16 @@ function applyClosetPick(raw: unknown): void {
       // Names are per character: renaming the cat must not rename the dog.
       closet.setName(closetState.companionId, normaliseName(raw.name));
       break;
+    case "habit": {
+      if (!isHabit(raw.habit)) return;
+      behaviour[raw.habit] = raw.on;
+      saveHabits(browserStore(), behaviour);
+      // Only the two that change where he physically is get a line — a bubble
+      // for every switch is a pet that talks back at you for using its settings.
+      const line = habitLine(raw.habit, raw.on);
+      if (line) say({ kind: "speech", text: line, seconds: 7 });
+      break;
+    }
   }
   adoptClosetState();
   announceCloset();
@@ -154,6 +165,15 @@ function applyClosetPick(raw: unknown): void {
 /** Tell the closet what the state is now. It renders from this, not from storage. */
 function announceCloset(): void {
   if (!hasTauriHost()) return;
+  // The habits live in `behaviour`, not in the closet's own storage, so they
+  // are attached here rather than read there.
+  closet.habits = {
+    loafing: behaviour.loafing,
+    playing: behaviour.playing,
+    wandering: behaviour.wandering,
+    drifting: behaviour.drifting,
+  };
+  closetState = closet.read();
   void emit(CLOSET_CHANGED_EVENT, closetState).catch(() => {
     // The closet will still be right the next time it is opened.
   });
@@ -174,7 +194,7 @@ function adoptClosetState(): void {
 
 // --- The ambient layer -------------------------------------------------------
 
-const behaviour = defaultBehaviourSettings();
+const behaviour = loadHabits(browserStore());
 /**
  * The focus timer persists through localStorage so a session survives a quit —
  * relaunch inside one and it is still counting.
@@ -198,6 +218,31 @@ const focus = new FocusTimer({
     },
   },
 });
+
+/**
+ * The session ending is the whole promise.
+ *
+ * The focus window says "He'll say something when it runs out" in as many
+ * words, and until now nothing was wired to `onFinish` — so a session ended in
+ * silence and the window was lying. The number quoted is the time the session
+ * actually took, which is why the timer keeps `duration` at spent + left even
+ * when a "-5" cuts it short.
+ *
+ * It also lands as the break the fifteen-minute nudge stood down for: this is
+ * the interruption the user chose, arriving at the moment they chose it.
+ */
+focus.onFinish = (planned) => {
+  moodOverride = "happy";
+  say({
+    kind: "speech",
+    text: sessionDoneLine(planned),
+    seconds: 12,
+  });
+  window.setTimeout(() => {
+    moodOverride = null;
+  }, 12_000);
+  announceFocus();
+};
 
 /**
  * Apply a click from the focus window and broadcast where the timer now is.

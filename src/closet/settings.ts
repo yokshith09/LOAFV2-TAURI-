@@ -68,6 +68,14 @@ export interface ClosetState {
   readonly pixelated: boolean;
   /** Custom names by companion id. Absent means "call it what it ships as". */
   readonly names: Readonly<Record<string, string>>;
+  /**
+   * The four habits, as the closet needs to draw them.
+   *
+   * Carried here rather than read from `behaviour/habits` by the page, so the
+   * closet renders from one payload and cannot show a checkbox that disagrees
+   * with the pet it is standing next to.
+   */
+  readonly habits: Readonly<Record<string, boolean>>;
 }
 
 /**
@@ -83,6 +91,12 @@ export function normaliseName(raw: string): string | null {
 }
 
 export class ClosetSettings {
+  /**
+   * Set by the companion before broadcasting. The habits live in
+   * `behaviour/habits`, which owns their storage; this only carries them.
+   */
+  habits: Readonly<Record<string, boolean>> = {};
+
   constructor(private readonly store: SettingsStore) {}
 
   read(): ClosetState {
@@ -91,6 +105,7 @@ export class ClosetSettings {
       outfitId: this.store.getItem(K_OUTFIT) ?? NO_OUTFIT,
       pixelated: this.store.getItem(K_PIXELATED) === "1",
       names: this.readNames(),
+      habits: this.habits,
     };
   }
 

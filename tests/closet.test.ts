@@ -12,6 +12,8 @@ import { isClosetPick, isClosetState } from "../src/closet/events";
 import { closetBody } from "../src/closet/view";
 import { COMPANIONS, DEFAULT_COMPANION_ID, grouped } from "../src/companions/registry";
 import { OUTFITS, SEASONAL_ID } from "../src/outfits/registry";
+import { loadHabits, saveHabits, habitLine } from "../src/behaviour/habits";
+import { defaultBehaviourSettings } from "../src/behaviour/settings";
 
 const fresh = (): ClosetSettings => new ClosetSettings(new MemorySettingsStore());
 
@@ -229,6 +231,91 @@ describe("the closet page", () => {
   });
 });
 
+describe("habits", () => {
+  const withHabits = (over: Record<string, boolean> = {}, companionId?: string) => {
+    const store = new MemorySettingsStore();
+    const s = new ClosetSettings(store);
+    if (companionId) s.setCompanion(companionId);
+    s.habits = { loafing: true, playing: true, wandering: false, drifting: true, ...over };
+    return s.read();
+  };
+
+  it("offers the three habits every character has", () => {
+    const html = closetBody(withHabits());
+    for (const h of ["loafing", "playing", "wandering"]) {
+      expect(html).toContain(`data-habit="${h}"`);
+    }
+  });
+
+  it("does not offer drifting to something that cannot drift", () => {
+    // A switch wired to nothing, whose default is the opposite of wandering's
+    // — baffling sitting next to it on a cat.
+    expect(closetBody(withHabits({}, "cat-ginger"))).not.toContain('data-habit="drifting"');
+  });
+
+  it("offers drifting to a ghost", () => {
+    const ghost = COMPANIONS.find((c) => c.drifts)!;
+    expect(closetBody(withHabits({}, ghost.id))).toContain('data-habit="drifting"');
+  });
+
+  it("checks the ones that are on and leaves wandering off", () => {
+    // The window walk has been built and tested and unreachable; this is the
+    // control that finally turns it on, and it must start off.
+    const html = closetBody(withHabits());
+    expect(html).toMatch(/data-habit="loafing" checked/);
+    expect(html).not.toMatch(/data-habit="wandering" checked/);
+  });
+
+  it("loads saved habits over the defaults, and nothing else", () => {
+    // Only the four booleans come back. A stale or hand-edited file must not be
+    // able to leave the pet walking at forty points a second.
+    const store = new MemorySettingsStore();
+    store.setItem(
+      "behaviour.habits",
+      JSON.stringify({ wandering: true, loafing: false, wanderSpeed: 400 }),
+    );
+    const loaded = loadHabits(store);
+    expect(loaded.wandering).toBe(true);
+    expect(loaded.loafing).toBe(false);
+    expect(loaded.wanderSpeed).toBe(defaultBehaviourSettings().wanderSpeed);
+  });
+
+  it("ignores a non-boolean where a habit should be", () => {
+    const store = new MemorySettingsStore();
+    store.setItem("behaviour.habits", JSON.stringify({ wandering: "yes" }));
+    expect(loadHabits(store).wandering).toBe(false);
+  });
+
+  it("survives a habits file that is not JSON", () => {
+    const store = new MemorySettingsStore();
+    store.setItem("behaviour.habits", "{oops");
+    expect(loadHabits(store)).toEqual(defaultBehaviourSettings());
+  });
+
+  it("round-trips through storage", () => {
+    const store = new MemorySettingsStore();
+    const settings = defaultBehaviourSettings();
+    settings.wandering = true;
+    saveHabits(store, settings);
+    expect(loadHabits(store).wandering).toBe(true);
+  });
+
+  it("speaks only for the habits that move him", () => {
+    // A confirmation bubble for every switch is a pet that talks back at you
+    // for using its own settings.
+    expect(habitLine("wandering", true)).toContain("stretch my legs");
+    expect(habitLine("drifting", false)).toContain("Anchored");
+    expect(habitLine("loafing", true)).toBeNull();
+    expect(habitLine("playing", false)).toBeNull();
+  });
+
+  it("accepts a habit pick and rejects an invented one", () => {
+    expect(isClosetPick({ kind: "habit", habit: "wandering", on: true })).toBe(true);
+    expect(isClosetPick({ kind: "habit", habit: "flying", on: true })).toBe(false);
+    expect(isClosetPick({ kind: "habit", habit: "wandering", on: "yes" })).toBe(false);
+  });
+});
+
 describe("the seasonal sentinel", () => {
   it("is told apart from a real garment id", () => {
     expect(isSeasonal(SEASONAL_ID)).toBe(true);
@@ -246,6 +333,7 @@ describe("state arriving from the companion", () => {
         outfitId: "scarf",
         pixelated: true,
         names: { "dog-husky": "Wolfgang" },
+        habits: { loafing: true, playing: true, wandering: false },
       }),
     ).toBe(true);
   });
@@ -254,12 +342,16 @@ describe("state arriving from the companion", () => {
     for (const junk of [
       null,
       "state",
-      { companionId: "", outfitId: "none", pixelated: false, names: {} },
-      { companionId: "x", outfitId: "", pixelated: false, names: {} },
-      { companionId: "x", outfitId: "none", pixelated: "no", names: {} },
-      { companionId: "x", outfitId: "none", pixelated: false, names: null },
-      { companionId: "x", outfitId: "none", pixelated: false, names: { a: 3 } },
-      { companionId: "x", outfitId: "none", pixelated: false },
+      { companionId: "", outfitId: "none", pixelated: false, names: {}, habits: {} },
+      { companionId: "x", outfitId: "", pixelated: false, names: {}, habits: {} },
+      { companionId: "x", outfitId: "none", pixelated: "no", names: {}, habits: {} },
+      { companionId: "x", outfitId: "none", pixelated: false, names: null, habits: {} },
+      { companionId: "x", outfitId: "none", pixelated: false, names: { a: 3 }, habits: {} },
+      { companionId: "x", outfitId: "none", pixelated: false, habits: {} },
+      // A habit that is not a boolean would render as a checkbox in an
+      // indeterminate state and toggle to something nobody chose.
+      { companionId: "x", outfitId: "none", pixelated: false, names: {}, habits: { a: 1 } },
+      { companionId: "x", outfitId: "none", pixelated: false, names: {} },
     ]) {
       expect(isClosetState(junk)).toBe(false);
     }

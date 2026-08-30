@@ -44,11 +44,11 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Dashboard + hover preview | ✅ both views; the dashboard opens in its own window |
 | Tray menu | ✅ focus, today's time, closet, star the repo, quit |
 | Speech bubbles + hover preview | ✅ break nudge speaks; hovering shows today's card |
-| Closet | ✅ all 18 characters, 6 garments, seasonal, per-character names, pixel toggle |
+| Closet | ✅ all 18 characters, 6 garments, seasonal, per-character names, pixel toggle, habits |
 | Privacy radar | ✅ both platforms — domains, tab counts, tantrums |
 | Next | sounds, onboarding, sprite packs |
 
-Tests: **519 frontend** (Vitest) + **39 Rust**. CI green on macOS and Windows.
+Tests: **532 frontend** (Vitest) + **39 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -125,6 +125,7 @@ src/                     Frontend (TypeScript, no framework)
   bubble/geometry.ts     Where the bubble goes — y-DOWN, unlike the reference
   bubble/render.ts       The speech bubble's card and tail
   bubble/prompts.ts      What it says, and when it stays quiet
+  behaviour/habits.ts    The four habits a user can switch, and remembering them
   closet/settings.ts     The persisted choices, and the only writer of them
   closet/view.ts         The picker's markup — thumbnails are live canvases
   radar/radar.ts         Tab counts, tantrum hysteresis, per-browser permission

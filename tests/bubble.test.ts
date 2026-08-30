@@ -11,6 +11,7 @@ import {
   mayNudge,
   HOVER_DWELL_MS,
   BREAK_BUBBLE_SECONDS,
+  sessionDoneLine,
 } from "../src/bubble/prompts";
 
 /** A 1920x1080 screen at the origin. */
@@ -187,5 +188,24 @@ describe("what it says and when", () => {
 
   it("leaves a nudge up long enough to read", () => {
     expect(BREAK_BUBBLE_SECONDS).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe("the end of a focus session", () => {
+  it("is a line at all — the window promises one", () => {
+    // The focus window says "He'll say something when it runs out" in as many
+    // words, and for three commits nothing was wired to onFinish.
+    expect(sessionDoneLine(45 * 60)).toContain("done");
+  });
+
+  it("quotes the time the session actually took", () => {
+    // Not the length it started at: the timer keeps duration at spent + left so
+    // this is a number the user would recognise after a "-5".
+    expect(sessionDoneLine(45 * 60)).toContain("45 minutes");
+    expect(sessionDoneLine(40 * 60)).toContain("40 minutes");
+  });
+
+  it("is multi-line, so the bubble left-aligns it", () => {
+    expect(sessionDoneLine(1500)).toContain("\n");
   });
 });

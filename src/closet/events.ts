@@ -10,6 +10,8 @@
  * which cat is on duty.
  */
 
+import { isHabit } from "../behaviour/habits";
+
 export const CLOSET_PICK_EVENT = "loaf://closet/pick";
 export const CLOSET_CHANGED_EVENT = "loaf://closet/changed";
 /**
@@ -26,6 +28,7 @@ export type ClosetPick =
   | { readonly kind: "companion"; readonly id: string }
   | { readonly kind: "outfit"; readonly id: string }
   | { readonly kind: "pixelated"; readonly on: boolean }
+  | { readonly kind: "habit"; readonly habit: string; readonly on: boolean }
   /** An empty or whitespace-only name is how the user resets to the default. */
   | { readonly kind: "rename"; readonly name: string };
 
@@ -51,6 +54,14 @@ export function isClosetState(v: unknown): v is ClosetStatePayload {
   if (typeof s.names !== "object" || s.names === null || Array.isArray(s.names)) {
     return false;
   }
+  if (
+    typeof s.habits !== "object" ||
+    s.habits === null ||
+    Array.isArray(s.habits) ||
+    !Object.values(s.habits as Record<string, unknown>).every((h) => typeof h === "boolean")
+  ) {
+    return false;
+  }
   return Object.values(s.names as Record<string, unknown>).every(
     (n) => typeof n === "string",
   );
@@ -62,6 +73,7 @@ export interface ClosetStatePayload {
   readonly outfitId: string;
   readonly pixelated: boolean;
   readonly names: Readonly<Record<string, string>>;
+  readonly habits: Readonly<Record<string, boolean>>;
 }
 
 export function isClosetPick(v: unknown): v is ClosetPick {
@@ -73,6 +85,8 @@ export function isClosetPick(v: unknown): v is ClosetPick {
       return typeof p.id === "string" && p.id.length > 0;
     case "pixelated":
       return typeof p.on === "boolean";
+    case "habit":
+      return isHabit(p.habit) && typeof p.on === "boolean";
     case "rename":
       return typeof p.name === "string";
     default:
