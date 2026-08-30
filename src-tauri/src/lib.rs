@@ -226,6 +226,150 @@ fn show_dashboard(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 const DASHBOARD_LABEL: &str = "dashboard";
+const BUBBLE_LABEL: &str = "bubble";
+const COMPANION_LABEL: &str = "companion";
+
+/// Where the bubble ended up, so the page can point its tail at the character.
+#[derive(Debug, Serialize)]
+pub struct BubblePlacement {
+    pub side: &'static str,
+    #[serde(rename = "tailX")]
+    pub tail_x: f64,
+}
+
+/// Size the bubble window to the card the page just measured and put it above
+/// the companion — WITHOUT showing it.
+///
+/// Revealing is a separate step (`reveal_bubble`) because the placement decides
+/// which side the tail hangs from, and the page has to re-render with that
+/// answer before anyone sees it. Showing here instead would put one frame of
+/// bubble on screen with its tail hanging off the corner of a short card.
+///
+/// Positioning lives here rather than in the page because only Rust can see the
+/// companion's frame and the monitor it is on. The arithmetic itself is
+/// duplicated from `src/bubble/geometry.ts`, which is where it is tested — this
+/// is the same rules against the numbers the OS reports.
+#[tauri::command]
+fn place_bubble(
+    app: tauri::AppHandle,
+    width: f64,
+    height: f64,
+    interactive: bool,
+) -> Result<BubblePlacement, String> {
+    const EDGE: f64 = 8.0;
+    const GAP: f64 = 4.0;
+
+    let bubble = app
+        .get_webview_window(BUBBLE_LABEL)
+        .ok_or_else(|| "no bubble window".to_string())?;
+    let companion = app
+        .get_webview_window(COMPANION_LABEL)
+        .ok_or_else(|| "no companion window".to_string())?;
+
+    // The page measured in CSS pixels; windows are placed in physical ones.
+    // Skipping this makes the bubble two thirds of its content on a 150% display
+    // and clips the last line off every prompt.
+    let scale = bubble.scale_factor().map_err(|e| e.to_string())?;
+    let w = (width * scale).ceil();
+    let h = (height * scale).ceil();
+
+    let pos = companion.outer_position().map_err(|e| e.to_string())?;
+    let size = companion.outer_size().map_err(|e| e.to_string())?;
+    let (cx, cy) = (pos.x as f64, pos.y as f64);
+    let (cw, ch) = (size.width as f64, size.height as f64);
+
+    // Tauri exposes no work area, so the monitor's full bounds stand in and the
+    // edge margin absorbs the difference. The same approximation the window walk
+    // already makes.
+    let monitor = companion
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no monitor".to_string())?;
+    let m_pos = monitor.position();
+    let m_size = monitor.size();
+    let (mx, my) = (m_pos.x as f64, m_pos.y as f64);
+    let (mw, mh) = (m_size.width as f64, m_size.height as f64);
+
+    let min_x = mx + EDGE;
+    let max_x = (mx + mw - w - EDGE).max(min_x);
+    let x = (cx + cw / 2.0 - w / 2.0).clamp(min_x, max_x);
+
+    let above = cy - h - GAP;
+    let below = cy + ch + GAP;
+    let top = my + EDGE;
+    let bottom = my + mh - h - EDGE;
+
+    let (y, side) = if above >= top {
+        (above, "above")
+    } else if below <= bottom {
+        (below, "below")
+    } else {
+        (above.clamp(top, bottom.max(top)), "above")
+    };
+
+    // The preview is a peek, not something you interact with — it must not eat
+    // a click aimed at whatever is behind it. The speech bubble does take
+    // clicks, because clicking it is how you dismiss it.
+    bubble
+        .set_ignore_cursor_events(!interactive)
+        .map_err(|e| e.to_string())?;
+    bubble
+        .set_size(tauri::PhysicalSize::new(w as u32, h as u32))
+        .map_err(|e| e.to_string())?;
+    bubble
+        .set_position(tauri::PhysicalPosition::new(x as i32, y as i32))
+        .map_err(|e| e.to_string())?;
+
+    // Tail offset back in CSS pixels, kept inside the rounded corners.
+    let tail_x = ((cx + cw / 2.0 - x) / scale).clamp(18.0, (width - 18.0).max(18.0));
+    Ok(BubblePlacement { side, tail_x })
+}
+
+/// Show the bubble, now that the page has re-rendered around its placement.
+#[tauri::command]
+fn reveal_bubble(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(bubble) = app.get_webview_window(BUBBLE_LABEL) {
+        bubble.show().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_bubble(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(bubble) = app.get_webview_window(BUBBLE_LABEL) {
+        bubble.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// The bubble window, built once at startup and hidden until something is said.
+///
+/// Created up front rather than on demand: it carries a whole webview, and
+/// building one while the user is mid-hover would put the preview on screen
+/// well after they had stopped looking.
+fn build_bubble_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        BUBBLE_LABEL,
+        tauri::WebviewUrl::App("bubble.html".into()),
+    )
+    .title("Loaf")
+    .inner_size(240.0, 80.0)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .shadow(false)
+    .resizable(false)
+    // Never steals focus: it appears while you are typing in another app, and a
+    // pet that pulls the caret out of your editor to tell you to drink water has
+    // done more harm than the advice is worth.
+    .focused(false)
+    .visible(false)
+    .build()?;
+    let _ = window;
+    Ok(())
+}
 
 /// The repository, opened in the user's browser from the tray menu.
 ///
@@ -269,8 +413,9 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             build_tray(app.handle())?;
+            build_bubble_window(app.handle())?;
 
-            if let Some(window) = app.get_webview_window("companion") {
+            if let Some(window) = app.get_webview_window(COMPANION_LABEL) {
                 park_bottom_right(&window);
             }
             Ok(())
@@ -281,7 +426,10 @@ pub fn run() {
             platform_name,
             start_drag,
             read_stats,
-            write_stats
+            write_stats,
+            place_bubble,
+            reveal_bubble,
+            hide_bubble
         ])
         .run(tauri::generate_context!())
         .expect("error while running Loaf");

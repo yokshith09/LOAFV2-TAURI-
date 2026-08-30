@@ -19,12 +19,13 @@ export default defineConfig({
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     rollupOptions: {
-      // Two windows, two documents. The dashboard has to be a real entry point
-      // rather than a route: it is opened by Rust as its own WebviewWindow, so
-      // it needs a file at a URL the webview can be pointed at.
+      // Three windows, three documents. Each is opened by Rust as its own
+      // WebviewWindow, so each needs a real file at a URL the webview can be
+      // pointed at — a client-side route would have nothing to point to.
       input: {
         main: resolve(__dirname, "index.html"),
         dashboard: resolve(__dirname, "dashboard.html"),
+        bubble: resolve(__dirname, "bubble.html"),
       },
     },
   },

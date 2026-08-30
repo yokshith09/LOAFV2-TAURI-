@@ -29,6 +29,14 @@ import {
 } from "./tracker/statsStore";
 import { emit, listen } from "@tauri-apps/api/event";
 import { COMMAND_EVENT, STATS_CHANGED_EVENT, isCommand } from "./dashboard/events";
+import { BUBBLE_SHOW_EVENT, BUBBLE_HIDE_EVENT, type BubblePayload } from "./bubble/events";
+import {
+  BREAK_PROMPTS,
+  BREAK_BUBBLE_SECONDS,
+  HOVER_DWELL_MS,
+  PromptRotation,
+  mayNudge,
+} from "./bubble/prompts";
 import { ALL_MOODS, type Mood, type Outfit, type SceneState } from "./core/types";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement | null;
@@ -165,6 +173,63 @@ const hostWindow = new TauriMovableWindow();
 curlDirector.settings = behaviour;
 playDirector.settings = behaviour;
 curlDirector.canLoaf = canCurl(companion);
+
+// --- Speaking ----------------------------------------------------------------
+
+const breakPrompts = new PromptRotation(BREAK_PROMPTS);
+
+/**
+ * The mood the bubble is forcing, if any.
+ *
+ * The reference overrides the mood while a nudge is up and clears it when the
+ * bubble hides, so the character looks like it means what it is saying. Held
+ * here rather than in the bubble window because the mood belongs to the thing
+ * being drawn.
+ */
+let moodOverride: Mood | null = null;
+
+function say(payload: BubblePayload): void {
+  if (!hasTauriHost()) return;
+  void emit(BUBBLE_SHOW_EVENT, payload).catch((err) => {
+    console.error("could not say that", err);
+  });
+}
+
+/**
+ * The fifteen-minute break nudge.
+ *
+ * Stands down during a focus session — see `mayNudge`. The streak has already
+ * been reset by the tick that reported it, so skipping here costs one nudge
+ * rather than deferring it to the moment the session ends, which is when the
+ * timer's own finish message lands.
+ */
+function nudge(): void {
+  // A PAUSED session does not suppress it, matching the reference's
+  // `state != .running`. Someone who paused is already taking a break, and the
+  // promise not to interrupt was about the part where they were working.
+  const running = focus.display !== null && !focus.display.paused;
+  if (!mayNudge(running)) return;
+  moodOverride = "worried";
+  say({
+    kind: "speech",
+    text: breakPrompts.next(),
+    seconds: BREAK_BUBBLE_SECONDS,
+  });
+  // The bubble hides itself on its own timer or on a click, and this window is
+  // not told. Matching the duration keeps the worried face and the bubble on
+  // screen together; a shared "it hid" event would be exact, but it would also
+  // let a dropped event strand the character mid-worry forever.
+  window.setTimeout(() => {
+    moodOverride = null;
+  }, BREAK_BUBBLE_SECONDS * 1000);
+}
+
+function hush(): void {
+  if (!hasTauriHost()) return;
+  void emit(BUBBLE_HIDE_EVENT).catch(() => {
+    // Nothing was listening. The bubble is already not on screen.
+  });
+}
 
 /** Set while the user has the companion under the mouse or is moving it. */
 let hovering = false;
@@ -304,7 +369,9 @@ function frame(nowMs: number): void {
     nextBlinkAt = nowMs + 2500 + Math.random() * 4000;
   }
 
-  const mood = ALL_MOODS[moodIndex]! as Mood;
+  // An override wins over the cycled mood: while the character is telling you
+  // to drink water it should not be beaming.
+  const mood = moodOverride ?? (ALL_MOODS[moodIndex]! as Mood);
   tickAmbient(nowMs, mood);
 
   const state: SceneState = {
@@ -419,11 +486,25 @@ function wireInteraction(): void {
     }, 600);
   });
 
+  // The preview waits for a dwell rather than firing on entry: the cursor
+  // crosses the companion on its way to everything in that corner of the
+  // screen, and a card that appeared each time would be a strobe.
+  let dwell: number | undefined;
   window.addEventListener("mouseenter", () => {
     hovering = true;
+    clearTimeout(dwell);
+    dwell = window.setTimeout(() => {
+      // Only if still hovering, and never on top of something being said.
+      if (!hovering || !tracker || moodOverride !== null) return;
+      say({ kind: "preview", stats: tracker.serialize() });
+    }, HOVER_DWELL_MS);
   });
   window.addEventListener("mouseleave", () => {
     hovering = false;
+    clearTimeout(dwell);
+    // Only the preview follows the cursor away. A nudge you moved the mouse
+    // past is a nudge you have not read yet, so it keeps its own timer.
+    if (moodOverride === null) hush();
   });
 
   window.addEventListener("mouseup", (e) => {
@@ -529,10 +610,7 @@ async function pollPlatform(): Promise<void> {
     // not be flattened into a guess on the way there.
     const idle = await invokeSafe<number | null>("idle_seconds");
     lastTickResult = tracker.tick(report.app?.name ?? null, idle ?? null);
-
-    // The visible break nudge waits on speech bubbles; for now the result is
-    // only surfaced in the debug label, so this is a known gap rather than a
-    // finished feature.
+    if (lastTickResult === "breakDue") nudge();
     if (++ticksSinceSave >= SAVE_EVERY) saveHistory();
   }
 

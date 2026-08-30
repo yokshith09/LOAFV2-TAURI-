@@ -43,9 +43,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Screen-time tracker | ✅ accumulation and storage |
 | Dashboard + hover preview | ✅ both views; the dashboard opens in its own window |
 | Tray menu | ✅ today's time, star the repo, quit |
-| Next | privacy radar, closet UI, speech bubbles, the focus presets window |
+| Speech bubbles + hover preview | ✅ break nudge speaks; hovering shows today's card |
+| Next | privacy radar, closet UI, onboarding, the focus presets window |
 
-Tests: **397 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
+Tests: **421 frontend** (Vitest) + **28 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -118,6 +119,9 @@ src/                     Frontend (TypeScript, no framework)
   dashboard/html.ts      Both dashboard views, as markup
   dashboard/page.ts      The dashboard window's entry point
   dashboard/events.ts    The two events the two windows speak over
+  bubble/geometry.ts     Where the bubble goes — y-DOWN, unlike the reference
+  bubble/render.ts       The speech bubble's card and tail
+  bubble/prompts.ts      What it says, and when it stays quiet
 src-tauri/
   src/platform/          The OS seam. Everything native terminates here.
   src/storage.rs         The one file on disk, and the path it must keep using
@@ -207,12 +211,9 @@ Signing and notarisation (macOS), code signing (Windows), the privacy radar, the
 dashboards, the closet UI, the tray menus, speech bubbles, onboarding, the focus
 presets window, and everything else in Priorities 1–6 of the product direction.
 
-The break nudge has no visible form until speech bubbles land — the tracker
-returns it and only the debug overlay shows it.
-
-The hover preview (`miniBody`) is generated and tested but has no window yet;
-that needs a borderless window positioned above the companion, which is the same
-machinery speech bubbles will want.
+Most of what the reference says through bubbles is not wired up yet — the closet
+greeting, the tantrum lines, the focus-session messages, the settings
+confirmations. The machinery is there; each one needs the feature behind it.
 
 ## Licence
 
