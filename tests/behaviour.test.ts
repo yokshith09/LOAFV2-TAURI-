@@ -332,6 +332,7 @@ describe("the mood ladder", () => {
     resolveMood({
       hovering: false,
       tabAlert: false,
+      proud: false,
       override: null,
       sleeping: false,
       debug: null,
@@ -344,6 +345,17 @@ describe("the mood ladder", () => {
     expect(
       ladder({ hovering: true, tabAlert: true, override: "worried", sleeping: true }),
     ).toBe("happy");
+  });
+
+  it("lets pride outrank a spoken line, so the face agrees with the praise", () => {
+    // Being told "thank you, genuinely" by something looking worried is worse
+    // than not being thanked.
+    expect(ladder({ proud: true, override: "worried" })).toBe("proud");
+  });
+
+  it("still lets a tantrum outrank pride", () => {
+    // Tabs closed and immediately reopened is a tantrum, not a triumph.
+    expect(ladder({ tabAlert: true, proud: true })).toBe("tantrum");
   });
 
   it("lets a tantrum outrank a spoken line", () => {

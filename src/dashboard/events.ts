@@ -25,11 +25,20 @@ export const RADAR_STATE_EVENT = "loaf://radar/state";
 export const RADAR_HELLO_EVENT = "loaf://radar/hello";
 
 /** Commands the dashboard can send. Anything else is ignored by the companion. */
-export const COMMANDS = ["reset", "sites:forget", "radar:on"] as const;
+export const COMMANDS = ["reset", "sites:forget", "radar:on", "radar:off", "about"] as const;
 export type Command = (typeof COMMANDS)[number];
 
+/** Tab counts the tantrum can be set to. 0 is "never complain". */
+export const TANTRUM_OPTIONS = [0, 20, 30, 40, 60] as const;
+
 export function isCommand(v: unknown): v is Command {
-  return typeof v === "string" && (COMMANDS as readonly string[]).includes(v);
+  if (typeof v !== "string") return false;
+  if ((COMMANDS as readonly string[]).includes(v)) return true;
+  // `tantrum:<n>`, checked against the offered list rather than parsed as a
+  // number: this sets how tolerant he is, and an arbitrary value from the bus
+  // has no business becoming a threshold.
+  const [kind, value] = v.split(":", 2);
+  return kind === "tantrum" && TANTRUM_OPTIONS.some((o) => String(o) === value);
 }
 
 /**

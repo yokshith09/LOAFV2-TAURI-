@@ -61,6 +61,52 @@ export function sessionDoneLine(planned: number): string {
 Stand up. Look out a window. I'll be here.`;
 }
 
+/**
+ * The rest of what he says. Ported from the `bubble.show` calls scattered
+ * through `AppDelegate.swift`.
+ *
+ * Gathered here rather than written at each call site so the voice stays one
+ * voice — the reference's lines are its best feature and they are easy to
+ * dilute one well-meaning string at a time.
+ */
+export const LINES = {
+  praiseForClosing: (count: number) => `Down to ${count}. Thank you. Genuinely.`,
+  radarOn: "Radar on. Domains only — never the page.",
+  radarOff: "Radar off. I'll stop asking your browser anything.",
+  radarDeclined: `Fine. Apps only, then.
+Turn the radar on whenever — right-click me.`,
+  resetToday: "Fine. Today never happened. 🫥",
+  forgetSites: "Every domain I'd written down — gone. 🧽",
+  soundsFolder: `Drop files in there — finish.wav, tantrum.mp3, greeting.m4a.
+Yours win over mine.`,
+  packsFolder: `Draw one and drop the folder in there.
+There's a READ ME with the shape of it.`,
+  pixelOn: "Low resolution. High opinions.",
+  pixelOff: "Back to smooth.",
+  muted: "Quiet, then.",
+  unmuted: "Noise restored.",
+} as const;
+
+/** What he says when you rename him, or put the name back. */
+export function renameLine(name: string, isDefault: boolean): string {
+  return isDefault ? `${name} it is. Again.` : `${name}. I'll answer to that.`;
+}
+
+/** Greeting when a character comes on duty from the closet. */
+export function closetGreeting(name: string, species: string): string {
+  return `${name} here — ${species.toLowerCase()}, on duty.
+Same job, whichever animal you pick.`;
+}
+
+/** The About line. Everything it claims has to stay true. */
+export function aboutLine(name: string): string {
+  return (
+    `${name} here — Loaf, rewritten for Mac and Windows.
+` +
+    `Same job either way. Nothing I know leaves this computer.`
+  );
+}
+
 /** How long a nudge stays up, in seconds. Matches the reference. */
 export const BREAK_BUBBLE_SECONDS = 12;
 

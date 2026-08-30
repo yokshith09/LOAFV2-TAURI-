@@ -8,6 +8,7 @@ import {
   disabledRadar,
   type RadarSnapshot,
 } from "../src/dashboard/html";
+import { isCommand, TANTRUM_OPTIONS } from "../src/dashboard/events";
 
 const clockAt = (iso: string) => {
   let t = new Date(iso);
@@ -537,5 +538,40 @@ describe("explaining a short chart", () => {
     expect(bodyOf(dashboardHTML(new Tracker({ now: clock.now })))).not.toContain(
       "Recording since",
     );
+  });
+});
+
+describe("the tab tantrum threshold", () => {
+  it("offers every option, with the current one marked", () => {
+    const { tracker } = trackerWith({ Safari: 3 });
+    const html = bodyOf(dashboardHTML(tracker, { radar: radarOn({ tabThreshold: 40 }) }));
+    for (const n of TANTRUM_OPTIONS) {
+      expect(html).toContain(`data-loaf-cmd="tantrum:${n}"`);
+    }
+    expect(html).toContain('class="tab active" data-loaf-cmd="tantrum:40"');
+  });
+
+  it("calls zero what it is, rather than showing a 0", () => {
+    const { tracker } = trackerWith({ Safari: 3 });
+    expect(bodyOf(dashboardHTML(tracker, { radar: radarOn() }))).toContain(">Never<");
+  });
+
+  it("accepts only the thresholds it actually offers", () => {
+    // This sets how tolerant he is; an arbitrary number off the bus has no
+    // business becoming one.
+    for (const n of TANTRUM_OPTIONS) expect(isCommand(`tantrum:${n}`)).toBe(true);
+    for (const junk of ["tantrum:1", "tantrum:", "tantrum:abc", "tantrum:-40", "tantrum"]) {
+      expect(isCommand(junk)).toBe(false);
+    }
+  });
+
+  it("offers a way to switch the radar off, not only on", () => {
+    // Turning it on has a whole consent screen; turning it back off was a
+    // sentence in the copy and no button anywhere.
+    const { tracker } = trackerWith({ Safari: 3 });
+    expect(bodyOf(dashboardHTML(tracker, { radar: radarOn() }))).toContain(
+      'data-loaf-cmd="radar:off"',
+    );
+    expect(isCommand("radar:off")).toBe(true);
   });
 });

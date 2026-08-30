@@ -1,5 +1,6 @@
 import { Tracker, formatDuration, dayKeyFor, type HistoryEntry } from "../tracker/tracker";
 import { BASE_CSS, PLUS_CSS, MINI_CSS } from "./css";
+import { TANTRUM_OPTIONS } from "./events";
 
 /**
  * Both dashboard views, as self-contained HTML. Ported from `DashboardHTML.swift`.
@@ -422,6 +423,18 @@ function radarSection(
     }
   }
 
+  // How many tabs he will put up with. The reference offers this in its menu;
+  // it lives here because this is the page that shows the tab counts it acts on.
+  const thresholds =
+    `<div class="section-row"><h2 class="sub">Tab tantrum</h2></div>` +
+    `<div class="tabs">` +
+    TANTRUM_OPTIONS.map(
+      (n) =>
+        `<button class="tab${radar.tabThreshold === n ? " active" : ""}" ` +
+        `data-loaf-cmd="tantrum:${n}">${n === 0 ? "Never" : `Past ${n}`}</button>`,
+    ).join("") +
+    `</div>`;
+
   const peak = tracker.peakTabsToday;
   const peakLine =
     peak > 0
@@ -433,9 +446,12 @@ function radarSection(
       : "";
 
   return (
-    `<div class="section-row"><h2>Privacy radar</h2>` +
+    `<div class="section-row"><h2>Privacy radar</h2><div class="tabs">` +
+    // Turning it on has a whole consent screen; turning it back off was a
+    // sentence in the copy and no button anywhere.
+    cmdButton("tab", "radar:off", "Turn off") +
     cmdButton("tab", "sites:forget", "Forget site data") +
-    `</div>${body}${peakLine}${permissionRows(radar, platform)}`
+    `</div></div>${body}${peakLine}${thresholds}${permissionRows(radar, platform)}`
   );
 }
 

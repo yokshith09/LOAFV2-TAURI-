@@ -27,7 +27,7 @@ pub mod storage;
 use platform::{ForegroundApp, PlatformProbe};
 use serde::Serialize;
 // Brings `get_webview_window` and friends into scope on `App`/`AppHandle`.
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// What the frontend receives when it asks what is in front.
 ///
@@ -224,6 +224,9 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // Phrased as an invitation and placed with the other ordinary items — not a
     // prompt, not a gate, and never checked at runtime. See STAR_URL.
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
+    let reset = MenuItem::with_id(app, "reset", "Reset today's stats", true, None::<&str>)?;
+    let forget = MenuItem::with_id(app, "forget", "Forget all site data", true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "about", "About Loaf", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Loaf", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -234,6 +237,10 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             &sounds_item,
             &packs_item,
             &PredefinedMenuItem::separator(app)?,
+            &reset,
+            &forget,
+            &PredefinedMenuItem::separator(app)?,
+            &about,
             &star,
             &PredefinedMenuItem::separator(app)?,
             &quit,
@@ -274,12 +281,25 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     eprintln!("could not open the characters folder: {e}");
                 }
             }
+            // These three are the same commands the dashboard sends, delivered
+            // on the same channel — one handler for them, wherever they came
+            // from, rather than a second path that can drift from the first.
+            "reset" => send_command(app, "reset"),
+            "forget" => send_command(app, "sites:forget"),
+            "about" => send_command(app, "about"),
             "star" => open_star_page(),
             "quit" => app.exit(0),
             _ => {}
         })
         .build(app)?;
     Ok(())
+}
+
+/// Hand a tray click to the companion window as a command.
+fn send_command(app: &tauri::AppHandle, command: &str) {
+    if let Err(e) = app.emit("loaf://command", command) {
+        eprintln!("could not deliver {command}: {e}");
+    }
 }
 
 /// The dashboard window.

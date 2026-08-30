@@ -13,7 +13,7 @@ import type { Mood } from "../core/types";
  *
  *   1. hovering  -> happy      petting calms even a tantrum
  *   2. tabAlert  -> tantrum    too many tabs open, per the privacy radar
- *   3. proud                   NOT YET — praise for closing tabs
+ *   3. proud                   you closed enough tabs to end a tantrum
  *   4. override                the break nudge, and whatever speaks next
  *   5. scrolling               NOT YET — needs a global scroll monitor, which is
  *                              a permission on macOS and a hook on Windows
@@ -25,6 +25,13 @@ export interface MoodInputs {
   readonly hovering: boolean;
   /** The radar is reporting more tabs than the threshold allows. */
   readonly tabAlert: boolean;
+  /**
+   * Briefly, after closing enough tabs to end a tantrum.
+   *
+   * Above the spoken line so the praise and the face agree — it would be odd to
+   * be told "thank you, genuinely" by something looking worried.
+   */
+  readonly proud: boolean;
   /** Forced while something is being said. */
   readonly override: Mood | null;
   /** The tracker reported an idle tick. */
@@ -36,6 +43,7 @@ export interface MoodInputs {
 export function resolveMood(inputs: MoodInputs): Mood {
   if (inputs.hovering) return "happy";
   if (inputs.tabAlert) return "tantrum";
+  if (inputs.proud) return "proud";
   if (inputs.override !== null) return inputs.override;
   if (inputs.sleeping) return "sleeping";
   return inputs.debug ?? "idle";

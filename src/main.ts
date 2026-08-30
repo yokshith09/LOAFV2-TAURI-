@@ -47,6 +47,10 @@ import {
   mayNudge,
   tantrumLine,
   sessionDoneLine,
+  closetGreeting,
+  renameLine,
+  aboutLine,
+  LINES,
 } from "./bubble/prompts";
 import {
   CLOSET_PICK_EVENT,
@@ -190,25 +194,47 @@ function companionName(): string {
 function applyClosetPick(raw: unknown): void {
   if (!isClosetPick(raw)) return;
   switch (raw.kind) {
-    case "companion":
+    case "companion": {
       closet.setCompanion(raw.id);
+      const arrived = roster.find((c) => c.id === raw.id);
+      if (arrived) {
+        makeNoise("greeting");
+        say({
+          kind: "speech",
+          text: closetGreeting(
+            displayName(closet.read(), arrived.id, arrived.defaultName),
+            arrived.species,
+          ),
+          seconds: 7,
+        });
+      }
       break;
+    }
     case "outfit":
       closet.setOutfit(raw.id);
       break;
     case "pixelated":
       closet.setPixelated(raw.on);
+      say({ kind: "speech", text: raw.on ? LINES.pixelOn : LINES.pixelOff, seconds: 6 });
       break;
-    case "rename":
+    case "rename": {
       // Names are per character: renaming the cat must not rename the dog.
-      closet.setName(closetState.companionId, normaliseName(raw.name));
+      const chosen = normaliseName(raw.name);
+      closet.setName(closetState.companionId, chosen);
+      say({
+        kind: "speech",
+        text: renameLine(chosen ?? companion.defaultName, chosen === null),
+        seconds: 6,
+      });
       break;
+    }
     case "muted":
       sound.settings.muted = raw.on;
       saveSoundSettings(browserStore(), sound.settings);
       // A noise confirming that noises are back on, and silence confirming
       // silence — the switch demonstrates itself.
       if (!raw.on) makeNoise("greeting");
+      say({ kind: "speech", text: raw.on ? LINES.muted : LINES.unmuted, seconds: 5 });
       break;
     case "habit": {
       if (!isHabit(raw.habit)) return;
@@ -395,6 +421,7 @@ async function loadHistory(): Promise<void> {
     };
     radar.onTantrumEnded = (count) => {
       makeNoise("praise");
+      proudUntil = Date.now() + PROUD_SECONDS * 1000;
       say({ kind: "speech", text: `Down to ${count}. Thank you. Genuinely.`, seconds: 7 });
     };
   } catch (err) {
@@ -422,18 +449,40 @@ function saveHistory(): void {
  */
 function applyCommand(cmd: unknown): void {
   if (!tracker || !isCommand(cmd)) return;
+
+  // `tantrum:<n>` carries a value, so it is handled before the exact matches.
+  if (cmd.startsWith("tantrum:")) {
+    const n = Number(cmd.slice("tantrum:".length));
+    if (radar && Number.isFinite(n)) {
+      radar.settings.tabThreshold = n;
+      announceRadar();
+    }
+    return;
+  }
+
   switch (cmd) {
     case "reset":
       tracker.resetToday();
+      say({ kind: "speech", text: LINES.resetToday, seconds: 6 });
       break;
     case "sites:forget":
       tracker.forgetAllSites();
       radar?.forget();
       announceRadar();
+      say({ kind: "speech", text: LINES.forgetSites, seconds: 7 });
       break;
     case "radar:on":
       // Opens the consent screen rather than switching it on. See onboardingStep.
       void invokeSafe("open_onboarding");
+      return;
+    case "about":
+      makeNoise("greeting");
+      say({ kind: "speech", text: aboutLine(companionName()), seconds: 10 });
+      return;
+    case "radar:off":
+      if (radar) radar.settings.enabled = false;
+      announceRadar();
+      say({ kind: "speech", text: LINES.radarOff, seconds: 8 });
       return;
   }
   saveHistory();
@@ -536,6 +585,7 @@ function applyDecision(raw: unknown): void {
     case "no":
       browserStore().setItem(K_ONBOARDED, "1");
       void invokeSafe("close_onboarding");
+      say({ kind: "speech", text: LINES.radarDeclined, seconds: 9 });
       return;
     case "settings":
       void invokeSafe("open_automation_settings");
@@ -554,7 +604,7 @@ function applyDecision(raw: unknown): void {
   }
   radar.settings.enabled = true;
   announceRadar();
-  say({ kind: "speech", text: "Radar on. Domains only — never the page.", seconds: 8 });
+  say({ kind: "speech", text: LINES.radarOn, seconds: 8 });
 
   // The screen stays up through the asking so the user can see what happened,
   // and lands on a list of which browsers answered.
@@ -630,10 +680,21 @@ const breakPrompts = new PromptRotation(BREAK_PROMPTS);
  */
 let moodOverride: Mood | null = null;
 
+/**
+ * Epoch ms until which he looks pleased with you.
+ *
+ * A deadline rather than a flag: the praise is a moment, and a flag would need
+ * something to remember to clear it. Set when enough tabs close to end a
+ * tantrum, which is the only thing in the app that earns it.
+ */
+let proudUntil = 0;
+const PROUD_SECONDS = 6;
+
 function currentMood(): Mood {
   return resolveMood({
     hovering,
     tabAlert: radar?.tabAlert != null,
+    proud: Date.now() < proudUntil,
     override: moodOverride,
     sleeping,
     debug: debugMood,

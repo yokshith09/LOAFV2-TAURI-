@@ -49,9 +49,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Sounds | ✅ four occasions, synthesised placeholders, your own files win |
 | Onboarding | ✅ the radar's consent screen, honest per platform |
 | Sprite packs | ✅ hand-drawn characters load from a folder, beside the shipped 18 |
-| Next | **parity reached** — see `Not done yet` for what deliberately differs |
+| Moods | ✅ 6 of 7 rungs live — `scrolling` needs a decision, see below |
+| Next | **parity reached** except the scrolling mood |
 
-Tests: **598 frontend** (Vitest) + **55 Rust**. CI green on macOS and Windows.
+Tests: **609 frontend** (Vitest) + **55 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -229,6 +230,14 @@ rather than glossed over, and two mitigations keep the gap small — the read is
 skipped entirely while the address bar has focus (a half-typed search query is
 not a domain), and the truncation happens in Rust before the value can reach the
 frontend, storage or a log.
+
+**The `scrolling` mood is not wired, on purpose.** The reference detects it with
+a global scroll monitor. Reproducing that means an input hook on Windows
+(`WH_MOUSE_LL` or a Raw Input sink) and either an Input Monitoring permission or
+a new Core Graphics dependency on macOS — a system-wide input hook, installed by
+an app whose entire pitch is that it does not watch what you do, to power a
+cosmetic animation. The trade is not worth it. Every other rung of the mood
+ladder is live.
 
 **No sample data anywhere.** The reference fills days it never recorded with a
 seeded 1.5–4.5h bar (hatched, captioned "sample") and falls back to an invented

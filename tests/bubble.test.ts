@@ -12,6 +12,10 @@ import {
   HOVER_DWELL_MS,
   BREAK_BUBBLE_SECONDS,
   sessionDoneLine,
+  closetGreeting,
+  renameLine,
+  aboutLine,
+  LINES,
 } from "../src/bubble/prompts";
 
 /** A 1920x1080 screen at the origin. */
@@ -207,5 +211,41 @@ describe("the end of a focus session", () => {
 
   it("is multi-line, so the bubble left-aligns it", () => {
     expect(sessionDoneLine(1500)).toContain("\n");
+  });
+});
+
+describe("the rest of what he says", () => {
+  it("has a line for every moment that used to pass in silence", () => {
+    for (const line of Object.values(LINES)) {
+      const text = typeof line === "function" ? line(3) : line;
+      expect(text.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("tells you which way a toggle went", () => {
+    // "Pixel art" on and off saying the same thing is a switch you have to
+    // look at the character to read.
+    expect(LINES.pixelOn).not.toBe(LINES.pixelOff);
+    expect(LINES.muted).not.toBe(LINES.unmuted);
+    expect(LINES.radarOn).not.toBe(LINES.radarOff);
+  });
+
+  it("says something different for a new name and for clearing one", () => {
+    expect(renameLine("Biscuit", false)).toContain("Biscuit");
+    expect(renameLine("Loaf", true)).not.toBe(renameLine("Loaf", false));
+  });
+
+  it("greets a character by name and species", () => {
+    const line = closetGreeting("Wolfgang", "Husky");
+    expect(line).toContain("Wolfgang");
+    expect(line).toContain("husky");
+  });
+
+  it("keeps the About line true", () => {
+    // Everything this claims has to stay true; it is the one line that makes a
+    // promise rather than a joke.
+    const line = aboutLine("Loaf");
+    expect(line).toContain("leaves this computer");
+    expect(line).not.toContain("Mac only");
   });
 });
