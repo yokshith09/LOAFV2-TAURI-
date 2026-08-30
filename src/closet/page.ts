@@ -101,6 +101,10 @@ function render(state: ClosetState): void {
     );
   });
 
+  const mute = root.querySelector<HTMLInputElement>("[data-sound]");
+  // Checked means "make a noise", so the stored value is the opposite.
+  mute?.addEventListener("change", () => send({ kind: "muted", on: !mute.checked }));
+
   const pixel = root.querySelector<HTMLInputElement>("#pixel");
   pixel?.addEventListener("change", () =>
     send({ kind: "pixelated", on: pixel.checked }),

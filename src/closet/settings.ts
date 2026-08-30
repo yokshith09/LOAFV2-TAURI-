@@ -76,6 +76,8 @@ export interface ClosetState {
    * with the pet it is standing next to.
    */
   readonly habits: Readonly<Record<string, boolean>>;
+  /** Global mute, carried alongside the habits because it sits with them. */
+  readonly muted: boolean;
 }
 
 /**
@@ -96,6 +98,7 @@ export class ClosetSettings {
    * `behaviour/habits`, which owns their storage; this only carries them.
    */
   habits: Readonly<Record<string, boolean>> = {};
+  muted = false;
 
   constructor(private readonly store: SettingsStore) {}
 
@@ -106,6 +109,7 @@ export class ClosetSettings {
       pixelated: this.store.getItem(K_PIXELATED) === "1",
       names: this.readNames(),
       habits: this.habits,
+      muted: this.muted,
     };
   }
 

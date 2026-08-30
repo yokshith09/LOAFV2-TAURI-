@@ -63,6 +63,8 @@ import {
   NO_OUTFIT,
 } from "./closet/settings";
 import { PrivacyRadar, type ProbeOutcome } from "./radar/radar";
+import { SoundKit, loadSoundSettings, saveSoundSettings } from "./sound/soundKit";
+import { isOccasion, type Occasion } from "./sound/voice";
 import { unavailableRadar, type RadarSnapshot } from "./dashboard/html";
 import { RADAR_STATE_EVENT, RADAR_HELLO_EVENT } from "./dashboard/events";
 import { ALL_MOODS, asCtx2D, type Mood, type Outfit, type SceneState } from "./core/types";
@@ -147,6 +149,13 @@ function applyClosetPick(raw: unknown): void {
       // Names are per character: renaming the cat must not rename the dog.
       closet.setName(closetState.companionId, normaliseName(raw.name));
       break;
+    case "muted":
+      sound.settings.muted = raw.on;
+      saveSoundSettings(browserStore(), sound.settings);
+      // A noise confirming that noises are back on, and silence confirming
+      // silence — the switch demonstrates itself.
+      if (!raw.on) makeNoise("greeting");
+      break;
     case "habit": {
       if (!isHabit(raw.habit)) return;
       behaviour[raw.habit] = raw.on;
@@ -167,6 +176,7 @@ function announceCloset(): void {
   if (!hasTauriHost()) return;
   // The habits live in `behaviour`, not in the closet's own storage, so they
   // are attached here rather than read there.
+  closet.muted = sound.settings.muted;
   closet.habits = {
     loafing: behaviour.loafing,
     playing: behaviour.playing,
@@ -232,6 +242,7 @@ const focus = new FocusTimer({
  * the interruption the user chose, arriving at the moment they chose it.
  */
 focus.onFinish = (planned) => {
+  makeNoise("finish");
   moodOverride = "happy";
   say({
     kind: "speech",
@@ -321,9 +332,11 @@ async function loadHistory(): Promise<void> {
     // the history has been read — the ledger it writes to is that object.
     radar = new PrivacyRadar(tracker);
     radar.onTantrumBegan = (alert) => {
+      makeNoise("tantrum");
       say({ kind: "speech", text: tantrumLine(alert.count, alert.browser), seconds: 10 });
     };
     radar.onTantrumEnded = (count) => {
+      makeNoise("praise");
       say({ kind: "speech", text: `Down to ${count}. Thank you. Genuinely.`, seconds: 7 });
     };
   } catch (err) {
@@ -390,6 +403,37 @@ const hostWindow = new TauriMovableWindow();
 curlDirector.settings = behaviour;
 playDirector.settings = behaviour;
 curlDirector.canLoaf = canCurl(companion);
+
+// --- Noise -------------------------------------------------------------------
+
+const sound = new SoundKit({ settings: loadSoundSettings(browserStore()) });
+
+/**
+ * Load whatever the user put in the Sounds folder.
+ *
+ * Their files win over the synthesised placeholders — that is the whole point
+ * of the folder. Fetched as bytes and wrapped in a blob rather than played from
+ * a path, so no filesystem path ever reaches a window and nothing has to open
+ * the asset protocol to a directory.
+ */
+async function loadUserSounds(): Promise<void> {
+  const available = await invokeSafe<string[]>("user_sounds");
+  if (!available) return;
+  for (const name of available) {
+    if (!isOccasion(name)) continue;
+    const file = await invokeSafe<[string, number[]] | null>("read_sound", {
+      occasion: name,
+    });
+    if (!file) continue;
+    const [mime, bytes] = file;
+    const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mime }));
+    sound.userSounds.set(name, url);
+  }
+}
+
+function makeNoise(occasion: Occasion): void {
+  sound.play(occasion);
+}
 
 // --- The privacy radar -------------------------------------------------------
 
@@ -819,6 +863,7 @@ function wireInteraction(): void {
       // What the hover card has been promising since it landed: "Click for the
       // full dashboard →". Until now a click cycled the mood instead, which
       // made the card's own invitation a lie.
+      makeNoise("greeting");
       void invokeSafe("open_dashboard");
     }
     updateProbeLabel();
@@ -991,6 +1036,7 @@ void loadHistory()
       supported: boolean;
       readsInsideBrowser: boolean;
     }>("browser_probe_supported");
+    void loadUserSounds();
     radarSupported = support?.supported ?? false;
     radarReadsInsideBrowser = support?.readsInsideBrowser ?? true;
     announceRadar();

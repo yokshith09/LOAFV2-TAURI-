@@ -20,6 +20,7 @@ pub mod browser;
 #[cfg(windows)]
 pub mod browser_windows;
 pub mod platform;
+pub mod sounds;
 pub mod storage;
 
 use platform::{ForegroundApp, PlatformProbe};
@@ -135,6 +136,43 @@ fn write_stats(app: tauri::AppHandle, json: String) -> Result<(), String> {
     storage::write_atomic(&data_dir(&app)?, &json)
 }
 
+/// Which occasions the user has supplied a sound for.
+///
+/// Names only. The bytes come from `read_sound`, and no path ever crosses to
+/// the frontend.
+#[tauri::command]
+fn user_sounds(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    Ok(sounds::index(&data_dir(&app)?)
+        .into_iter()
+        .map(|(occasion, _)| occasion)
+        .collect())
+}
+
+/// One user sound, as a mime type and bytes, for the frontend to wrap in a blob.
+#[tauri::command]
+fn read_sound(app: tauri::AppHandle, occasion: String) -> Result<Option<(String, Vec<u8>)>, String> {
+    Ok(sounds::read(&data_dir(&app)?, &occasion))
+}
+
+/// Make the folder, write the README explaining it, and open it.
+///
+/// Creating it here is fine because the user asked; creating it on launch would
+/// not be, which is why nothing else does.
+#[tauri::command]
+fn open_sounds_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = sounds::ensure(&data_dir(&app)?)?;
+    let path = dir.to_string_lossy().to_string();
+
+    #[cfg(windows)]
+    let result = std::process::Command::new("explorer").arg(&path).spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(&path).spawn();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(&path).spawn();
+
+    result.map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Park the companion in the bottom-right of the work area, the way the Swift
 /// original does on first launch.
 ///
@@ -172,6 +210,8 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let stats = MenuItem::with_id(app, "stats", "Today's time…", true, None::<&str>)?;
     let closet = MenuItem::with_id(app, "closet", "Closet…", true, None::<&str>)?;
     let focus = MenuItem::with_id(app, "focus", "Focus timer…", true, None::<&str>)?;
+    let sounds_item =
+        MenuItem::with_id(app, "sounds", "Add your own sounds…", true, None::<&str>)?;
     // Phrased as an invitation and placed with the other ordinary items — not a
     // prompt, not a gate, and never checked at runtime. See STAR_URL.
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
@@ -182,6 +222,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             &focus,
             &stats,
             &closet,
+            &sounds_item,
             &PredefinedMenuItem::separator(app)?,
             &star,
             &PredefinedMenuItem::separator(app)?,
@@ -211,6 +252,11 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             "focus" => {
                 if let Err(e) = show_focus(app) {
                     eprintln!("could not open the focus timer: {e}");
+                }
+            }
+            "sounds" => {
+                if let Err(e) = open_sounds_folder(app.clone()) {
+                    eprintln!("could not open the sounds folder: {e}");
                 }
             }
             "star" => open_star_page(),
@@ -635,6 +681,9 @@ pub fn run() {
             write_stats,
             probe_browser,
             browser_probe_supported,
+            user_sounds,
+            read_sound,
+            open_sounds_folder,
             open_dashboard,
             fit_closet,
             fit_focus,

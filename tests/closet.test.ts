@@ -334,6 +334,7 @@ describe("state arriving from the companion", () => {
         pixelated: true,
         names: { "dog-husky": "Wolfgang" },
         habits: { loafing: true, playing: true, wandering: false },
+        muted: false,
       }),
     ).toBe(true);
   });
@@ -342,15 +343,15 @@ describe("state arriving from the companion", () => {
     for (const junk of [
       null,
       "state",
-      { companionId: "", outfitId: "none", pixelated: false, names: {}, habits: {} },
-      { companionId: "x", outfitId: "", pixelated: false, names: {}, habits: {} },
-      { companionId: "x", outfitId: "none", pixelated: "no", names: {}, habits: {} },
-      { companionId: "x", outfitId: "none", pixelated: false, names: null, habits: {} },
-      { companionId: "x", outfitId: "none", pixelated: false, names: { a: 3 }, habits: {} },
-      { companionId: "x", outfitId: "none", pixelated: false, habits: {} },
+      { companionId: "", outfitId: "none", pixelated: false, names: {}, habits: {}, muted: false },
+      { companionId: "x", outfitId: "", pixelated: false, names: {}, habits: {}, muted: false },
+      { companionId: "x", outfitId: "none", pixelated: "no", names: {}, habits: {}, muted: false },
+      { companionId: "x", outfitId: "none", pixelated: false, names: null, habits: {}, muted: false },
+      { companionId: "x", outfitId: "none", pixelated: false, names: { a: 3 }, habits: {}, muted: false },
+      { companionId: "x", outfitId: "none", pixelated: false, habits: {}, muted: false },
       // A habit that is not a boolean would render as a checkbox in an
       // indeterminate state and toggle to something nobody chose.
-      { companionId: "x", outfitId: "none", pixelated: false, names: {}, habits: { a: 1 } },
+      { companionId: "x", outfitId: "none", pixelated: false, names: {}, habits: { a: 1 }, muted: false },
       { companionId: "x", outfitId: "none", pixelated: false, names: {} },
     ]) {
       expect(isClosetState(junk)).toBe(false);

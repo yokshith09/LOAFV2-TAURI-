@@ -117,6 +117,21 @@ function habitRows(state: ClosetState): string {
     .join("");
 }
 
+/**
+ * The mute switch, phrased as the noise rather than the absence of it.
+ *
+ * A checkbox labelled "Mute" is on when the app is quiet, which reads backwards
+ * next to four habits that are on when something happens.
+ */
+function soundRow(state: ClosetState): string {
+  const on = !state.muted;
+  return (
+    `<label class="habit${on ? " on" : ""}">` +
+    `<input type="checkbox" data-sound="muted"${on ? " checked" : ""}>` +
+    `<span>Make a noise now and then</span></label>`
+  );
+}
+
 function chip(id: string, glyph: string, label: string, selected: boolean): string {
   return (
     `<button class="chip${selected ? " on" : ""}" data-outfit="${escapeHTML(id)}">` +
@@ -186,7 +201,7 @@ export function closetBody(state: ClosetState): string {
   ${shelves}
 
   <h2>Habits <span class="shelf-note">what they get up to on their own</span></h2>
-  <div class="habits">${habitRows(state)}</div>
+  <div class="habits">${habitRows(state)}${soundRow(state)}</div>
   <p class="fine">Wandering is off until you say otherwise — you put the window
   where it is, and a pet that starts crossing a screen you're working on, unasked,
   is a bug report.</p>

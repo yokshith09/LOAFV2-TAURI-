@@ -29,6 +29,7 @@ export type ClosetPick =
   | { readonly kind: "outfit"; readonly id: string }
   | { readonly kind: "pixelated"; readonly on: boolean }
   | { readonly kind: "habit"; readonly habit: string; readonly on: boolean }
+  | { readonly kind: "muted"; readonly on: boolean }
   /** An empty or whitespace-only name is how the user resets to the default. */
   | { readonly kind: "rename"; readonly name: string };
 
@@ -54,6 +55,7 @@ export function isClosetState(v: unknown): v is ClosetStatePayload {
   if (typeof s.names !== "object" || s.names === null || Array.isArray(s.names)) {
     return false;
   }
+  if (typeof s.muted !== "boolean") return false;
   if (
     typeof s.habits !== "object" ||
     s.habits === null ||
@@ -74,6 +76,7 @@ export interface ClosetStatePayload {
   readonly pixelated: boolean;
   readonly names: Readonly<Record<string, string>>;
   readonly habits: Readonly<Record<string, boolean>>;
+  readonly muted: boolean;
 }
 
 export function isClosetPick(v: unknown): v is ClosetPick {
@@ -84,6 +87,7 @@ export function isClosetPick(v: unknown): v is ClosetPick {
     case "outfit":
       return typeof p.id === "string" && p.id.length > 0;
     case "pixelated":
+    case "muted":
       return typeof p.on === "boolean";
     case "habit":
       return isHabit(p.habit) && typeof p.on === "boolean";

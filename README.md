@@ -46,9 +46,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Speech bubbles + hover preview | ✅ break nudge speaks; hovering shows today's card |
 | Closet | ✅ all 18 characters, 6 garments, seasonal, per-character names, pixel toggle, habits |
 | Privacy radar | ✅ both platforms — domains, tab counts, tantrums |
-| Next | sounds, onboarding, sprite packs |
+| Sounds | ✅ four occasions, synthesised placeholders, your own files win |
+| Next | onboarding, sprite packs |
 
-Tests: **532 frontend** (Vitest) + **39 Rust**. CI green on macOS and Windows.
+Tests: **551 frontend** (Vitest) + **48 Rust**. CI green on macOS and Windows.
 
 ---
 
@@ -126,6 +127,7 @@ src/                     Frontend (TypeScript, no framework)
   bubble/render.ts       The speech bubble's card and tail
   bubble/prompts.ts      What it says, and when it stays quiet
   behaviour/habits.ts    The four habits a user can switch, and remembering them
+  sound/voice.ts         What Loaf sounds like — placeholders, and when to be quiet
   closet/settings.ts     The persisted choices, and the only writer of them
   closet/view.ts         The picker's markup — thumbnails are live canvases
   radar/radar.ts         Tab counts, tantrum hysteresis, per-browser permission
@@ -134,6 +136,7 @@ src-tauri/
   src/storage.rs         The one file on disk, and the path it must keep using
   src/browser.rs         Reading a tab's domain — AppleScript on macOS
   src/browser_windows.rs UI Automation on Windows, and what that costs
+  src/sounds.rs          The user's own sound files, and the folder README
   capabilities/          What the two windows may ask the Tauri core for
 tests/                   Vitest suites
   registry.test.ts       Contract tests every companion must satisfy
