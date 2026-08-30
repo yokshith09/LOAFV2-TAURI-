@@ -29,7 +29,7 @@ pub struct MacProbe;
 /// a normal condition on a busy Mac, and the correct response is to record
 /// nothing for this tick, not to surface a failure to the user.
 fn run_with_timeout(program: &str, args: &[&str]) -> Result<Option<String>, ProbeError> {
-    let mut child = Command::new(program)
+    let child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

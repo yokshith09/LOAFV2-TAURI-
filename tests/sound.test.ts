@@ -17,7 +17,14 @@ import {
 } from "../src/sound/soundKit";
 import { MemorySettingsStore } from "../src/closet/settings";
 
-/** Counts what was asked of Web Audio without needing any of it. */
+/**
+ * Counts what was asked of Web Audio without needing any of it.
+ *
+ * Typed as `AudioHost`, which is now derived from `AudioContext` — so a stub
+ * that implements a method the real API does not have no longer compiles. That
+ * is what let `ctx.now()` ship: this file agreed with the interface, and the
+ * interface was wrong.
+ */
 function stubHost(): { host: AudioHost; started: number[] } {
   const started: number[] = [];
   const param = () => ({
@@ -26,7 +33,7 @@ function stubHost(): { host: AudioHost; started: number[] } {
     exponentialRampToValueAtTime: () => param(),
   });
   const host = {
-    now: () => 0,
+    currentTime: 0,
     state: "running",
     resume: async () => {},
     destination: {} as AudioNode,

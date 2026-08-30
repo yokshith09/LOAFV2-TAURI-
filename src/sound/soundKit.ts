@@ -16,15 +16,20 @@ import type { SettingsStore } from "../closet/settings";
  * `AudioContext` live here.
  */
 
-/** The narrow slice of Web Audio this needs, so it can be stubbed in a test. */
-export interface AudioHost {
-  now(): number;
-  createOscillator(): OscillatorNode;
-  createGain(): GainNode;
-  readonly destination: AudioNode;
-  resume(): Promise<void>;
-  readonly state: string;
-}
+/**
+ * The narrow slice of Web Audio this needs, so it can be stubbed in a test.
+ *
+ * Derived from `AudioContext` with `Pick` rather than written out by hand. The
+ * hand-written version declared a `now()` method, which Web Audio does not have
+ * — it has a `currentTime` property — and because the test stub implemented the
+ * interface rather than the real API, eighteen tests passed against something
+ * that threw on the first note in a real browser. Deriving it means a name that
+ * does not exist is a compile error.
+ */
+export type AudioHost = Pick<
+  AudioContext,
+  "currentTime" | "createOscillator" | "createGain" | "destination" | "resume" | "state"
+>;
 
 const K_MUTED = "sound.muted";
 const K_CHIME = "sound.focusChime";
@@ -114,7 +119,7 @@ export class SoundKit {
     // timer rather than a click would be very hard to diagnose.
     if (ctx.state === "suspended") void ctx.resume().catch(() => {});
 
-    const start = ctx.now();
+    const start = ctx.currentTime;
     for (const note of VOICES[occasion]) {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -145,9 +150,9 @@ export class SoundKit {
       // failure here; nothing above this should have to care, and a pet that
       // threw out of a click handler because the machine has no speakers would
       // take the click with it.
-      this.context = this.makeContext
-        ? this.makeContext()
-        : (new AudioContext() as unknown as AudioHost);
+      // No cast: `AudioHost` is a subset of `AudioContext`, so this only
+      // compiles while the two genuinely agree.
+      this.context = this.makeContext ? this.makeContext() : new AudioContext();
       return this.context;
     } catch {
       return null;
