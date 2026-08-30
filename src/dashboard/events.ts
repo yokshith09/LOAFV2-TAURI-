@@ -25,7 +25,24 @@ export const RADAR_STATE_EVENT = "loaf://radar/state";
 export const RADAR_HELLO_EVENT = "loaf://radar/hello";
 
 /** Commands the dashboard can send. Anything else is ignored by the companion. */
-export const COMMANDS = ["reset", "sites:forget", "radar:on", "radar:off", "about"] as const;
+export const COMMANDS = [
+  "reset",
+  "sites:forget",
+  "radar:on",
+  "radar:off",
+  "about",
+  // The dashboard is the window people actually find, so it has to be able to
+  // reach the rest of the app. Until now the closet and the focus timer were
+  // behind a tray icon that Windows hides in an overflow flyout by default.
+  "open:closet",
+  "open:focus",
+  "open:sounds",
+  "open:packs",
+  // Both hand a fixed URL to the browser. Loaf makes no request itself — see
+  // FEEDBACK_URL in lib.rs for why a form inside the app was the wrong shape.
+  "open:star",
+  "open:feedback",
+] as const;
 export type Command = (typeof COMMANDS)[number];
 
 /** Tab counts the tantrum can be set to. 0 is "never complain". */

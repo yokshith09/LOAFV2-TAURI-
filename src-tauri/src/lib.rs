@@ -756,6 +756,40 @@ fn show_onboarding(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 /// Open the consent screen from the frontend — what the dashboard's "turn on
 /// privacy radar" button does, rather than switching it on without asking.
+/// Two taps on the character put the dashboard away.
+///
+/// Closed rather than hidden: a hidden window keeps its webview alive, its
+/// timers running and its stale numbers in memory, and the next tap would show
+/// yesterday's figures until a re-read landed. Closing costs one page load and
+/// guarantees what is on screen was read from disk when it appeared.
+///
+/// Silent when there is no dashboard open — a second tap on a character with
+/// nothing showing has nothing to close, and that is not an error.
+#[tauri::command(async)]
+fn close_dashboard(app: tauri::AppHandle) -> Result<(), String> {
+    match app.get_webview_window(DASHBOARD_LABEL) {
+        Some(window) => window.close().map_err(|e| e.to_string()),
+        None => Ok(()),
+    }
+}
+
+/// The star invitation, reachable from the dashboard as well as the menu.
+///
+/// Still an invitation. Nothing checks whether it was clicked, no state is kept
+/// about it, and no feature is withheld from anyone who ignores it.
+#[tauri::command(async)]
+fn open_star() -> Result<(), String> {
+    open_star_page();
+    Ok(())
+}
+
+/// Feature requests, in the browser rather than in a form Loaf would have to send.
+#[tauri::command(async)]
+fn open_feedback() -> Result<(), String> {
+    open_feedback_page();
+    Ok(())
+}
+
 /// Open the closet without going through the tray.
 ///
 /// The tray stays the product's entry point, but it cannot be the only one. An
@@ -884,22 +918,48 @@ fn fit_window(
 /// be handed a path or a `file://` URL because it cannot be handed anything.
 const STAR_URL: &str = "https://github.com/yokshith09/LOAFV2-TAURI-";
 
-fn open_star_page() {
+/// Where feature requests go.
+///
+/// Discussions rather than a form inside the app, and that is the whole point:
+/// a form Loaf could submit would need to reach the network, and "Loaf itself
+/// does not upload your data or make AI/network calls" would stop being true
+/// the moment it did. Handing the URL to the browser keeps the network the
+/// browser's, and the promise intact.
+///
+/// Issues, NOT Discussions. Discussions has to be switched on per repository
+/// and is off by default, so `/discussions` 404s on a repo that never enabled
+/// it — which is exactly what it did. `/issues/new` exists on any public repo
+/// with issues left on, and lands the user straight in the form.
+///
+/// Hard-coded for the same reason as [`STAR_URL`]: a function that cannot be
+/// handed a URL cannot be handed a `file://` one.
+const FEEDBACK_URL: &str = "https://github.com/yokshith09/LOAFV2-TAURI-/issues/new";
+
+/// Hand one of our two fixed URLs to the browser.
+fn open_url(url: &'static str) {
     // Deliberately not the opener plugin: this is one fixed URL, and a new
     // dependency is a new way for a build to fail on a machine that already
     // cannot compile locally.
     #[cfg(windows)]
     let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", STAR_URL])
+        .args(["/C", "start", "", url])
         .spawn();
     #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(STAR_URL).spawn();
+    let result = std::process::Command::new("open").arg(url).spawn();
     #[cfg(not(any(windows, target_os = "macos")))]
-    let result = std::process::Command::new("xdg-open").arg(STAR_URL).spawn();
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
 
     if let Err(e) = result {
-        eprintln!("could not open {STAR_URL}: {e}");
+        eprintln!("could not open {url}: {e}");
     }
+}
+
+fn open_star_page() {
+    open_url(STAR_URL);
+}
+
+fn open_feedback_page() {
+    open_url(FEEDBACK_URL);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -930,6 +990,9 @@ pub fn run() {
             seconds_since_scroll,
             platform_name,
             start_drag,
+            close_dashboard,
+            open_star,
+            open_feedback,
             open_closet,
             open_focus,
             show_companion_menu,

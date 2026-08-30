@@ -63,9 +63,17 @@ async function show(p: BubblePayload): Promise<void> {
   await new Promise(requestAnimationFrame);
   await new Promise(requestAnimationFrame);
 
-  const box = root.firstElementChild?.getBoundingClientRect();
-  const width = Math.ceil(box?.width ?? TEXT_WIDTH);
-  const height = Math.ceil(box?.height ?? 60);
+  // `offsetWidth`/`offsetHeight`, NOT `getBoundingClientRect()`.
+  //
+  // The card opens with a `scale(.92)` pop, and a rect INCLUDES transforms — so
+  // measuring two frames in, while that 160ms animation is still running,
+  // returned about 93% of the real size. The window was then built around a
+  // card mid-pop, and the finished card overflowed it: clipped figures and two
+  // scrollbars on something that is supposed to be a glance. The offset
+  // properties report the laid-out border box and ignore transforms entirely.
+  const card = root.firstElementChild as HTMLElement | null;
+  const width = card ? card.offsetWidth : TEXT_WIDTH;
+  const height = card ? card.offsetHeight : 60;
 
   const placed = await invoke<{ side: "above" | "below"; tailX: number }>(
     "place_bubble",
@@ -92,6 +100,12 @@ async function show(p: BubblePayload): Promise<void> {
 const PREVIEW_CSS = `
   body.mini { height: auto; display: block; }
   body.mini .wrap { margin-bottom: 0; }
+  /* The preview borrows the DASHBOARD's stylesheet, which is deliberately
+     scrollable — it is a long page. A glance card is not: at this size a
+     scrollbar is a grey slab down two edges of a 228px window, and it appears
+     over a rounding error. The window is sized to this card, so anything that
+     would scroll is a bug to see in the layout, not to let the user drag. */
+  html, body.mini { overflow: hidden; }
 `;
 
 // Clicking the bubble dismisses it, as in the reference. The preview ignores

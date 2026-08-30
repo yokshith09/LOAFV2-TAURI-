@@ -28,3 +28,28 @@ describe("the command channel between the two windows", () => {
     expect(COMMAND_EVENT).not.toBe(STATS_CHANGED_EVENT);
   });
 });
+
+describe("the dashboard's own entry points to the rest of the app", () => {
+  // These exist because the tray icon is not a reliable way in: Windows files a
+  // new one into a hidden overflow flyout, which left the closet and the focus
+  // timer reachable from nowhere the user could find.
+  it.each(["open:closet", "open:focus", "open:sounds", "open:packs"])(
+    "accepts %s",
+    (cmd) => {
+      expect(isCommand(cmd)).toBe(true);
+    },
+  );
+
+  it("still refuses anything not on the list", () => {
+    for (const bad of ["open:", "open:anything", "open", "quit", "exec:rm", ""]) {
+      expect(isCommand(bad)).toBe(false);
+    }
+  });
+});
+
+describe("support links", () => {
+  // They open in the browser rather than posting from Loaf. See FEEDBACK_URL.
+  it.each(["open:star", "open:feedback"])("accepts %s", (cmd) => {
+    expect(isCommand(cmd)).toBe(true);
+  });
+});

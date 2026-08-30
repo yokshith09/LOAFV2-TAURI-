@@ -263,6 +263,23 @@ function sortedApps(tracker: Tracker): Array<[string, number]> {
   return Object.entries(tracker.today).sort((a, b) => b[1] - a[1]);
 }
 
+/**
+ * Something that exists in the code but is not ready to be pointed at.
+ *
+ * Deliberately NOT a disabled button. A greyed-out control invites a click that
+ * does nothing, which reads as broken; the folders these would open are also
+ * empty until someone puts a file in them, so opening one shows a bare window
+ * and no explanation. This says what the feature will be and that it is not
+ * here yet, which is the honest version of both.
+ */
+function soonCard(title: string, blurb: string): string {
+  return (
+    `<div class="soon"><span class="soon-top">${escapeHTML(title)}` +
+    `<span class="soon-tag">Soon</span></span>` +
+    `<span class="soon-blurb">${escapeHTML(blurb)}</span></div>`
+  );
+}
+
 /** A button that asks the host to do something. See the note on inline handlers. */
 function cmdButton(cls: string, cmd: string, label: string): string {
   return `<button class="${cls}" data-loaf-cmd="${escapeHTML(cmd)}">${escapeHTML(label)}</button>`;
@@ -560,9 +577,42 @@ export function dashboardBody(
     <div class="hours">${hourBars}</div>
     <div class="hours-axis"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>
 
+    <h2>Everything else</h2>
+    <div class="shelf">
+      ${cmdButton("shelf-btn", "open:closet", "Closet")}
+      ${cmdButton("shelf-btn", "open:focus", "Focus timer")}
+    </div>
+    <div class="shelf shelf-soon">
+      ${soonCard("Your sounds", "Drop in your own audio for the little noises he makes.")}
+      ${soonCard("Draw a character", "Hand-drawn sprite packs, so he can be anything you like.")}
+    </div>
+
+    <h2>How to use him</h2>
+    <ul class="howto">
+      <li><b>Click</b> him for this window. <b>Click twice</b> to put it away.</li>
+      <li><b>Right-click</b> him for everything: the closet, the timer, and the rest.</li>
+      <li><b>Drag</b> him anywhere. He stays where you drop him.</li>
+      <li><b>Hover</b> for a second and he shows you today at a glance.</li>
+    </ul>
+
+    <div class="support">
+      <p class="support-line">Loaf is free, and made by one person.</p>
+      <div class="support-actions">
+        ${cmdButton("support-btn star", "open:star", "Star it on GitHub ★")}
+        ${cmdButton("support-btn", "open:feedback", "Tell me what to build next")}
+      </div>
+      <p class="support-fine">
+        Both open in your browser. Nothing is sent from Loaf, and starring is
+        never checked &mdash; every feature works exactly the same either way.
+      </p>
+    </div>
+
     <div class="footer">
       <p>Lives only on this computer.<br>No account, no network, no upload.</p>
-      ${cmdButton("reset", "reset", "Reset today")}
+      <div class="footer-actions">
+        ${cmdButton("danger", "reset", "Reset today")}
+        ${cmdButton("danger", "sites:forget", "Forget site data")}
+      </div>
     </div>
   </div>`;
 }

@@ -481,6 +481,26 @@ function applyCommand(cmd: unknown): void {
       announceRadar();
       say({ kind: "speech", text: LINES.forgetSites, seconds: 7 });
       break;
+    // The dashboard reaching the rest of the app. These go through the same
+    // commands the menu uses, so there is one way to open each window.
+    case "open:closet":
+      void invokeSafe("open_closet");
+      return;
+    case "open:focus":
+      void invokeSafe("open_focus");
+      return;
+    case "open:sounds":
+      void invokeSafe("open_sounds_folder");
+      return;
+    case "open:packs":
+      void invokeSafe("open_packs_folder");
+      return;
+    case "open:star":
+      void invokeSafe("open_star");
+      return;
+    case "open:feedback":
+      void invokeSafe("open_feedback");
+      return;
     case "radar:on":
       // Opens the consent screen rather than switching it on. See onboardingStep.
       void invokeSafe("open_onboarding");
@@ -1113,6 +1133,18 @@ function wireInteraction(): void {
     void invokeSafe("show_companion_menu");
   });
 
+  // Long enough that a deliberate double tap is never split, short enough that
+  // the single tap still feels like a response to the click.
+  const DOUBLE_TAP_MS = 260;
+  let openTimer: number | undefined;
+
+  // Two taps put the dashboard away. This fires in addition to the two `click`
+  // events, so it cancels the pending open before it can run.
+  canvas!.addEventListener("dblclick", () => {
+    clearTimeout(openTimer);
+    void invokeSafe("close_dashboard");
+  });
+
   canvas!.addEventListener("pointerup", (e) => {
     if (canvas!.hasPointerCapture(e.pointerId)) {
       canvas!.releasePointerCapture(e.pointerId);
@@ -1137,7 +1169,14 @@ function wireInteraction(): void {
       // full dashboard →". Until now a click cycled the mood instead, which
       // made the card's own invitation a lie.
       makeNoise("greeting");
-      void invokeSafe("open_dashboard");
+      // One tap opens, two taps close — so the open is held back until a second
+      // tap could no longer arrive. A toggle on every click looked identical
+      // for one tap and wrong for two: the second click closed what the first
+      // had just opened, which reads as the window refusing to stay.
+      clearTimeout(openTimer);
+      openTimer = window.setTimeout(() => {
+        void invokeSafe("open_dashboard");
+      }, DOUBLE_TAP_MS);
     }
     updateProbeLabel();
   });

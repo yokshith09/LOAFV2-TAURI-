@@ -109,6 +109,79 @@ export const PLUS_CSS = `
     font:inherit; font-size:10.5px; background:none; border:none; padding:0;
     color:var(--site); text-decoration:underline; cursor:pointer;
   }
+
+  /* The rest of the app, reachable from the window people actually find.
+     A grid rather than a row: four labels of different lengths in a flex row
+     give four different button widths, which reads as four different KINDS of
+     thing rather than one shelf of places to go. */
+  .shelf {
+    display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:2px 0 4px;
+  }
+  .shelf-btn {
+    font:inherit; font-size:12px; font-weight:600; cursor:pointer;
+    background:var(--paper); color:var(--ink);
+    border:1px solid var(--edge); border-radius:10px; padding:11px 12px;
+    text-align:left; transition:border-color .12s, background .12s;
+  }
+  .shelf-btn:hover { border-color:var(--accent-dark); background:var(--accent); }
+
+  /* Not yet built, and saying so. Dashed rather than solid, and not clickable:
+     the border alone tells you this one is different before you read it. */
+  .shelf-soon { margin-top:2px; }
+  .soon {
+    display:flex; flex-direction:column; gap:4px;
+    border:1px dashed var(--edge); border-radius:10px; padding:10px 12px;
+    background:none;
+  }
+  .soon-top { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--ink-soft); }
+  .soon-tag {
+    font-size:9px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--accent-ink); background:var(--accent);
+    border-radius:999px; padding:2px 6px;
+  }
+  .soon-blurb { font-size:10.5px; line-height:1.45; color:var(--ink-soft); }
+
+  /* The gestures. Nothing here is discoverable by looking at a cat, and until
+     now the only place any of it was written down was a source comment. */
+  .howto { list-style:none; margin:0 0 4px; padding:0; }
+  .howto li {
+    font-size:11.5px; line-height:1.5; color:var(--ink-soft);
+    padding:6px 0 6px 14px; border-bottom:1px solid var(--edge); position:relative;
+  }
+  .howto li:last-child { border-bottom:none; }
+  .howto li::before { content:"·"; position:absolute; left:4px; color:var(--accent-dark); font-weight:700; }
+  .howto b { color:var(--ink); font-weight:600; }
+
+  /* An invitation, sitting quietly. It is not a modal, it does not return, and
+     nothing is withheld from someone who never clicks it. */
+  .support {
+    margin:4px 0 2px; padding:13px 14px;
+    border:1px solid var(--edge); border-radius:12px; background:rgba(138,80,128,0.04);
+  }
+  .support-line { font-size:12px; color:var(--ink); margin:0 0 9px; font-weight:600; }
+  .support-actions { display:flex; flex-wrap:wrap; gap:7px; }
+  .support-btn {
+    font:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:var(--paper); color:var(--ink);
+    border:1px solid var(--edge); border-radius:999px; padding:7px 13px;
+    transition:border-color .12s, background .12s;
+  }
+  .support-btn:hover { border-color:var(--site); color:var(--site); }
+  .support-btn.star:hover { background:var(--site); color:#fff; border-color:var(--site); }
+  .support-fine { font-size:10px; line-height:1.45; color:var(--ink-soft); margin:9px 0 0; }
+
+  /* Reset and Forget are the only two controls here that destroy something.
+     They were a whisper of grey underline while every harmless control was
+     louder, which is the wrong way round — a button that deletes your history
+     should at least be legible before you press it. Outlined in the warning
+     colour, filled only on hover, so they are clear without being inviting. */
+  .footer-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+  .danger {
+    font:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; color:#C2402C; border:1px solid rgba(194,64,44,0.45);
+    border-radius:999px; padding:7px 14px; transition:background .12s, color .12s;
+  }
+  .danger:hover { background:#C2402C; color:#fff; border-color:#C2402C; }
   .perms { display:flex; flex-direction:column; gap:7px; margin-bottom:4px; }
   .perm { display:flex; align-items:center; gap:8px; font-size:12px; }
   .pname { font-weight:600; }
