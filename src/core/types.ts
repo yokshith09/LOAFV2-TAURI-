@@ -177,6 +177,27 @@ export interface Ctx2D {
   font: string;
   fillText(text: string, x: number, y: number): void;
   measureText(text: string): { width: number };
+  /**
+   * OPTIONAL, and used only by sprite packs.
+   *
+   * Optional because the eighteen shipped companions are beziers and never
+   * touch it, and because keeping it out of the required surface is what lets
+   * every one of them be tested against a stub with no canvas. A pack asked to
+   * draw into a context that cannot draw images simply draws nothing, which is
+   * the right answer in a test and unreachable in the app.
+   */
+  drawImage?(
+    image: DrawableImage,
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number,
+    dx: number,
+    dy: number,
+    dw: number,
+    dh: number,
+  ): void;
+  imageSmoothingEnabled?: boolean;
 
   translate(x: number, y: number): void;
   scale(x: number, y: number): void;
@@ -291,6 +312,15 @@ export function blushRight(c: Companion): Rect {
  * explain why it is safe, instead of three bare `as unknown as` that read like
  * someone silencing the compiler.
  */
+/**
+ * A drawable image, for sprite packs. Structural rather than the DOM's
+ * `CanvasImageSource`, so nothing in `core` needs the DOM to compile.
+ */
+export interface DrawableImage {
+  readonly width: number;
+  readonly height: number;
+}
+
 export function asCtx2D(ctx: CanvasRenderingContext2D): Ctx2D {
   return ctx as unknown as Ctx2D;
 }
