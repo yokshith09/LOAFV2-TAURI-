@@ -137,22 +137,29 @@ describe("HyperfocusWatch", () => {
     expect(asked).toBe(true);
   });
 
-  // Someone who works straight through four hours is asked once, not four times.
-  it("asks once per streak, however long it runs", () => {
+  // Someone still going at three hours is further past the point of noticing
+  // than they were at ninety, not less.
+  it("asks again every interval while the streak continues", () => {
     const w = new HyperfocusWatch(90 * MIN);
-    let count = 0;
-    for (let i = 0; i < 240; i++) if (w.tick(MIN, false)) count++;
-    expect(count).toBe(1);
+    const asked: number[] = [];
+    for (let i = 1; i <= 270; i++) if (w.tick(MIN, false)) asked.push(i);
+    expect(asked).toEqual([90, 180, 270]);
   });
 
-  it("re-arms after a real break", () => {
+  it("keeps the total streak true across check-ins", () => {
     const w = new HyperfocusWatch(90 * MIN);
-    let count = 0;
-    for (let i = 0; i < 90; i++) if (w.tick(MIN, false)) count++;
+    for (let i = 0; i < 200; i++) w.tick(MIN, false);
+    expect(w.continuousSeconds).toBe(200 * MIN);
+  });
+
+  it("starts over after a real break", () => {
+    const w = new HyperfocusWatch(90 * MIN);
+    for (let i = 0; i < 89; i++) w.tick(MIN, false);
     w.tick(0, true);
     expect(w.continuousSeconds).toBe(0);
-    for (let i = 0; i < 90; i++) if (w.tick(MIN, false)) count++;
-    expect(count).toBe(2);
+    // The 89 minutes before the break do not count toward the next question.
+    for (let i = 0; i < 89; i++) expect(w.tick(MIN, false)).toBe(false);
+    expect(w.tick(MIN, false)).toBe(true);
   });
 
   // A machine idle for an hour has not been focused for an hour.

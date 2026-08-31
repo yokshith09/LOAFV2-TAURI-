@@ -156,12 +156,14 @@ export const HYPERFOCUS_PROMPTS: readonly string[] = [
  * the point — the streak is what it claims to be.
  */
 export class HyperfocusWatch {
+  /** Total unbroken activity, for reporting. */
   private streak = 0;
-  private asked = false;
+  /** Activity since the last question — this is what triggers the next one. */
+  private sinceAsked = 0;
 
   constructor(private readonly thresholdSeconds = HYPERFOCUS_SECONDS) {}
 
-  /** Seconds of unbroken activity so far. */
+  /** Seconds of unbroken activity so far, across however many check-ins. */
   get continuousSeconds(): number {
     return this.streak;
   }
@@ -169,24 +171,30 @@ export class HyperfocusWatch {
   /**
    * @param activeSeconds seconds of activity this tick, or 0 when idle.
    * @param breakTaken true when the user has plainly stopped — an idle stretch,
-   *   or a focus session ending. Resets the streak and re-arms the question.
+   *   or a focus session ending. Resets everything.
+   *
+   * Asks again every `thresholdSeconds` of continued activity: at 90 minutes,
+   * at 180, at 270. Someone still going at three hours is further past the
+   * point of noticing than they were at ninety, not less, so falling silent
+   * after the first question would abandon them exactly when it matters.
+   *
+   * The counter that triggers it resets, the streak does not — so the check-ins
+   * are evenly spaced while the total stays true.
    */
   tick(activeSeconds: number, breakTaken: boolean): boolean {
     if (breakTaken) {
-      this.streak = 0;
-      this.asked = false;
+      this.reset();
       return false;
     }
     this.streak += activeSeconds;
-    if (this.asked || this.streak < this.thresholdSeconds) return false;
-    // Asked once per streak. Only a real break arms it again, so someone who
-    // works straight through four hours is asked once, not four times.
-    this.asked = true;
+    this.sinceAsked += activeSeconds;
+    if (this.sinceAsked < this.thresholdSeconds) return false;
+    this.sinceAsked = 0;
     return true;
   }
 
   reset(): void {
     this.streak = 0;
-    this.asked = false;
+    this.sinceAsked = 0;
   }
 }
