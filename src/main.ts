@@ -21,6 +21,8 @@ import { HABITS, loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/
 import { resolveMood } from "./behaviour/mood";
 import { ScrollEnergy } from "./behaviour/scroll";
 import { WorkingWatch, WORTH_MENTIONING_SECONDS } from "./behaviour/working";
+import { Bakery } from "./bakery/bakery";
+import { drawLoaf } from "./render/loafDraw";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
 import { FocusTimer } from "./focus/timer";
@@ -31,7 +33,7 @@ import {
   isFocusCommand,
 } from "./focus/events";
 import { drawFocusRing, drawFocusPill } from "./render/focusRing";
-import { Tracker, TICK_INTERVAL, formatDuration } from "./tracker/tracker";
+import { Tracker, TICK_INTERVAL, formatDuration, dayKeyFor } from "./tracker/tracker";
 import {
   MemoryStatsStore,
   TauriStatsStore,
@@ -344,9 +346,11 @@ const focus = new FocusTimer({
 focus.onFinish = (planned) => {
   makeNoise("finish");
   moodOverride = "happy";
+  const loaf = bakery.bake(planned / 60, dayKeyFor(new Date()));
   say({
     kind: "speech",
-    text: sessionDoneLine(planned),
+    text: `${sessionDoneLine(planned)}
+That's a ${loaf.kind}. ${bakery.total} on the shelf.`,
     seconds: 12,
   });
   window.setTimeout(() => {
@@ -375,6 +379,9 @@ function applyFocusCommand(raw: unknown): void {
       focus.toggle();
       break;
     case "reset":
+      // Stopping early collapses the loaf and records NOTHING. See bakery.ts:
+      // a shelf that also counted what you burned is a scoreboard to hide from.
+      if (focus.isActive) bakery.abandon();
       focus.reset();
       break;
   }
@@ -827,6 +834,9 @@ const typingEnergy = new ScrollEnergy();
 
 /** Whether the machine in front of you is busy. See behaviour/working.ts. */
 const workingWatch = new WorkingWatch();
+
+/** The oven and the shelf. A focus session bakes; abandoning one collapses. */
+const bakery = new Bakery(browserStore());
 let secondsSinceScroll: number | null = null;
 const SCROLL_POLL_MS = 200;
 const PROUD_SECONDS = 6;
@@ -1075,6 +1085,8 @@ function frame(nowMs: number): void {
   const mood = currentMood();
   tickAmbient(nowMs, mood);
 
+  bakery.tick(dt);
+  if (focus.isActive) bakery.noteProgress(focus.progress);
   gaze = easeGaze(gaze, gazeTarget, dt);
 
   // Fade toward a ghost of himself when nobody is looking.
@@ -1125,12 +1137,17 @@ function frame(nowMs: number): void {
   // top — but the ring and pill are always crisp: "24:31" at 56x63 is mush.
   const ball = playDirector.ball;
   const session = focus.display;
-  if ((ball && !pixelated) || session) {
+  // The loaf shares the design space with the ring and the ball, so it goes
+  // through the same fit transform and needs the same reason to open the block.
+  const bake = bakery.peek(session ? focus.progress : null, focus.duration / 60);
+  if ((ball && !pixelated) || session || bake) {
     ctx!.save();
     applyFit(
       ctx as unknown as Parameters<typeof applyFit>[0],
       computeFit(window.innerWidth, window.innerHeight),
     );
+    // Under the ring and the ball, so nothing it overlaps is hidden by it.
+    drawLoaf(ctx as unknown as Parameters<typeof drawLoaf>[0], bake);
     if (session) {
       const shown = { ...session, progress: focus.progress };
       drawFocusRing(

@@ -70,8 +70,11 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Hover card can be switched off | ✅ closet toggle |
 | Pattern notes (Phase A) | ✅ what Loaf noticed, from measured data, no network |
 | Sleep means quiet | ✅ one gate — no nudges, no reminders, no sounds |
+| Focus sessions bake bread | ✅ a loaf rises, collapses if abandoned, finished ones shelve |
+| Notetaker (tasks, priority, timer) | ✅ core + pet display; no entry UI yet |
+| Tab count in context | ✅ compares against your own usual; does not name tabs |
 
-Tests: **723 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
+Tests: **790 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
 
 **v0.2.1 released** as a pre-release, and verified by running it on Windows:
 the tracker attributing seven applications into the right hourly buckets, Reset
