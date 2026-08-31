@@ -52,6 +52,16 @@ export interface BehaviourSettings {
    */
   drifting: boolean;
   /**
+   * Fade until the cursor is on him.
+   *
+   * An always-on-top companion sits over whatever is underneath, and on a busy
+   * desktop that is usually something you were reading. Faded, the text and
+   * icons behind him stay legible; hovering brings him back to solid.
+   */
+  fading: boolean;
+  /** Whether hovering shows today's card, or only wakes him up. */
+  preview: boolean;
+  /**
    * Barely a pause: drift is meant to look continuous, so one leg starts about
    * as soon as the last ends.
    */
@@ -77,6 +87,17 @@ export function defaultBehaviourSettings(): BehaviourSettings {
     wanderLeash: 170,
     wanderSpeed: 32,
     drifting: true,
+    /**
+     * Fade to a ghost of himself until you look at him.
+     *
+     * ON by default, and that is the whole point of the feature: an always-on
+     * companion sits over whatever is underneath it, and on a busy desktop the
+     * thing underneath is usually something you were reading. Faded, the text
+     * and icons behind him stay legible; hovering brings him back to solid.
+     */
+    fading: true,
+    /** Whether hovering shows today's card, or just wakes him up. */
+    preview: true,
     driftEvery: { min: 0.3, max: 2.0 },
     driftLeash: 330,
     driftSpeed: 17,

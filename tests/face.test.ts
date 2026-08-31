@@ -19,7 +19,7 @@ const eyesFor = (mood: Mood, over: Partial<SceneState> = {}): RecordingCtx => {
 };
 
 describe("drawEyes — every mood is visually distinct", () => {
-  it("produces a different drawing for each of the seven moods", () => {
+  it("produces a different drawing for each of the nine moods", () => {
     // 'happy' and 'proud' deliberately share a face — the difference between
     // them lives in the body and the bubble, not the eyes.
     const signatures = new Map<string, Mood[]>();

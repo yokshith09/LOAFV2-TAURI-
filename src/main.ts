@@ -20,6 +20,7 @@ import { resolveLicence, licenceInputs } from "./behaviour/licence";
 import { loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/habits";
 import { resolveMood } from "./behaviour/mood";
 import { ScrollEnergy } from "./behaviour/scroll";
+import { WorkingWatch, WORTH_MENTIONING_SECONDS } from "./behaviour/working";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
 import { FocusTimer } from "./focus/timer";
@@ -440,6 +441,30 @@ let toldToSleep = false;
 let gaze: Gaze = LOOKING_AHEAD;
 let gazeTarget: Gaze = LOOKING_AHEAD;
 let lastFrameMs: number | null = null;
+let secondsSinceTyping: number | null = null;
+
+/**
+ * How faint he goes when unattended.
+ *
+ * Faint enough that a line of text behind him is readable, solid enough that he
+ * still reads as a character rather than a smudge someone forgot to clean off
+ * the screen. Below about 0.4 the outline goes and he stops being recognisable.
+ */
+const FADED_ALPHA = 0.55;
+let alpha = 1;
+let foregroundCpu: number | null = null;
+
+/**
+ * What he says when a long job finishes.
+ *
+ * Proportionate to the wait: the same line after forty seconds and after twenty
+ * minutes would be the tell that nobody was really watching.
+ */
+function finishedLine(seconds: number): string {
+  if (seconds >= 600) return "Finally. That was a long one. ☕";
+  if (seconds >= 180) return "Done at last. Welcome back.";
+  return "That took a moment. All finished.";
+}
 
 /** Ticks between saves. The whole file is rewritten, so not every tick. */
 const SAVE_EVERY = 12; // once a minute at a five-second tick
@@ -781,6 +806,19 @@ let proudUntil = 0;
  * cheap in-process call on both platforms.
  */
 const scrollEnergy = new ScrollEnergy();
+
+/**
+ * The typing pose, driven by exactly the same machinery as the scroll pose.
+ *
+ * Reusing `ScrollEnergy` rather than writing a second rise-and-decay: both
+ * answer "has this input happened recently enough to hold a pose", the tuning
+ * that stops a stray event flicking him into it is the same tuning, and one
+ * tested implementation beats two similar ones.
+ */
+const typingEnergy = new ScrollEnergy();
+
+/** Whether the machine in front of you is busy. See behaviour/working.ts. */
+const workingWatch = new WorkingWatch();
 let secondsSinceScroll: number | null = null;
 const SCROLL_POLL_MS = 200;
 const PROUD_SECONDS = 6;
@@ -791,6 +829,8 @@ function currentMood(): Mood {
     tabAlert: radar?.tabAlert != null,
     proud: Date.now() < proudUntil,
     scrolling: scrollEnergy.isScrolling,
+    typing: typingEnergy.isScrolling,
+    working: workingWatch.busy,
     override: moodOverride,
     // Told to sleep counts the same as having drifted off, so the ladder stays
     // one ladder — hovering still wakes a face, a tantrum still outranks a nap.
@@ -866,6 +906,15 @@ function tickAmbient(nowMs: number, mood: Mood): void {
   focus.poll();
   pollFocusState();
   scrollEnergy.tick(secondsSinceScroll, dt);
+  typingEnergy.tick(secondsSinceTyping, dt);
+  const work = workingWatch.tick(foregroundCpu, dt);
+  if (work.justFinished !== null && work.justFinished >= WORTH_MENTIONING_SECONDS) {
+    // Only worth remarking on if it was actually a wait. Nothing is said about
+    // a four-second build, and nothing is said over something already speaking.
+    if (moodOverride === null && !toldToSleep) {
+      say({ kind: "speech", text: finishedLine(work.justFinished), seconds: 6 });
+    }
+  }
   const licence = resolveLicence(
     licenceInputs({
       // `mood` reports happy while you are petting him even mid-tantrum — a
@@ -1011,6 +1060,20 @@ function frame(nowMs: number): void {
   tickAmbient(nowMs, mood);
 
   gaze = easeGaze(gaze, gazeTarget, dt);
+
+  // Fade toward a ghost of himself when nobody is looking.
+  //
+  // Eased rather than switched: a companion that snapped between solid and
+  // faded would flash every time the cursor crossed him on its way somewhere
+  // else. Dragging and speaking both force him solid — you cannot aim at
+  // something you can see through, and a bubble over a half-there character
+  // reads as a rendering fault.
+  const wantSolid =
+    !behaviour.fading || hovering || draggingWindow || moodOverride !== null;
+  const targetAlpha = wantSolid ? 1 : FADED_ALPHA;
+  alpha += (targetAlpha - alpha) * Math.min(1, dt * 6);
+  canvas!.style.opacity = alpha.toFixed(3);
+
   const state: SceneState = {
     mood,
     phase,
@@ -1155,6 +1218,10 @@ function wireInteraction(): void {
     dwell = window.setTimeout(() => {
       // Only if still hovering, and never on top of something being said.
       if (!hovering || !tracker || moodOverride !== null) return;
+      // The card is a setting now. Someone who wants the character and not the
+      // statistics should be able to have that, and hovering still wakes him —
+      // the fade and the happy face happen either way.
+      if (!behaviour.preview) return;
       say({ kind: "preview", stats: tracker.serialize() });
     }, HOVER_DWELL_MS);
   });
@@ -1462,6 +1529,17 @@ setInterval(() => {
       // The face sits in the upper half of the window, not its middle.
       { x: frame.x + frame.width / 2, y: frame.y + frame.height * 0.4 },
     );
+  });
+
+  void invokeSafe<number | null>("seconds_since_typing").then((s) => {
+    secondsSinceTyping = s;
+  });
+
+  // Asked on the slow timer, and it SLEEPS for a moment inside the command to
+  // take its second sample — which is exactly why it is an async command and
+  // not on the render path.
+  void invokeSafe<number | null>("foreground_cpu").then((c) => {
+    foregroundCpu = c;
   });
 
   void invokeSafe<number | null>("seconds_since_scroll").then((s) => {

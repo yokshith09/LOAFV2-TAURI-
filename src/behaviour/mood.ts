@@ -35,6 +35,10 @@ export interface MoodInputs {
   readonly override: Mood | null;
   /** Enough recent wheel movement to strike the pose. See behaviour/scroll.ts. */
   readonly scrolling: boolean;
+  /** Keys have gone down recently. Timing only — see scroll.rs. */
+  readonly typing: boolean;
+  /** The foreground application is working hard. See behaviour/working.ts. */
+  readonly working: boolean;
   /** The tracker reported an idle tick. */
   readonly sleeping: boolean;
   /** The alt-click development cycle. Below every real signal. */
@@ -47,6 +51,11 @@ export function resolveMood(inputs: MoodInputs): Mood {
   if (inputs.proud) return "proud";
   if (inputs.override !== null) return inputs.override;
   if (inputs.scrolling) return "scrolling";
+  // Typing outranks working: if you are at the keys, the interesting fact is
+  // that YOU are busy, not that the machine is. They co-occur constantly —
+  // every keystroke in an editor costs CPU — and this is which one wins.
+  if (inputs.typing) return "typing";
+  if (inputs.working) return "working";
   if (inputs.sleeping) return "sleeping";
   return inputs.debug ?? "idle";
 }

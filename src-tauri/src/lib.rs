@@ -110,6 +110,26 @@ fn seconds_since_scroll() -> Option<f64> {
     scroll::seconds_since_scroll()
 }
 
+/// How long since a key was pressed. Timing only — see `scroll.rs`.
+#[tauri::command]
+fn seconds_since_typing() -> Option<f64> {
+    scroll::seconds_since_typing()
+}
+
+/// How hard the foreground application is working, 0..100.
+///
+/// The signal behind "he waits with you": a build, a render, a model thinking.
+/// Loaf cannot know WHICH of those it is, and does not try — it knows the
+/// window in front of you is busy, which is the honest version of the feature
+/// and the one that works for every long job rather than one vendor's.
+///
+/// Two samples a short time apart, because CPU time is a counter and a
+/// percentage is a rate. `None` when the OS will not say.
+#[tauri::command(async)]
+fn foreground_cpu() -> Option<f64> {
+    platform::foreground_cpu()
+}
+
 #[tauri::command]
 fn platform_name() -> &'static str {
     platform::native().platform_name()
@@ -1055,6 +1075,8 @@ pub fn run() {
             foreground_app,
             idle_seconds,
             seconds_since_scroll,
+            seconds_since_typing,
+            foreground_cpu,
             platform_name,
             start_drag,
             close_dashboard,

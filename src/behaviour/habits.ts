@@ -12,7 +12,14 @@ import type { SettingsStore } from "../closet/settings";
  * look like a setting too.
  */
 
-export const HABITS = ["loafing", "playing", "wandering", "drifting"] as const;
+export const HABITS = [
+  "loafing",
+  "playing",
+  "wandering",
+  "drifting",
+  "fading",
+  "preview",
+] as const;
 export type Habit = (typeof HABITS)[number];
 
 export function isHabit(v: unknown): v is Habit {
@@ -25,6 +32,8 @@ export const HABIT_LABELS: Readonly<Record<Habit, string>> = {
   playing: "Play with a fur ball",
   wandering: "Wander around the screen",
   drifting: "Drift about (they're a ghost)",
+  fading: "Fade until you look at him",
+  preview: "Show today's card on hover",
 };
 
 /**
@@ -40,6 +49,9 @@ export function habitLine(habit: Habit, on: boolean): string | null {
   }
   if (habit === "drifting") {
     return on ? "Off I go, then. 👻" : "Anchored. Unnatural, but fine.";
+  }
+  if (habit === "fading") {
+    return on ? "I'll keep out of the way." : "Solid, then.";
   }
   return null;
 }

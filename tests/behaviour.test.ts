@@ -335,6 +335,8 @@ describe("the mood ladder", () => {
       proud: false,
       override: null,
       scrolling: false,
+      typing: false,
+      working: false,
       sleeping: false,
       debug: null,
       ...over,
@@ -394,5 +396,37 @@ describe("the mood ladder", () => {
 
   it("is idle when nothing at all is happening", () => {
     expect(ladder({})).toBe("idle");
+  });
+});
+
+describe("the machine-aware rungs", () => {
+  const ladder2 = (over: Partial<MoodInputs>): Mood =>
+    resolveMood({
+      hovering: false, tabAlert: false, proud: false, override: null,
+      scrolling: false, typing: false, working: false, sleeping: false,
+      debug: null, ...over,
+    });
+
+  it("types when you type", () => {
+    expect(ladder2({ typing: true })).toBe("typing");
+  });
+
+  it("waits when the machine is busy", () => {
+    expect(ladder2({ working: true })).toBe("working");
+  });
+
+  // They co-occur constantly — every keystroke in an editor costs CPU — so
+  // which one wins is the whole decision.
+  it("prefers typing to working when both are true", () => {
+    expect(ladder2({ typing: true, working: true })).toBe("typing");
+  });
+
+  it("still lets a tantrum and a hover outrank both", () => {
+    expect(ladder2({ typing: true, working: true, tabAlert: true })).toBe("tantrum");
+    expect(ladder2({ typing: true, working: true, hovering: true })).toBe("happy");
+  });
+
+  it("outranks sleeping, because a busy machine is not an idle one", () => {
+    expect(ladder2({ working: true, sleeping: true })).toBe("working");
   });
 });

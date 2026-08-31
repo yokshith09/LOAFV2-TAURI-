@@ -49,7 +49,7 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Sounds | ✅ four occasions, synthesised placeholders, your own files win |
 | Onboarding | ✅ the radar's consent screen, honest per platform |
 | Sprite packs | ✅ hand-drawn characters load from a folder, beside the shipped 18 |
-| Moods | ✅ all 7 rungs live |
+| Moods | ✅ all 7 reference rungs live |
 | Next | **parity reached.** Nothing from the reference is unported |
 
 **Phase 2 (beyond the reference) — in progress.**
@@ -64,8 +64,12 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Right-click the character | ✅ the same menu the tray shows, one definition |
 | Hyperfocus check-in | ✅ asks once after 90 minutes unbroken, re-armed only by a real break |
 | Wander is one switch | ✅ drift no longer moves the window with wandering off |
+| Typing pose | ✅ ninth mood — timing only, never which key |
+| Waits while your machine works | ✅ foreground CPU, Windows; macOS reports "no idea" |
+| Fades until you look at him | ✅ on by default, eased, solid while dragging or speaking |
+| Hover card can be switched off | ✅ closet toggle |
 
-Tests: **673 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
+Tests: **693 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
 
 **v0.2.1 released** as a pre-release, and verified by running it on Windows:
 the tracker attributing seven applications into the right hourly buckets, Reset

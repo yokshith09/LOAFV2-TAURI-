@@ -163,6 +163,11 @@ const FALLBACKS: Readonly<Record<string, readonly string[]>> = {
   tantrum: ["worried", "idle"],
   scrolling: ["idle"],
   sleeping: ["idle"],
+  // Both fall back to idle, which is what keeps every sprite pack written
+  // before these existed working unchanged: a pack that never drew them gets
+  // its idle, not a blank frame.
+  typing: ["scrolling", "idle"],
+  working: ["idle"],
 };
 
 const MOODS: readonly Mood[] = [
@@ -171,6 +176,8 @@ const MOODS: readonly Mood[] = [
   "sleeping",
   "worried",
   "scrolling",
+  "typing",
+  "working",
   "tantrum",
   "proud",
 ];

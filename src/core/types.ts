@@ -31,6 +31,15 @@ export type Mood =
   | "worried"
   /** You're scrolling, so he pulls out a scroll. (Yes, that's the joke.) */
   | "scrolling"
+  /** You're typing, so he gets a keyboard out. The sibling of `scrolling`. */
+  | "typing"
+  /**
+   * Your machine is busy — a build, a render, a model thinking.
+   *
+   * Not a mood about you. He is waiting alongside you, which is the whole
+   * point: body doubling is sharing the work, not watching it.
+   */
+  | "working"
   /** Too many browser tabs open. He has opinions about it. */
   | "tantrum"
   /** You just closed enough tabs to calm him down. Credit where it's due. */
@@ -42,6 +51,8 @@ export const ALL_MOODS: readonly Mood[] = [
   "sleeping",
   "worried",
   "scrolling",
+  "typing",
+  "working",
   "tantrum",
   "proud",
 ] as const;

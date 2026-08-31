@@ -21,6 +21,17 @@ pub fn seconds_since_scroll() -> Option<f64> {
     imp::seconds_since_scroll()
 }
 
+/// Seconds since a key was last pressed, or `None` where that cannot be known.
+///
+/// THE SAME PROMISE AS ABOVE, and it matters more here. This reports only HOW
+/// LONG AGO a key went down. Not which key, not how many, not what was typed —
+/// none of that is read, kept, or reachable. On macOS the call is literally
+/// incapable of returning a key code; on Windows the raw input struct that
+/// carries one is never looked at.
+pub fn seconds_since_typing() -> Option<f64> {
+    imp::seconds_since_typing()
+}
+
 /// Start whatever needs to be running. A no-op on macOS, which polls.
 pub fn start() {
     imp::start();
@@ -32,6 +43,8 @@ mod imp {
     const COMBINED_SESSION_STATE: u32 = 0;
     /// `kCGEventScrollWheel`.
     const SCROLL_WHEEL: u32 = 22;
+    /// `kCGEventKeyDown`. Timing only — this API cannot report WHICH key.
+    const KEY_DOWN: u32 = 10;
 
     // Declared directly rather than pulling in a Core Graphics crate: this is
     // one function, and a dependency added for one function is a dependency
@@ -42,6 +55,16 @@ mod imp {
     }
 
     pub fn start() {}
+
+    pub fn seconds_since_typing() -> Option<f64> {
+        let seconds =
+            unsafe { CGEventSourceSecondsSinceLastEventType(COMBINED_SESSION_STATE, KEY_DOWN) };
+        if seconds.is_finite() && seconds >= 0.0 {
+            Some(seconds)
+        } else {
+            None
+        }
+    }
 
     pub fn seconds_since_scroll() -> Option<f64> {
         let seconds =
@@ -67,16 +90,18 @@ mod imp {
     use windows::Win32::System::SystemInformation::GetTickCount64;
     use windows::Win32::UI::Input::{
         GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
-        RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT,
+        RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEKEYBOARD, RIM_TYPEMOUSE,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
         TranslateMessage, HMENU, HWND_MESSAGE, MSG, RI_MOUSE_WHEEL, WINDOW_EX_STYLE, WINDOW_STYLE,
-        WM_INPUT, WNDCLASSW,
+        WM_INPUT, WM_KEYDOWN, WM_SYSKEYDOWN, WNDCLASSW,
     };
 
     /// Tick count at the last wheel movement. 0 means "never seen one".
     static LAST_SCROLL_TICKS: AtomicU64 = AtomicU64::new(0);
+    /// Tick count at the last key press. 0 means "never seen one".
+    static LAST_KEY_TICKS: AtomicU64 = AtomicU64::new(0);
     static START: Once = Once::new();
 
     pub fn start() {
@@ -92,7 +117,15 @@ mod imp {
     }
 
     pub fn seconds_since_scroll() -> Option<f64> {
-        let last = LAST_SCROLL_TICKS.load(Ordering::Relaxed);
+        since(&LAST_SCROLL_TICKS)
+    }
+
+    pub fn seconds_since_typing() -> Option<f64> {
+        since(&LAST_KEY_TICKS)
+    }
+
+    fn since(clock: &AtomicU64) -> Option<f64> {
+        let last = clock.load(Ordering::Relaxed);
         if last == 0 {
             return None;
         }
@@ -118,12 +151,28 @@ mod imp {
                 header,
             );
             if read != u32::MAX {
-                // ONLY the wheel flag. The same struct carries movement deltas
-                // and button state; neither is read, and neither is anybody's
-                // business here.
-                let flags = raw.data.mouse.Anonymous.Anonymous.usButtonFlags as u32;
-                if flags & RI_MOUSE_WHEEL != 0 {
-                    LAST_SCROLL_TICKS.store(GetTickCount64(), Ordering::Relaxed);
+                match raw.header.dwType {
+                    // ONLY the wheel flag. The same struct carries movement
+                    // deltas and button state; neither is read, and neither is
+                    // anybody's business here.
+                    t if t == RIM_TYPEMOUSE.0 => {
+                        let flags = raw.data.mouse.Anonymous.Anonymous.usButtonFlags as u32;
+                        if flags & RI_MOUSE_WHEEL != 0 {
+                            LAST_SCROLL_TICKS.store(GetTickCount64(), Ordering::Relaxed);
+                        }
+                    }
+                    // ONLY that a key went down, and WHEN. `raw.data.keyboard`
+                    // carries VKey, MakeCode and Message right here, one field
+                    // away — none of them is read. That restraint is the entire
+                    // difference between a pose and a keylogger, so it is worth
+                    // stating where the temptation actually is.
+                    t if t == RIM_TYPEKEYBOARD.0 => {
+                        let message = raw.data.keyboard.Message;
+                        if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
+                            LAST_KEY_TICKS.store(GetTickCount64(), Ordering::Relaxed);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -167,13 +216,24 @@ mod imp {
         // Usage page 1, usage 2 is the generic desktop mouse. INPUTSINK is what
         // lets this see the wheel while another application is in front —
         // without it the pose would only work while you were scrolling Loaf.
-        let device = RAWINPUTDEVICE {
-            usUsagePage: 0x01,
-            usUsage: 0x02,
-            dwFlags: RIDEV_INPUTSINK,
-            hwndTarget: hwnd,
-        };
-        if RegisterRawInputDevices(&[device], std::mem::size_of::<RAWINPUTDEVICE>() as u32).is_err()
+        // Usage 2 is the mouse, usage 6 the keyboard. INPUTSINK is what lets
+        // these be seen while another application is in front — without it the
+        // poses would only work while you were typing at Loaf itself.
+        let devices = [
+            RAWINPUTDEVICE {
+                usUsagePage: 0x01,
+                usUsage: 0x02,
+                dwFlags: RIDEV_INPUTSINK,
+                hwndTarget: hwnd,
+            },
+            RAWINPUTDEVICE {
+                usUsagePage: 0x01,
+                usUsage: 0x06,
+                dwFlags: RIDEV_INPUTSINK,
+                hwndTarget: hwnd,
+            },
+        ];
+        if RegisterRawInputDevices(&devices, std::mem::size_of::<RAWINPUTDEVICE>() as u32).is_err()
         {
             return;
         }
@@ -190,6 +250,9 @@ mod imp {
 mod imp {
     pub fn start() {}
     pub fn seconds_since_scroll() -> Option<f64> {
+        None
+    }
+    pub fn seconds_since_typing() -> Option<f64> {
         None
     }
 }

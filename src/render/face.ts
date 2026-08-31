@@ -98,6 +98,51 @@ export function drawEyes(ctx: Ctx2D, c: Companion, s: SceneState): void {
       break;
     }
 
+    case "typing": {
+      // Sibling of `scrolling`, and the difference is where the eyes go. A
+      // reader's eyes sweep sideways across a page; a typist's flick DOWN to
+      // the keys and back up to the screen. Same absorbed face, different
+      // errand, and the vertical beat is what tells them apart at 134px.
+      const glance = Math.abs(Math.sin(s.phase * 4.6)) * 2.2;
+      for (const e of eyes) {
+        fillOval(
+          ctx,
+          rect(e.x - 4.4 * k, e.y - 7 * k + glance, 8.8 * k, 10.4 * k),
+          p.ink,
+        );
+        fillOval(
+          ctx,
+          rect(e.x - 0.6 * k, e.y - 4.2 * k + glance, 3 * k, 3 * k),
+          withAlpha(WHITE, 0.9),
+        );
+      }
+      break;
+    }
+
+    case "working": {
+      // Waiting, not working. He is not doing the job — your machine is — so
+      // this is the face of someone watching a progress bar: eyes wide and
+      // still, lifted slightly, blinking on the shared rhythm rather than
+      // animating. Stillness is the read here; a busy face next to a busy
+      // computer is two things competing for the same attention.
+      const lift = 1.2 * k;
+      for (const e of eyes) {
+        const socket = rect(e.x - 4.8 * k, e.y - 5.4 * k - lift, 9.6 * k, 11.4 * k);
+        if (p.iris) {
+          fillOval(ctx, socket, p.iris);
+          fillOval(ctx, insetBy(socket, socket.width * 0.3, 0), p.ink);
+        } else {
+          fillOval(ctx, socket, p.ink);
+        }
+        fillOval(
+          ctx,
+          rect(e.x - 1.1 * k, e.y + 1.2 * k - lift, 3.8 * k, 3.8 * k),
+          withAlpha(WHITE, 0.92),
+        );
+      }
+      break;
+    }
+
     case "scrolling": {
       // Reading eyes: sitting low in the socket and tracking across the page.
       // Deliberately no lid line above them — a straight stroke there reads as

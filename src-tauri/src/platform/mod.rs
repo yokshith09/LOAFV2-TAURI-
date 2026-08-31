@@ -83,3 +83,89 @@ pub trait PlatformProbe: Send + Sync {
 pub fn native() -> NativeProbe {
     NativeProbe
 }
+
+/// How hard the foreground process is working, as a percentage of one core.
+///
+/// Sampled twice around a short sleep, because the OS reports CPU TIME — a
+/// counter — and what we want is a rate. Deliberately not normalised by core
+/// count: a single-threaded build pinning one core of sixteen is "busy" in
+/// every sense a person means it, and dividing by sixteen would report 6% and
+/// call it idle.
+///
+/// `None` where it cannot be known, which the caller must treat as "no idea"
+/// rather than "not busy" — the same discipline the rest of `platform` uses.
+pub fn foreground_cpu() -> Option<f64> {
+    cpu::foreground_cpu()
+}
+
+#[cfg(windows)]
+mod cpu {
+    use windows::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    /// 100-nanosecond units to seconds.
+    fn seconds(t: FILETIME) -> f64 {
+        let ticks = ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64;
+        ticks as f64 / 10_000_000.0
+    }
+
+    /// Kernel + user time burned by a process so far.
+    unsafe fn busy_seconds(pid: u32) -> Option<f64> {
+        // QUERY_LIMITED_INFORMATION rather than QUERY_INFORMATION: it is the
+        // least this needs, and it works against processes at a higher
+        // integrity level, which QUERY_INFORMATION does not.
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut created = FILETIME::default();
+        let mut exited = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        let ok = GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user).is_ok();
+        let _ = CloseHandle(handle);
+        if !ok {
+            return None;
+        }
+        Some(seconds(kernel) + seconds(user))
+    }
+
+    pub fn foreground_cpu() -> Option<f64> {
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == 0 {
+                return None;
+            }
+            let first = busy_seconds(pid)?;
+            let window = std::time::Duration::from_millis(240);
+            std::thread::sleep(window);
+            let second = busy_seconds(pid)?;
+            // A process that exited between samples reports less time than it
+            // had, not more. Report nothing rather than a negative percentage.
+            if second < first {
+                return None;
+            }
+            Some((second - first) / window.as_secs_f64() * 100.0)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod cpu {
+    /// Not built yet. Reports "no idea", which the caller already handles, so
+    /// the Mac simply never shows the waiting pose rather than showing a wrong
+    /// one. Wiring it up means `proc_pid_rusage` and a second sample, the same
+    /// shape as the Windows side.
+    pub fn foreground_cpu() -> Option<f64> {
+        None
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+mod cpu {
+    pub fn foreground_cpu() -> Option<f64> {
+        None
+    }
+}
