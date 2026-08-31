@@ -527,6 +527,15 @@ fn place_bubble(
 #[tauri::command]
 fn reveal_bubble(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(bubble) = app.get_webview_window(BUBBLE_LABEL) {
+        // Re-asserted on every reveal, not just at creation.
+        //
+        // The bubble is built hidden and shown over and over. Setting the flag
+        // once on a window that has never been displayed does not reliably land
+        // it in the topmost band, and the symptom is precise: the character sits
+        // above your editor exactly as it should while the card that belongs to
+        // him appears only when everything else is minimised. Asking again each
+        // time costs one call on a window that is about to be shown anyway.
+        let _ = bubble.set_always_on_top(true);
         bubble.show().map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -790,6 +799,23 @@ fn open_feedback() -> Result<(), String> {
     Ok(())
 }
 
+/// Put a window on every desktop, not just the one it was born on.
+///
+/// macOS Spaces are the reason this exists. A window belongs to the Space it
+/// was created on, so a pet launched on Space 1 vanishes the moment you swipe
+/// to Space 2 — and cannot be dragged across, because there is nothing to grab.
+/// The first Mac testers reported exactly that: "not visible over all screens"
+/// and "cannot shift the cat from one screen to the other".
+///
+/// An ambient companion is the textbook case for joining all Spaces: it is not
+/// a document window that belongs to one piece of work, it is furniture.
+///
+/// A no-op on Windows, where a window is already on every virtual desktop it is
+/// told to be; harmless to call there.
+fn follow_the_user(window: &tauri::WebviewWindow) {
+    let _ = window.set_visible_on_all_workspaces(true);
+}
+
 /// The running build's version.
 ///
 /// Read from the binary's own package info rather than passed in from the
@@ -992,6 +1018,12 @@ pub fn run() {
 
             if let Some(window) = app.get_webview_window(COMPANION_LABEL) {
                 park_bottom_right(&window);
+                follow_the_user(&window);
+            }
+            if let Some(bubble) = app.get_webview_window(BUBBLE_LABEL) {
+                // The card has to follow him. A companion on every Space whose
+                // speech bubble is stuck on Space 1 is worse than neither.
+                follow_the_user(&bubble);
             }
             Ok(())
         })

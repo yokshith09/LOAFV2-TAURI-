@@ -1133,15 +1133,9 @@ function wireInteraction(): void {
     void invokeSafe("show_companion_menu");
   });
 
-  // Long enough that a deliberate double tap is never split, short enough that
-  // the single tap still feels like a response to the click.
-  const DOUBLE_TAP_MS = 260;
-  let openTimer: number | undefined;
-
-  // Two taps put the dashboard away. This fires in addition to the two `click`
-  // events, so it cancels the pending open before it can run.
+  // Two taps put the dashboard away. This arrives after both `click` events, so
+  // the first has already opened it and this closes it again.
   canvas!.addEventListener("dblclick", () => {
-    clearTimeout(openTimer);
     void invokeSafe("close_dashboard");
   });
 
@@ -1169,14 +1163,17 @@ function wireInteraction(): void {
       // full dashboard →". Until now a click cycled the mood instead, which
       // made the card's own invitation a lie.
       makeNoise("greeting");
-      // One tap opens, two taps close — so the open is held back until a second
-      // tap could no longer arrive. A toggle on every click looked identical
-      // for one tap and wrong for two: the second click closed what the first
-      // had just opened, which reads as the window refusing to stay.
-      clearTimeout(openTimer);
-      openTimer = window.setTimeout(() => {
-        void invokeSafe("open_dashboard");
-      }, DOUBLE_TAP_MS);
+      // Opens IMMEDIATELY. This used to wait 260ms to see whether a second tap
+      // was coming, and the first Mac testers reported the click "doesn't work"
+      // and rage-clicked. They were right, and the delay caused the very thing
+      // that defeated it: nothing happens, so you click again — and the second
+      // click both cancelled the pending open and fired `dblclick`, which
+      // closes. Rage-clicking was guaranteed to produce nothing at all.
+      //
+      // A deliberate double tap now opens and immediately closes, which flashes.
+      // That is a far smaller sin than a character that appears not to respond:
+      // one is a blink, the other makes the whole app feel broken.
+      void invokeSafe("open_dashboard");
     }
     updateProbeLabel();
   });
