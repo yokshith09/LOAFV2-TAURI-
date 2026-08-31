@@ -30,6 +30,15 @@ jobs:
     name: Build ${{ matrix.label }}
     strategy:
       fail-fast: false
+      # ONE AT A TIME, and this is not about runner cost.
+      #
+      # Both jobs call tauri-action with the same tag and `releaseDraft: true`.
+      # GitHub permits several DRAFT releases to share a tag name, so run in
+      # parallel neither job sees a release for the tag yet and each creates its
+      # own — leaving two drafts, one holding the .dmg and the other the .exe,
+      # and whichever you open looks like the build produced nothing. Serialised,
+      # the second job finds the first job's draft and uploads into it.
+      max-parallel: 1
       matrix:
         include:
           - os: macos-latest
