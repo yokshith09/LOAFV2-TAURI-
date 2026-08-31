@@ -146,6 +146,19 @@ export const PLUS_CSS = `
   /* What Loaf noticed. Sits directly under the total, because a sentence about
      the number is more use than the number, and reads as the character
      speaking rather than as another panel of statistics. */
+  /* The task list, as it appears on the hover card. Priority is a dot rather
+     than a word: three words down the left of a 190px card is a form, and the
+     colour carries the same information in a quarter of the space. */
+  .tasks { margin-top:11px; padding-top:9px; border-top:1px solid var(--edge); }
+  .task-row { display:flex; align-items:center; gap:7px; font-size:11.5px; margin-bottom:5px; }
+  .task-row:last-child { margin-bottom:0; }
+  .task-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+  .task-dot.p-now { background:#C2402C; }
+  .task-dot.p-soon { background:var(--accent-dark); }
+  .task-dot.p-whenever { background:var(--edge); border:1px solid var(--ink-soft); }
+  .task-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .task-timer { margin-left:auto; color:var(--ink-soft); font-size:10.5px; flex-shrink:0; }
+
   .noticed { margin:2px 0 6px; }
   .noticed-line {
     font-size:13px; line-height:1.5; color:var(--ink); margin:0 0 3px;

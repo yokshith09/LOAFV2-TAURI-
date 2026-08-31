@@ -8,6 +8,8 @@ import {
   firstDayNote,
   ENOUGH_FOR_A_DAY,
   ENOUGH_DAYS_FOR_USUAL,
+  ENOUGH_TABS_TO_MENTION,
+  tabsNote,
   type NoteInputs,
 } from "../src/insights/notes";
 import type { HistoryEntry } from "../src/tracker/tracker";
@@ -195,5 +197,44 @@ describe("notesFor", () => {
     const notes = notesFor(inputs());
     const kinds = notes.map((n) => n.kind);
     expect(new Set(kinds).size).toBe(kinds.length);
+  });
+});
+
+describe("tabsNote", () => {
+  const withTabs = (tabsNow: number | null, pastPeakTabs: number[] = []) =>
+    inputs({ tabsNow, pastPeakTabs });
+
+  it("says nothing when the browser will not say", () => {
+    expect(tabsNote(withTabs(null))).toBeNull();
+  });
+
+  it("says nothing about a handful of tabs", () => {
+    expect(tabsNote(withTabs(ENOUGH_TABS_TO_MENTION - 1))).toBeNull();
+  });
+
+  it("states the count before it knows your habits", () => {
+    expect(tabsNote(withTabs(30))?.text).toBe("30 tabs open.");
+  });
+
+  it("compares against your own usual once it has enough days", () => {
+    const n = tabsNote(withTabs(40, [10, 12, 11, 13]));
+    expect(n?.text).toContain("40 tabs open");
+    expect(n?.text).toContain("about 12");
+  });
+
+  // "23 vs 21" is a measurement, not an observation.
+  it("stays quiet when today is normal for you", () => {
+    expect(tabsNote(withTabs(22, [20, 21, 22, 20]))).toBeNull();
+  });
+
+  // A person who lives at 60 tabs should not be told about it every day.
+  it("does not nag someone whose normal is high", () => {
+    expect(tabsNote(withTabs(62, [60, 58, 61, 63]))).toBeNull();
+  });
+
+  it("never names a tab", () => {
+    const n = tabsNote(withTabs(40, [10, 12, 11]));
+    // The whole point: the text is a count and a comparison, nothing else.
+    expect(n?.text).toMatch(/^\d+ tabs open( — you usually work with about \d+)?\.$/);
   });
 });

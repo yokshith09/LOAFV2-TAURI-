@@ -596,3 +596,36 @@ describe("the version line", () => {
     expect(html).not.toContain("<script>x</script>");
   });
 });
+
+describe("tasks on the hover card", () => {
+  const tracker = () => new Tracker({ json: null });
+
+  it("shows nothing when there is nothing outstanding", () => {
+    // A heading over an empty list is a reproach, and this feature is not that.
+    // Asserted on the markup, not the word: the stylesheet is embedded in the
+    // document, so a bare `task-row` matches the CSS and always passes.
+    expect(miniDashboardHTML(tracker(), { tasks: [] })).not.toContain('class="tasks"');
+  });
+
+  it("shows a task with its priority", () => {
+    const html = miniDashboardHTML(tracker(), {
+      tasks: [{ title: "write the spec", priority: "now", minutesLeft: null }],
+    });
+    expect(html).toContain("write the spec");
+    expect(html).toContain("p-now");
+  });
+
+  it("shows a timer when there is one", () => {
+    const html = miniDashboardHTML(tracker(), {
+      tasks: [{ title: "bread", priority: "soon", minutesLeft: 12 }],
+    });
+    expect(html).toContain("12m");
+  });
+
+  it("escapes the title, like every other value on the page", () => {
+    const html = miniDashboardHTML(tracker(), {
+      tasks: [{ title: '<script>x</script>', priority: "soon", minutesLeft: null }],
+    });
+    expect(html).not.toContain("<script>x</script>");
+  });
+});

@@ -112,6 +112,25 @@ export interface DashboardOptions {
    * is the one thing a version line exists to prevent.
    */
   readonly version?: string;
+  /**
+   * What you said you meant to do, highest priority first.
+   *
+   * Passed in rather than read here: this module renders and never owns state,
+   * and the list belongs to the companion window like everything else.
+   */
+  readonly tasks?: readonly TaskView[];
+  /** Tabs open right now, for the tab note. Null when the browser will not say. */
+  readonly tabsNow?: number | null;
+  /** The most tabs seen on each past day, oldest first. */
+  readonly pastPeakTabs?: readonly number[];
+}
+
+/** Just enough of a task to draw one. */
+export interface TaskView {
+  readonly title: string;
+  readonly priority: "now" | "soon" | "whenever";
+  /** Minutes until its timer, rounded, or null when it has none. */
+  readonly minutesLeft: number | null;
 }
 
 // --- Escaping ----------------------------------------------------------------
@@ -298,18 +317,47 @@ function soonCard(title: string, blurb: string): string {
  * already is. If there is nothing worth saying, this renders nothing at all
  * rather than filling the space with an encouraging noise.
  */
-function noticedBlock(tracker: Tracker): string {
+function noticedBlock(tracker: Tracker, opts: DashboardOptions): string {
   const notes = notesFor({
     today: tracker.today,
     totalToday: tracker.totalToday,
     hours: tracker.hourlyHistogram(),
     history: tracker.history(30),
+    tabsNow: opts.tabsNow ?? null,
+    pastPeakTabs: opts.pastPeakTabs ?? [],
   }).slice(0, 2);
 
   if (notes.length === 0) return "";
   return `<div class="noticed">${notes
     .map((n) => `<p class="noticed-line">${escapeHTML(n.text)}</p>`)
     .join("")}</div>`;
+}
+
+/**
+ * What you meant to do, on the card that appears when you look at him.
+ *
+ * This is the whole point of the notetaker: the list is only useful if it is in
+ * front of you at the moment you have forgotten it, and the moment you look at
+ * the character is the one moment Loaf knows you are looking at anything.
+ *
+ * Renders nothing when there is nothing outstanding — a heading over an empty
+ * list is a reproach, and this feature is not for that.
+ */
+function taskBlock(tasks: readonly TaskView[]): string {
+  if (tasks.length === 0) return "";
+  const rows = tasks
+    .map((t) => {
+      const timer =
+        t.minutesLeft === null
+          ? ""
+          : `<span class="task-timer">${t.minutesLeft}m</span>`;
+      return (
+        `<div class="task-row"><span class="task-dot p-${t.priority}"></span>` +
+        `<span class="task-title">${escapeHTML(t.title)}</span>${timer}</div>`
+      );
+    })
+    .join("");
+  return `<div class="tasks">${rows}</div>`;
 }
 
 /** A button that asks the host to do something. See the note on inline handlers. */
@@ -587,7 +635,7 @@ export function dashboardBody(
     <div class="date">${escapeHTML(dateLabel)}</div>
     <div class="total-label">Time with you today</div>
     <div class="total">${formatDuration(tracker.totalToday)}</div>
-    ${noticedBlock(tracker)}
+    ${noticedBlock(tracker, opts)}
 
     <h2>By app</h2>
     ${rows}${emptyState}
@@ -682,7 +730,7 @@ export function miniBody(
   const emptyState =
     apps.length === 0 ? `<p class="empty">Nothing yet today.</p>` : "";
 
-  let extra = "";
+  let extra = taskBlock(opts.tasks ?? []);
   const top = tracker.todaySitesMerged()[0];
   if (top) {
     extra +=

@@ -36,7 +36,8 @@ export type NoteKind =
   | "busiest-app"
   | "compared-to-usual"
   | "first-day"
-  | "streak";
+  | "streak"
+  | "tabs";
 
 /** Below this, a day has too little in it to say anything about. */
 export const ENOUGH_FOR_A_DAY = 20 * 60;
@@ -61,7 +62,14 @@ export interface NoteInputs {
   readonly hours: readonly number[];
   /** Recent days, oldest first, including today. */
   readonly history: readonly HistoryEntry[];
+  /** Tabs open in the frontmost browser right now, or null when unknown. */
+  readonly tabsNow?: number | null;
+  /** The most tabs seen on each past day, oldest first. */
+  readonly pastPeakTabs?: readonly number[];
 }
+
+/** Fewer than this and a tab count is not worth a sentence. */
+export const ENOUGH_TABS_TO_MENTION = 12;
 
 function formatHours(seconds: number): string {
   const mins = Math.round(seconds / 60);
@@ -212,6 +220,41 @@ export function streakNote(inputs: NoteInputs): Note | null {
   return { kind: "streak", text: `${streak} days together now.` };
 }
 
+/**
+ * How many tabs are open, against how many you usually keep.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO. It does not list them, and it cannot: the
+ * count comes from counting `TabItem` elements, and naming them would mean
+ * reading each tab's title — "Re: redundancies — Gmail" — which is page content
+ * by another name and the exact thing the product promises not to look at. UI
+ * Automation also exposes no per-tab timing, so "untouched for three hours" is
+ * not available at any privacy price.
+ *
+ * What is left is honest and, it turns out, the useful part: you already know
+ * which tabs you do not need. What you have lost track of is how far past your
+ * own normal you have drifted. That is a number Loaf genuinely has.
+ */
+export function tabsNote(inputs: NoteInputs): Note | null {
+  const now = inputs.tabsNow ?? null;
+  if (now === null || now < ENOUGH_TABS_TO_MENTION) return null;
+
+  const past = (inputs.pastPeakTabs ?? []).filter((n) => n > 0);
+  if (past.length < ENOUGH_DAYS_FOR_USUAL) {
+    return { kind: "tabs", text: `${now} tabs open.` };
+  }
+
+  const usual = Math.round(median(past));
+  if (usual <= 0) return { kind: "tabs", text: `${now} tabs open.` };
+  // Only worth saying when it is genuinely off your own normal. "23 vs 21" is
+  // a measurement, not an observation.
+  if (now <= usual * (1 + NOTABLE_SHIFT)) return null;
+
+  return {
+    kind: "tabs",
+    text: `${now} tabs open — you usually work with about ${usual}.`,
+  };
+}
+
 /** The honest thing to say when there is not yet anything to compare. */
 export function firstDayNote(inputs: NoteInputs): Note | null {
   const past = pastDays(inputs.history);
@@ -235,6 +278,7 @@ export function notesFor(inputs: NoteInputs): Note[] {
     firstDayNote,
     comparedToUsualNote,
     busiestAppNote,
+    tabsNote,
     quietHourNote,
     streakNote,
   ];
