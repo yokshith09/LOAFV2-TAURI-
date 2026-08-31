@@ -17,7 +17,7 @@ import { PlayDirector } from "./behaviour/play";
 import { WanderController } from "./behaviour/wander";
 import { drawBall, drawSwipe } from "./behaviour/furBall";
 import { resolveLicence, licenceInputs } from "./behaviour/licence";
-import { loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/habits";
+import { HABITS, loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/habits";
 import { resolveMood } from "./behaviour/mood";
 import { ScrollEnergy } from "./behaviour/scroll";
 import { WorkingWatch, WORTH_MENTIONING_SECONDS } from "./behaviour/working";
@@ -271,12 +271,14 @@ function announceCloset(): void {
   // The habits live in `behaviour`, not in the closet's own storage, so they
   // are attached here rather than read there.
   closet.muted = sound.settings.muted;
-  closet.habits = {
-    loafing: behaviour.loafing,
-    playing: behaviour.playing,
-    wandering: behaviour.wandering,
-    drifting: behaviour.drifting,
-  };
+  // Built from HABITS rather than listed by hand.
+  //
+  // Listing them by hand is what broke the two habits added most recently: the
+  // toggles rendered, the clicks arrived, `behaviour` updated — and this
+  // function kept broadcasting a four-key object, so the closet re-rendered
+  // from a state that had never heard of them and every press appeared to do
+  // nothing. Derived from the list, a new habit cannot be forgotten here.
+  closet.habits = Object.fromEntries(HABITS.map((h) => [h, behaviour[h]]));
   closetState = closet.read();
   void emit(CLOSET_CHANGED_EVENT, closetState).catch(() => {
     // The closet will still be right the next time it is opened.

@@ -12,7 +12,14 @@ import { isClosetPick, isClosetState } from "../src/closet/events";
 import { closetBody } from "../src/closet/view";
 import { COMPANIONS, DEFAULT_COMPANION_ID, grouped } from "../src/companions/registry";
 import { OUTFITS, SEASONAL_ID } from "../src/outfits/registry";
-import { loadHabits, saveHabits, habitLine } from "../src/behaviour/habits";
+import {
+  HABITS,
+  HABIT_LABELS,
+  habitsFor,
+  loadHabits,
+  saveHabits,
+  habitLine,
+} from "../src/behaviour/habits";
 import { defaultBehaviourSettings } from "../src/behaviour/settings";
 
 const fresh = (): ClosetSettings => new ClosetSettings(new MemorySettingsStore());
@@ -356,5 +363,38 @@ describe("state arriving from the companion", () => {
     ]) {
       expect(isClosetState(junk)).toBe(false);
     }
+  });
+});
+
+describe("habits and settings cannot drift apart", () => {
+  // The bug this guards: two habits were added to HABITS, rendered as toggles,
+  // and updated `behaviour` correctly — but the state broadcast back to the
+  // closet was a hand-written object listing only the original four, so every
+  // press appeared to do nothing. Anything derived from HABITS is safe;
+  // anything listed by hand is one edit away from this.
+  it("has a default for every habit", () => {
+    const defaults = defaultBehaviourSettings() as unknown as Record<string, unknown>;
+    for (const habit of HABITS) {
+      expect(typeof defaults[habit]).toBe("boolean");
+    }
+  });
+
+  it("offers every habit except drifting to a character that cannot drift", () => {
+    expect(habitsFor(false)).toEqual(HABITS.filter((h) => h !== "drifting"));
+    expect(habitsFor(true)).toEqual([...HABITS]);
+  });
+
+  it("has a label for every habit", () => {
+    for (const habit of HABITS) {
+      expect(HABIT_LABELS[habit]).toBeTruthy();
+    }
+  });
+
+  it("carries every habit through a state payload", () => {
+    const habits = Object.fromEntries(
+      HABITS.map((h) => [h, true]),
+    ) as Record<string, boolean>;
+    expect(Object.keys(habits).sort()).toEqual([...HABITS].sort());
+    expect(Object.values(habits).every((v) => typeof v === "boolean")).toBe(true);
   });
 });
