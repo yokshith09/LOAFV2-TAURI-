@@ -114,6 +114,14 @@ export interface SceneState {
   readonly mood: Mood;
   readonly phase: number;
   readonly blinking: boolean;
+  /**
+   * Where the pupils are pointing, each component in -1..1.
+   *
+   * Optional: the closet's thumbnails and every rendering test draw a character
+   * with nothing to look at, and they should get the same face they always did.
+   * Absent means straight ahead.
+   */
+  readonly gaze?: { readonly x: number; readonly y: number };
 }
 
 /** Which shelf of the closet a companion sits on. */

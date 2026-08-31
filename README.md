@@ -52,7 +52,31 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Moods | ✅ all 7 rungs live |
 | Next | **parity reached.** Nothing from the reference is unported |
 
-Tests: **621 frontend** (Vitest) + **55 Rust**. CI green on macOS and Windows.
+**Phase 2 (beyond the reference) — in progress.**
+
+| Phase 2 | |
+|---|---|
+| Water reminder | ✅ own 45-minute clock, its own tally, silent during focus |
+| Send him to sleep | ✅ menu item; only an explicit tap wakes him |
+| Eyes follow the pointer | ✅ pupils drift inside a fixed socket, eased |
+| Version shown in the app | ✅ dashboard footer |
+| Radar settings persist | ✅ and fail closed — a corrupt value can only switch it OFF |
+| Right-click the character | ✅ the same menu the tray shows, one definition |
+
+Tests: **667 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
+
+**v0.2.1 released** as a pre-release, and verified by running it on Windows:
+the tracker attributing seven applications into the right hourly buckets, Reset
+clearing the file on disk, the window actually moving when dragged, seven menu
+items, the closet across fifteen characters, the focus timer, and the radar
+reading a domain out of Chrome via UI Automation without stalling the render
+loop.
+
+The first Mac reports arrived against that build and found three things a green
+test suite could not: the character was stuck on one Space, the preview card
+sat below other windows on Windows, and a single click felt dead because it
+waited 260ms for a possible second one. All three are fixed and none of them
+had a failing test to their name.
 
 ---
 
@@ -253,13 +277,35 @@ it. A caption disclaiming a chart is smaller than the chart doing the claiming.
 
 ## Not done yet
 
-Signing and notarisation (macOS), code signing (Windows), the privacy radar, the
-dashboards, the closet UI, the tray menus, speech bubbles, onboarding, the focus
-presets window, and everything else in Priorities 1–6 of the product direction.
+This section was itself out of date for a while, listing the radar, the
+dashboard, the closet, the tray and onboarding as missing long after they
+shipped. What is genuinely outstanding:
 
-Most of what the reference says through bubbles is not wired up yet — the closet
-greeting, the tantrum lines, the focus-session messages, the settings
-confirmations. The machinery is there; each one needs the feature behind it.
+**Signing.** Neither platform is signed, so macOS blocks the app on first launch
+and Windows shows a SmartScreen warning. Both need a paid certificate — an
+Apple Developer ID and a Windows code-signing cert.
+
+**Your own sounds, and hand-drawn character packs.** Both work if you place
+files in the folders yourself; neither is finished enough to point a button at,
+and both are labelled "coming soon" in the app rather than pretending otherwise.
+
+**Updates.** There is no updater. Nothing checks for a new version, tells you
+one exists, or downloads anything — so a user stays on the build they installed
+until they fetch another by hand. That is a deliberate consequence of the
+zero-network promise, not an oversight; see the note on it below.
+
+**Verified on a Mac by a person.** The macOS build compiles, its platform code
+is unit-tested, and testers have now run it — but far less of it has been
+exercised there than on Windows.
+
+### The zero-network promise, and what it costs
+
+Loaf makes no network calls, keeps no account and uploads nothing. That is the
+product, not a feature, and it rules things out: auto-update, any AI feature,
+and anything that connects one person's Loaf to another's. Each of those is
+buildable and each would end the sentence "Loaf itself does not upload your data
+or make AI/network calls". They are decisions to take deliberately and to say
+out loud, not to arrive at by adding a convenience.
 
 ## Licence
 

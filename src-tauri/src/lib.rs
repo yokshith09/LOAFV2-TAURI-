@@ -269,6 +269,10 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
     let packs_item =
         MenuItem::with_id(app, "packs", "Draw your own character…", true, None::<&str>)?;
+    // Sends him to sleep NOW, rather than waiting for the idle threshold. The
+    // wording is the instruction, not a state — it is a button, and there is a
+    // separate one to wake him.
+    let sleep = MenuItem::with_id(app, "sleep", "Send him to sleep", true, None::<&str>)?;
     let reset = MenuItem::with_id(app, "reset", "Reset today's stats", true, None::<&str>)?;
     let forget = MenuItem::with_id(app, "forget", "Forget all site data", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "About Loaf", true, None::<&str>)?;
@@ -282,6 +286,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
             &sounds_item,
             &packs_item,
             &PredefinedMenuItem::separator(app)?,
+            &sleep,
             &reset,
             &forget,
             &PredefinedMenuItem::separator(app)?,
@@ -337,6 +342,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 // These three are the same commands the dashboard sends, delivered
                 // on the same channel — one handler for them, wherever they came
                 // from, rather than a second path that can drift from the first.
+                "sleep" => send_command(app, "sleep"),
                 "reset" => send_command(app, "reset"),
                 "forget" => send_command(app, "sites:forget"),
                 "about" => send_command(app, "about"),
@@ -799,6 +805,24 @@ fn open_feedback() -> Result<(), String> {
     Ok(())
 }
 
+/// Where the pointer is, in physical screen pixels.
+///
+/// Used for one thing: pointing the pupils at it, so a still character still
+/// reads as awake.
+///
+/// WHAT THIS IS NOT. It is not input monitoring. One question is asked — the
+/// cursor's current position — which is the same question any window asks to
+/// draw a hover state, needs no permission on either platform, and reveals
+/// nothing about what is clicked, typed, or on screen. Nothing is stored; the
+/// answer is used for a frame and replaced by the next one.
+///
+/// Tauri exposes this cross-platform already, so there is no second
+/// implementation to keep in step and nothing to add to `platform`.
+#[tauri::command]
+fn cursor_pos(window: tauri::Window) -> Option<(f64, f64)> {
+    window.cursor_position().ok().map(|p| (p.x, p.y))
+}
+
 /// Put a window on every desktop, not just the one it was born on.
 ///
 /// macOS Spaces are the reason this exists. A window belongs to the Space it
@@ -1035,6 +1059,7 @@ pub fn run() {
             start_drag,
             close_dashboard,
             app_version,
+            cursor_pos,
             open_star,
             open_feedback,
             open_closet,

@@ -53,3 +53,10 @@ describe("support links", () => {
     expect(isCommand(cmd)).toBe(true);
   });
 });
+
+describe("sending him to sleep", () => {
+  it("accepts sleep and wake", () => {
+    expect(isCommand("sleep")).toBe(true);
+    expect(isCommand("wake")).toBe(true);
+  });
+});

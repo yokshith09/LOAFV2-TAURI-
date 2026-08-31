@@ -1,6 +1,7 @@
 import type { Color, Companion, Ctx2D, Point, SceneState } from "../core/types";
 import { blushLeft, blushRight, point, rect, insetBy, rectMidX, rectMidY } from "../core/types";
 import { css, withAlpha, WHITE } from "../core/color";
+import { GAZE_TRAVEL } from "../behaviour/gaze";
 import { fillOval, line } from "../core/draw";
 
 /**
@@ -24,20 +25,32 @@ export function drawEyes(ctx: Ctx2D, c: Companion, s: SceneState): void {
 
   switch (s.mood) {
     case "idle": {
+      // The socket stays put and only what is inside it moves. An eye that
+      // slid around the face would deform the head; a pupil that drifts inside
+      // a fixed socket is what looking actually is.
+      const gx = (s.gaze?.x ?? 0) * 4.5 * k * GAZE_TRAVEL;
+      const gy = (s.gaze?.y ?? 0) * 6 * k * GAZE_TRAVEL;
       for (const e of eyes) {
         const socket = rect(e.x - 4.5 * k, e.y - 6 * k, 9 * k, 12 * k);
         if (p.iris) {
           // Coloured iris with a slit pupil down its middle. This is most of
           // what stops six coats of the same cat reading as one animal.
           fillOval(ctx, socket, p.iris);
-          fillOval(ctx, insetBy(socket, socket.width * 0.28, 0), p.ink);
+          const pupil = rect(
+            socket.x + gx,
+            socket.y + gy,
+            socket.width,
+            socket.height,
+          );
+          fillOval(ctx, insetBy(pupil, pupil.width * 0.28, 0), p.ink);
         } else {
-          fillOval(ctx, socket, p.ink);
+          fillOval(ctx, rect(socket.x + gx, socket.y + gy, socket.width, socket.height), p.ink);
         }
-        // Catchlight.
+        // Catchlight. Travels with the pupil, because a highlight that stayed
+        // still while the eye moved reads as a smudge on the screen.
         fillOval(
           ctx,
-          rect(e.x - 0.5 * k, e.y + 1.5 * k, 3.4 * k, 3.4 * k),
+          rect(e.x - 0.5 * k + gx, e.y + 1.5 * k + gy, 3.4 * k, 3.4 * k),
           withAlpha(WHITE, 0.9),
         );
       }

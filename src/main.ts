@@ -91,6 +91,8 @@ import type { OnboardingStep, OnboardingPlatform } from "./onboarding/view";
 import { isOccasion, type Occasion } from "./sound/voice";
 import { unavailableRadar, type RadarSnapshot } from "./dashboard/html";
 import { RADAR_STATE_EVENT, RADAR_HELLO_EVENT } from "./dashboard/events";
+import { WaterGuide, WATER_PROMPTS } from "./behaviour/water";
+import { gazeToward, easeGaze, LOOKING_AHEAD, type Gaze } from "./behaviour/gaze";
 import {
   ALL_MOODS,
   asCtx2D,
@@ -412,6 +414,24 @@ let tracker: Tracker | null = null;
 let ticksSinceSave = 0;
 let lastTickResult = "starting";
 
+/** The water reminder, on its own clock. See `water.ts` for why it is separate. */
+const water = new WaterGuide();
+const waterPrompts = new PromptRotation(WATER_PROMPTS);
+
+/**
+ * Sent to sleep by hand, and staying there until told otherwise.
+ *
+ * Distinct from the idle-detected sleep, which un-sleeps the moment you touch
+ * the keyboard. Someone who chose "go to sleep" wants him down while they keep
+ * working, so only an explicit wake ends it.
+ */
+let toldToSleep = false;
+
+/** Where the eyes are pointing, and where they are heading. */
+let gaze: Gaze = LOOKING_AHEAD;
+let gazeTarget: Gaze = LOOKING_AHEAD;
+let lastFrameMs: number | null = null;
+
 /** Ticks between saves. The whole file is rewritten, so not every tick. */
 const SAVE_EVERY = 12; // once a minute at a five-second tick
 
@@ -494,6 +514,15 @@ function applyCommand(cmd: unknown): void {
       return;
     case "open:packs":
       void invokeSafe("open_packs_folder");
+      return;
+    case "sleep":
+      toldToSleep = true;
+      // Nothing is said. A character who announces that he is going to sleep
+      // has not gone to sleep.
+      hush();
+      return;
+    case "wake":
+      toldToSleep = false;
       return;
     case "open:star":
       void invokeSafe("open_star");
@@ -754,7 +783,9 @@ function currentMood(): Mood {
     proud: Date.now() < proudUntil,
     scrolling: scrollEnergy.isScrolling,
     override: moodOverride,
-    sleeping,
+    // Told to sleep counts the same as having drifted off, so the ladder stays
+    // one ladder — hovering still wakes a face, a tantrum still outranks a nap.
+    sleeping: sleeping || toldToSleep,
     debug: debugMood,
   });
 }
@@ -949,6 +980,12 @@ function frame(nowMs: number): void {
   const dpr = window.devicePixelRatio || 1;
   const phase = prefersReducedMotion ? 0 : nowMs / 1000;
 
+  // Seconds since the last frame, clamped: a window that was hidden or a
+  // machine that slept hands back a gap of minutes, and easing across that in
+  // one step would snap the eyes rather than move them.
+  const dt = lastFrameMs === null ? 0 : Math.min(0.1, (nowMs - lastFrameMs) / 1000);
+  lastFrameMs = nowMs;
+
   if (nowMs > nextBlinkAt) {
     blinkUntil = nowMs + 130;
     nextBlinkAt = nowMs + 2500 + Math.random() * 4000;
@@ -957,10 +994,12 @@ function frame(nowMs: number): void {
   const mood = currentMood();
   tickAmbient(nowMs, mood);
 
+  gaze = easeGaze(gaze, gazeTarget, dt);
   const state: SceneState = {
     mood,
     phase,
     blinking: nowMs < blinkUntil,
+    gaze,
   };
 
   ctx!.save();
@@ -1162,6 +1201,15 @@ function wireInteraction(): void {
       // What the hover card has been promising since it landed: "Click for the
       // full dashboard →". Until now a click cycled the mood instead, which
       // made the card's own invitation a lie.
+      if (toldToSleep) {
+        // A tap on a sleeping character wakes him, and does nothing else. The
+        // dashboard would bury the one thing you were looking at — whether he
+        // woke up.
+        toldToSleep = false;
+        makeNoise("greeting");
+        updateProbeLabel();
+        return;
+      }
       makeNoise("greeting");
       // Opens IMMEDIATELY. This used to wait 260ms to see whether a second tap
       // was coming, and the first Mac testers reported the click "doesn't work"
@@ -1278,6 +1326,18 @@ async function pollPlatform(): Promise<void> {
     sleeping = lastTickResult === "idle";
     if (lastTickResult === "breakDue") nudge();
 
+    // Suppressed while a focus session runs, while he is asleep, and while
+    // something is already being said — the clock still resets, so a skipped
+    // reminder is skipped rather than saved up to arrive in a burst later.
+    const busy =
+      (focus.display !== null && !focus.display.paused) ||
+      moodOverride !== null ||
+      toldToSleep ||
+      lastTickResult === "idle";
+    if (water.askNow(busy)) {
+      say({ kind: "speech", text: waterPrompts.next(), seconds: BREAK_BUBBLE_SECONDS });
+    }
+
     // Away from the keyboard means the browser is not earning time either, so
     // the radar sits out idle ticks rather than crediting a domain for a lunch
     // break.
@@ -1363,6 +1423,18 @@ void loadHistory()
 // credited, so changing it changes what a recorded second means.
 setInterval(() => void pollPlatform(), TICK_INTERVAL * 1000);
 setInterval(() => {
+  // Where to look next. Polled rather than read per frame: the eyes ease toward
+  // this over several frames anyway, so asking the OS 144 times a second would
+  // buy nothing but IPC traffic.
+  void invokeSafe<[number, number] | null>("cursor_pos").then((c) => {
+    const frame = hostWindow.getFrame();
+    gazeTarget = gazeToward(
+      c === null ? null : { x: c[0], y: c[1] },
+      // The face sits in the upper half of the window, not its middle.
+      { x: frame.x + frame.width / 2, y: frame.y + frame.height * 0.4 },
+    );
+  });
+
   void invokeSafe<number | null>("seconds_since_scroll").then((s) => {
     secondsSinceScroll = s;
   });

@@ -42,6 +42,11 @@ export const COMMANDS = [
   // FEEDBACK_URL in lib.rs for why a form inside the app was the wrong shape.
   "open:star",
   "open:feedback",
+  // Sends him to sleep now, rather than waiting for the idle threshold. Only an
+  // explicit wake ends it — someone who chose this wants him down while they
+  // carry on working, so touching the keyboard must not undo it.
+  "sleep",
+  "wake",
 ] as const;
 export type Command = (typeof COMMANDS)[number];
 
