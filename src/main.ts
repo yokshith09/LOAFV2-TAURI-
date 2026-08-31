@@ -23,6 +23,8 @@ import { ScrollEnergy } from "./behaviour/scroll";
 import { WorkingWatch, WORTH_MENTIONING_SECONDS } from "./behaviour/working";
 import { Bakery } from "./bakery/bakery";
 import { drawLoaf } from "./render/loafDraw";
+import { collectWrapped, worthMaking } from "./wrapped/wrapped";
+import { drawCard, CARD_SIZE, CARD_SCALE, CHARACTER_BOX } from "./wrapped/card";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
 import { FocusTimer } from "./focus/timer";
@@ -265,6 +267,83 @@ function applyClosetPick(raw: unknown): void {
   }
   adoptClosetState();
   announceCloset();
+}
+
+/**
+ * Draw the week and write it to a file.
+ *
+ * Rendered on an offscreen canvas rather than the companion's, so the pet on
+ * screen does not flicker while a 1080px image is composed over the top of it.
+ */
+async function saveRecap(): Promise<void> {
+  if (!tracker) return;
+
+  const history = tracker.history(7);
+  if (!worthMaking(history)) {
+    say({
+      kind: "speech",
+      text: "Not enough of a week yet.\nAsk me again in a few days.",
+      seconds: 7,
+    });
+    return;
+  }
+
+  const dayKeys = history.map((d) => dayKeyFor(d.date));
+  const stats = collectWrapped({
+    history,
+    loaves: bakery.loaves,
+    appTotals: tracker.today,
+    peakTabsByDay: {},
+    dayKeys,
+  });
+  if (stats === null) return;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = CARD_SIZE * CARD_SCALE;
+  canvas.height = CARD_SIZE * CARD_SCALE;
+  const cardCtx = canvas.getContext("2d");
+  if (!cardCtx) return;
+  cardCtx.scale(CARD_SCALE, CARD_SCALE);
+
+  drawCard(asCtx2D(cardCtx), stats, {
+    name: companionName(),
+    drawCharacter: () => {
+      // The same renderer the window uses, fitted into the card's box, so the
+      // character on the card is the one you have been looking at all week —
+      // right coat, right species, right everything.
+      cardCtx.save();
+      cardCtx.translate(CHARACTER_BOX.x, CHARACTER_BOX.y);
+      renderScene(
+        asCtx2D(cardCtx),
+        companion,
+        { mood: "happy", phase: 0, blinking: false },
+        CHARACTER_BOX.width,
+        CHARACTER_BOX.height,
+        currentOutfit(),
+      );
+      cardCtx.restore();
+    },
+  });
+
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), "image/png"),
+  );
+  if (!blob) return;
+  const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+
+  const path = await invokeSafe<string>("save_recap", {
+    png: bytes,
+    name: `loaf-week-${stats.to}.png`,
+  });
+  say({
+    kind: "speech",
+    text:
+      path === null
+        ? "I could not save that, sorry."
+        : `Saved your week.
+It is in ${path.replace(/^.*[\/]/, "")}, in the Recaps folder.`,
+    seconds: 10,
+  });
 }
 
 /** Tell the closet what the state is now. It renders from this, not from storage. */
@@ -557,6 +636,9 @@ function applyCommand(cmd: unknown): void {
       return;
     case "open:packs":
       void invokeSafe("open_packs_folder");
+      return;
+    case "recap":
+      void saveRecap();
       return;
     case "sleep":
       toldToSleep = true;

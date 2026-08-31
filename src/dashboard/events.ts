@@ -47,6 +47,8 @@ export const COMMANDS = [
   // carry on working, so touching the keyboard must not undo it.
   "sleep",
   "wake",
+  /** Draw the week as a picture and save it. Nothing is uploaded or posted. */
+  "recap",
 ] as const;
 export type Command = (typeof COMMANDS)[number];
 

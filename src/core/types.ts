@@ -227,6 +227,17 @@ export interface Ctx2D {
    */
   rotate(angle: number): void;
   clearRect(x: number, y: number, w: number, h: number): void;
+  /**
+   * Optional, like `drawImage`: only the recap card needs them.
+   *
+   * The companion scene draws every shape as a path, because a path can be
+   * pixelated and scaled with everything else. The card is a flat 1080px image
+   * with a solid ground and baseline-aligned text, and expressing that as paths
+   * would be ceremony. Optional keeps the recording stub honest — a stub that
+   * had to implement them would be pretending the scene uses them.
+   */
+  fillRect?(x: number, y: number, w: number, h: number): void;
+  textBaseline?: CanvasTextBaseline;
 }
 
 /**

@@ -286,6 +286,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
     let sounds_item = MenuItem::with_id(app, "sounds", "Add your own sounds…", true, None::<&str>)?;
     // Phrased as an invitation and placed with the other ordinary items — not a
     // prompt, not a gate, and never checked at runtime. See STAR_URL.
+    let recap = MenuItem::with_id(app, "recap", "Save this week’s recap…", true, None::<&str>)?;
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
     let packs_item =
         MenuItem::with_id(app, "packs", "Draw your own character…", true, None::<&str>)?;
@@ -315,6 +316,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
             &closet,
             &sounds_item,
             &packs_item,
+            &recap,
             &PredefinedMenuItem::separator(app)?,
             &sleep,
             &reset,
@@ -372,7 +374,8 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 // These three are the same commands the dashboard sends, delivered
                 // on the same channel — one handler for them, wherever they came
                 // from, rather than a second path that can drift from the first.
-                "sleep" => send_command(app, "sleep"),
+                "recap" => send_command(app, "recap"),
+            "sleep" => send_command(app, "sleep"),
                 "reset" => send_command(app, "reset"),
                 "forget" => send_command(app, "sites:forget"),
                 "about" => send_command(app, "about"),
@@ -870,6 +873,43 @@ fn follow_the_user(window: &tauri::WebviewWindow) {
     let _ = window.set_visible_on_all_workspaces(true);
 }
 
+/// Write a recap card to a file the user can find and post.
+///
+/// Loaf saves a PNG and stops there. It does not upload it, does not post it,
+/// and does not ask for an account to do either — the user shares it if they
+/// feel like it, from their own machine, to wherever they like. That is the
+/// whole growth loop, and it is the only one available to a product that makes
+/// no network calls.
+///
+/// Returns the path, so the caller can tell the user where it went rather than
+/// leaving them to guess.
+#[tauri::command(async)]
+fn save_recap(app: tauri::AppHandle, png: Vec<u8>, name: String) -> Result<String, String> {
+    // Rejected before anything is written: a caller that hands us an empty
+    // buffer has a bug, and a 0-byte .png on someone's disk looks like ours.
+    if png.is_empty() {
+        return Err("nothing to save".into());
+    }
+    // The name is built by us, but it reaches this function as a string, so it
+    // is checked rather than trusted: no separators, no traversal, no surprises
+    // about which directory this ends up writing to.
+    if name.is_empty()
+        || name.len() > 80
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        || name.contains("..")
+    {
+        return Err("bad filename".into());
+    }
+
+    let dir = data_dir(&app)?.join("LoafPlus").join("Recaps");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(name);
+    std::fs::write(&path, png).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// The running build's version.
 ///
 /// Read from the binary's own package info rather than passed in from the
@@ -1091,6 +1131,7 @@ pub fn run() {
             start_drag,
             close_dashboard,
             app_version,
+            save_recap,
             cursor_pos,
             open_star,
             open_feedback,
