@@ -143,6 +143,20 @@ export const PLUS_CSS = `
 
   /* The gestures. Nothing here is discoverable by looking at a cat, and until
      now the only place any of it was written down was a source comment. */
+  /* What Loaf noticed. Sits directly under the total, because a sentence about
+     the number is more use than the number, and reads as the character
+     speaking rather than as another panel of statistics. */
+  .noticed { margin:2px 0 6px; }
+  .noticed-line {
+    font-size:13px; line-height:1.5; color:var(--ink); margin:0 0 3px;
+    padding-left:13px; position:relative;
+  }
+  .noticed-line::before {
+    content:""; position:absolute; left:0; top:8px;
+    width:5px; height:5px; border-radius:50%; background:var(--accent-dark);
+  }
+  .noticed-line:last-child { margin-bottom:0; }
+
   .howto { list-style:none; margin:0 0 4px; padding:0; }
   .howto li {
     font-size:11.5px; line-height:1.5; color:var(--ink-soft);

@@ -289,10 +289,20 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
     let star = MenuItem::with_id(app, "star", "Star Loaf on GitHub ★", true, None::<&str>)?;
     let packs_item =
         MenuItem::with_id(app, "packs", "Draw your own character…", true, None::<&str>)?;
-    // Sends him to sleep NOW, rather than waiting for the idle threshold. The
-    // wording is the instruction, not a state — it is a button, and there is a
-    // separate one to wake him.
-    let sleep = MenuItem::with_id(app, "sleep", "Send him to sleep", true, None::<&str>)?;
+    // Sends him to sleep NOW, rather than waiting for the idle threshold.
+    //
+    // "and go quiet" is in the label because that is what it actually does, and
+    // a menu item that promises a nap while silencing your reminders is a
+    // setting pretending to be a mood. Asleep means: no nudges, no water
+    // reminder, no hyperfocus check-in, no tantrum, no sounds. He keeps
+    // tracking your time — that is the part you did not ask him to stop.
+    let sleep = MenuItem::with_id(
+        app,
+        "sleep",
+        "Send him to sleep, and go quiet",
+        true,
+        None::<&str>,
+    )?;
     let reset = MenuItem::with_id(app, "reset", "Reset today's stats", true, None::<&str>)?;
     let forget = MenuItem::with_id(app, "forget", "Forget all site data", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "About Loaf", true, None::<&str>)?;

@@ -1,3 +1,4 @@
+import { notesFor } from "../insights/notes";
 import { Tracker, formatDuration, dayKeyFor, type HistoryEntry } from "../tracker/tracker";
 import { BASE_CSS, PLUS_CSS, MINI_CSS } from "./css";
 import { TANTRUM_OPTIONS } from "./events";
@@ -289,6 +290,28 @@ function soonCard(title: string, blurb: string): string {
   );
 }
 
+/**
+ * What Loaf has noticed, above the fold.
+ *
+ * Two notes at most. The whole value of an observation is that it was worth
+ * making, and a list of six is a report — which is what the rest of this page
+ * already is. If there is nothing worth saying, this renders nothing at all
+ * rather than filling the space with an encouraging noise.
+ */
+function noticedBlock(tracker: Tracker): string {
+  const notes = notesFor({
+    today: tracker.today,
+    totalToday: tracker.totalToday,
+    hours: tracker.hourlyHistogram(),
+    history: tracker.history(30),
+  }).slice(0, 2);
+
+  if (notes.length === 0) return "";
+  return `<div class="noticed">${notes
+    .map((n) => `<p class="noticed-line">${escapeHTML(n.text)}</p>`)
+    .join("")}</div>`;
+}
+
 /** A button that asks the host to do something. See the note on inline handlers. */
 function cmdButton(cls: string, cmd: string, label: string): string {
   return `<button class="${cls}" data-loaf-cmd="${escapeHTML(cmd)}">${escapeHTML(label)}</button>`;
@@ -564,6 +587,7 @@ export function dashboardBody(
     <div class="date">${escapeHTML(dateLabel)}</div>
     <div class="total-label">Time with you today</div>
     <div class="total">${formatDuration(tracker.totalToday)}</div>
+    ${noticedBlock(tracker)}
 
     <h2>By app</h2>
     ${rows}${emptyState}

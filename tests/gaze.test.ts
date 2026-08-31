@@ -5,6 +5,7 @@ import {
   LOOKING_AHEAD,
   GAZE_RANGE_PX,
   GAZE_TRAVEL,
+  GAZE_SOCKET_DRIFT,
 } from "../src/behaviour/gaze";
 import { point } from "../src/core/types";
 
@@ -84,10 +85,24 @@ describe("easeGaze", () => {
   });
 });
 
-describe("the travel constant", () => {
-  // Eyes that swing the full width of the socket look possessed, not attentive.
-  it("keeps the pupil well inside its socket", () => {
+describe("the travel constants", () => {
+  // This test used to demand GAZE_TRAVEL < 0.5, which was my judgement about
+  // proportions rather than about pixels. Seeing it run showed the movement was
+  // invisible on a 134px character, so the real bound is the one below: the
+  // pupil must not leave the eye, which is a fact, not a taste.
+  it("never lets the pupil leave the socket", () => {
     expect(GAZE_TRAVEL).toBeGreaterThan(0);
-    expect(GAZE_TRAVEL).toBeLessThan(0.5);
+    expect(GAZE_TRAVEL).toBeLessThan(1);
+  });
+
+  it("keeps the socket itself close to home", () => {
+    // The socket is drawn on a face and cannot wander off it.
+    expect(GAZE_SOCKET_DRIFT).toBeGreaterThan(0);
+    expect(GAZE_SOCKET_DRIFT).toBeLessThan(0.5);
+  });
+
+  it("moves the pupil further than the socket", () => {
+    // Otherwise the eye slides across the head instead of looking.
+    expect(GAZE_SOCKET_DRIFT).toBeLessThan(1);
   });
 });

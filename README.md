@@ -68,8 +68,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Waits while your machine works | ✅ foreground CPU, Windows; macOS reports "no idea" |
 | Fades until you look at him | ✅ on by default, eased, solid while dragging or speaking |
 | Hover card can be switched off | ✅ closet toggle |
+| Pattern notes (Phase A) | ✅ what Loaf noticed, from measured data, no network |
+| Sleep means quiet | ✅ one gate — no nudges, no reminders, no sounds |
 
-Tests: **693 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
+Tests: **723 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
 
 **v0.2.1 released** as a pre-release, and verified by running it on Windows:
 the tracker attributing seven applications into the right hourly buckets, Reset

@@ -1,7 +1,7 @@
 import type { Color, Companion, Ctx2D, Point, SceneState } from "../core/types";
 import { blushLeft, blushRight, point, rect, insetBy, rectMidX, rectMidY } from "../core/types";
 import { css, withAlpha, WHITE } from "../core/color";
-import { GAZE_TRAVEL } from "../behaviour/gaze";
+import { GAZE_TRAVEL, GAZE_SOCKET_DRIFT } from "../behaviour/gaze";
 import { fillOval, line } from "../core/draw";
 
 /**
@@ -30,8 +30,12 @@ export function drawEyes(ctx: Ctx2D, c: Companion, s: SceneState): void {
       // a fixed socket is what looking actually is.
       const gx = (s.gaze?.x ?? 0) * 4.5 * k * GAZE_TRAVEL;
       const gy = (s.gaze?.y ?? 0) * 6 * k * GAZE_TRAVEL;
+      // The socket comes along for part of the ride. See GAZE_SOCKET_DRIFT:
+      // the pupil alone was correct anatomy and an invisible effect at 134px.
+      const sx = gx * GAZE_SOCKET_DRIFT;
+      const sy = gy * GAZE_SOCKET_DRIFT;
       for (const e of eyes) {
-        const socket = rect(e.x - 4.5 * k, e.y - 6 * k, 9 * k, 12 * k);
+        const socket = rect(e.x - 4.5 * k + sx, e.y - 6 * k + sy, 9 * k, 12 * k);
         if (p.iris) {
           // Coloured iris with a slit pupil down its middle. This is most of
           // what stops six coats of the same cat reading as one animal.

@@ -556,6 +556,9 @@ function applyCommand(cmd: unknown): void {
       // Nothing is said. A character who announces that he is going to sleep
       // has not gone to sleep.
       hush();
+      // And nothing is currently being said either — a bubble left on screen
+      // over a sleeping character is the loudest thing about him.
+      moodOverride = null;
       return;
     case "wake":
       toldToSleep = false;
@@ -624,6 +627,9 @@ async function loadUserSounds(): Promise<void> {
 }
 
 function makeNoise(occasion: Occasion): void {
+  // Silent while asleep, for the same reason. The one exception is the greeting
+  // that plays as you wake him, which is a reply to your own tap.
+  if (toldToSleep && occasion !== "greeting") return;
   sound.play(occasion);
 }
 
@@ -851,6 +857,14 @@ let sleeping = false;
 
 function say(payload: BubblePayload): void {
   if (!hasTauriHost()) return;
+  // ASLEEP MEANS QUIET. One gate, here, rather than a condition at every call
+  // site — the nudge, the water reminder, the tantrum, the finished-job line
+  // and anything added later all pass through this function, and a rule
+  // enforced in six places is a rule that will be forgotten in the seventh.
+  //
+  // The preview card is exempt: it only appears because the cursor is on him,
+  // which is a question, not an interruption.
+  if (toldToSleep && payload.kind !== "preview") return;
   void emit(BUBBLE_SHOW_EVENT, payload).catch((err) => {
     console.error("could not say that", err);
   });

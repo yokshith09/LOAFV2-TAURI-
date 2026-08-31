@@ -21,12 +21,27 @@ export const GAZE_RANGE_PX = 420;
 /**
  * How far the pupil travels inside the socket, as a fraction of its radius.
  *
- * Small on purpose. Eyes that swing the full width of the socket look
- * possessed rather than attentive, and the reference's own faces move very
- * little — the effect reads at a glance because it is a change from perfectly
- * still, not because it is large.
+ * Raised from 0.42 after seeing it run. The reasoning behind the small number
+ * was sound — eyes that swing the full width of the socket look possessed —
+ * but it was reasoning about proportions, and the thing that matters is
+ * ABSOLUTE pixels: the whole character is 134px wide, an eye is a few pixels
+ * across, and 42% of a few pixels is a movement nobody can see. A restrained
+ * effect that does not read is not restrained, it is absent.
  */
-export const GAZE_TRAVEL = 0.42;
+export const GAZE_TRAVEL = 0.72;
+
+/**
+ * How far the socket itself drifts, as a fraction of the pupil's travel.
+ *
+ * The pupil alone was the anatomically correct answer and the wrong one at this
+ * size. Letting the whole eye shift a little as well doubles the movement that
+ * actually reaches the screen, and reads as a small turn of the head rather
+ * than as an eye rolling in its socket — which is what more pupil travel alone
+ * starts to look like.
+ *
+ * Kept well under half, so the socket never leaves the face it is drawn on.
+ */
+export const GAZE_SOCKET_DRIFT = 0.3;
 
 /** A look direction, each component in -1..1. `{x:0,y:0}` is straight ahead. */
 export interface Gaze {
