@@ -99,7 +99,7 @@ pub fn foreground_cpu() -> Option<f64> {
 }
 
 #[cfg(windows)]
-mod cpu {
+pub mod cpu {
     use windows::Win32::Foundation::{CloseHandle, FILETIME};
     use windows::Win32::System::Threading::{
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -153,18 +153,94 @@ mod cpu {
 }
 
 #[cfg(target_os = "macos")]
-mod cpu {
-    /// Not built yet. Reports "no idea", which the caller already handles, so
-    /// the Mac simply never shows the waiting pose rather than showing a wrong
-    /// one. Wiring it up means `proc_pid_rusage` and a second sample, the same
-    /// shape as the Windows side.
+pub mod cpu {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// The frontmost pid, as last seen by the foreground probe.
+    ///
+    /// Remembered rather than looked up here on purpose. Finding the frontmost
+    /// application on macOS costs an `osascript` subprocess, the probe already
+    /// pays for one every tick, and sampling CPU twice would otherwise pay for
+    /// two more. 0 means "not known yet", not "process 0".
+    static FRONTMOST_PID: AtomicU32 = AtomicU32::new(0);
+
+    pub(super) fn note_frontmost(pid: u32) {
+        FRONTMOST_PID.store(pid, Ordering::Relaxed);
+    }
+
+    /// `RUSAGE_INFO_V2`, which carries the two counters we want and is
+    /// available on every macOS version Loaf supports.
+    const RUSAGE_INFO_V2: i32 = 2;
+
+    /// The head of `rusage_info_v2`, up to the fields actually read.
+    ///
+    /// Declared as a fixed buffer rather than a mirrored struct: the real
+    /// layout has thirty-odd fields, transcribing all of them is thirty
+    /// chances to be wrong about padding, and only two are wanted. The kernel
+    /// fills what it fills; we read the two `u64`s at their documented offsets.
+    ///
+    /// Layout, from `<libproc.h>`:
+    ///
+    /// ```c
+    /// struct rusage_info_v0 {
+    ///     uint8_t  ri_uuid[16];      // buf[0], buf[1]
+    ///     uint64_t ri_user_time;     // buf[2]
+    ///     uint64_t ri_system_time;   // buf[3]
+    ///     ...
+    /// ```
+    ///
+    /// The UUID is 16 bytes — exactly two `u64`s — and the two counters follow
+    /// it immediately, so they are at indices 2 and 3 of the `u64` view.
+    const RI_U64_LEN: usize = 32;
+    const RI_USER_TIME: usize = 2;
+    const RI_SYSTEM_TIME: usize = 3;
+
+    #[link(name = "proc", kind = "dylib")]
+    extern "C" {
+        fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut u8) -> i32;
+    }
+
+    /// Nanoseconds of CPU this process has burned, user plus system.
+    fn busy_nanos(pid: u32) -> Option<u64> {
+        if pid == 0 {
+            return None;
+        }
+        // Over-allocated deliberately: rusage_info_v2 is smaller than this, and
+        // a buffer that is too large cannot be overrun by a kernel that writes
+        // the smaller struct. A buffer that is too small could.
+        let mut buf = [0u64; RI_U64_LEN];
+        let rc = unsafe { proc_pid_rusage(pid as i32, RUSAGE_INFO_V2, buf.as_mut_ptr() as *mut u8) };
+        if rc != 0 {
+            // Non-zero means the kernel refused — most often because the
+            // process is gone, or is owned by another user. "No idea", not
+            // "not busy".
+            return None;
+        }
+        Some(buf[RI_USER_TIME].wrapping_add(buf[RI_SYSTEM_TIME]))
+    }
+
     pub fn foreground_cpu() -> Option<f64> {
-        None
+        let pid = FRONTMOST_PID.load(Ordering::Relaxed);
+        let first = busy_nanos(pid)?;
+        let window = std::time::Duration::from_millis(240);
+        std::thread::sleep(window);
+        // Re-read the pid: the frontmost application can change during the
+        // sample, and comparing two different processes' counters would report
+        // a nonsense rate rather than nothing.
+        if FRONTMOST_PID.load(Ordering::Relaxed) != pid {
+            return None;
+        }
+        let second = busy_nanos(pid)?;
+        if second < first {
+            return None;
+        }
+        let seconds = (second - first) as f64 / 1_000_000_000.0;
+        Some(seconds / window.as_secs_f64() * 100.0)
     }
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-mod cpu {
+pub mod cpu {
     pub fn foreground_cpu() -> Option<f64> {
         None
     }

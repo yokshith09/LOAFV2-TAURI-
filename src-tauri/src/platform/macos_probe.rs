@@ -71,21 +71,35 @@ impl PlatformProbe for MacProbe {
         // Ask for the name only. We do not ask for windows, titles, or
         // documents — the tracker has no business knowing what you have open,
         // only which app it is.
-        const SCRIPT: &str = r#"tell application "System Events" to get name of first application process whose frontmost is true"#;
+        // Name and unix id in ONE script. Still no windows, titles or documents
+        // — the tracker has no business knowing what you have open, only which
+        // app it is. The pid is asked for here rather than in a second script
+        // because `osascript` costs a subprocess, and the CPU probe needs a pid
+        // it can sample twice without paying that twice.
+        const SCRIPT: &str = r#"tell application "System Events" to tell (first application process whose frontmost is true) to return name & "
+" & (unix id as text)"#;
 
-        let Some(name) = run_with_timeout("/usr/bin/osascript", &["-e", SCRIPT])? else {
+        let Some(out) = run_with_timeout("/usr/bin/osascript", &["-e", SCRIPT])? else {
             return Ok(None);
         };
+        let mut lines = out.splitn(2, '
+');
+        let name = lines.next().unwrap_or("").trim().to_string();
         if name.is_empty() {
             return Ok(None);
         }
+        let pid: u32 = lines.next().unwrap_or("").trim().parse().unwrap_or(0);
+
+        // Remembered for the CPU probe, which runs on its own schedule and must
+        // not spawn a second osascript to ask the same question.
+        super::cpu::note_frontmost(pid);
 
         Ok(Some(ForegroundApp {
             name: display_name(&name),
             raw: name,
-            // System Events does not hand back a pid cheaply, and nothing in
-            // Phase 0 needs one. Zero means "not collected", not "process 0".
-            pid: 0,
+            // Zero still means "not collected", not "process 0" — the parse
+            // above falls back to it rather than guessing.
+            pid,
         }))
     }
 
