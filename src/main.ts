@@ -91,7 +91,12 @@ import type { OnboardingStep, OnboardingPlatform } from "./onboarding/view";
 import { isOccasion, type Occasion } from "./sound/voice";
 import { unavailableRadar, type RadarSnapshot } from "./dashboard/html";
 import { RADAR_STATE_EVENT, RADAR_HELLO_EVENT } from "./dashboard/events";
-import { WaterGuide, WATER_PROMPTS } from "./behaviour/water";
+import {
+  WaterGuide,
+  WATER_PROMPTS,
+  HyperfocusWatch,
+  HYPERFOCUS_PROMPTS,
+} from "./behaviour/water";
 import { gazeToward, easeGaze, LOOKING_AHEAD, type Gaze } from "./behaviour/gaze";
 import {
   ALL_MOODS,
@@ -417,6 +422,10 @@ let lastTickResult = "starting";
 /** The water reminder, on its own clock. See `water.ts` for why it is separate. */
 const water = new WaterGuide();
 const waterPrompts = new PromptRotation(WATER_PROMPTS);
+
+/** Notices a very long unbroken stretch, and mentions it once. */
+const hyperfocus = new HyperfocusWatch();
+const hyperfocusPrompts = new PromptRotation(HYPERFOCUS_PROMPTS);
 
 /**
  * Sent to sleep by hand, and staying there until told otherwise.
@@ -892,7 +901,14 @@ function tickWander(
   // — leash, screen clamping, abort-on-drag — and only changes the dials, so
   // drift inherits every guarantee the geometry was tested for rather than
   // opening a second way for a window to end up off-screen.
-  const drifting = companion.drifts && behaviour.drifting;
+  // "Wander around the screen" is the MASTER switch, and drift is a style of
+  // wandering rather than an exception to it.
+  //
+  // It was not, and the bug was exactly what you would predict: drift defaults
+  // ON, so a drifting character kept walking after the user had turned the one
+  // obvious control off. Two independent switches where the user reasonably
+  // reads one as "does he move" is a bug even when both behave as written.
+  const drifting = behaviour.wandering && companion.drifts && behaviour.drifting;
   wander.linear = drifting;
   const leash = drifting ? behaviour.driftLeash : behaviour.wanderLeash;
   const speed = drifting ? behaviour.driftSpeed : behaviour.wanderSpeed;
@@ -1334,7 +1350,20 @@ async function pollPlatform(): Promise<void> {
       moodOverride !== null ||
       toldToSleep ||
       lastTickResult === "idle";
-    if (water.askNow(busy)) {
+    // Asked BEFORE water, and it suppresses it: two reminders in the same tick
+    // is one companion talking over itself. This is the rarer and larger of the
+    // two, so it wins the moment they collide.
+    const idled = lastTickResult === "idle";
+    const checkIn = hyperfocus.tick(idled ? 0 : TICK_INTERVAL, idled);
+    if (checkIn && !busy) {
+      say({
+        kind: "speech",
+        text: hyperfocusPrompts.next(),
+        seconds: BREAK_BUBBLE_SECONDS,
+      });
+    }
+
+    if (water.askNow(busy || checkIn)) {
       say({ kind: "speech", text: waterPrompts.next(), seconds: BREAK_BUBBLE_SECONDS });
     }
 

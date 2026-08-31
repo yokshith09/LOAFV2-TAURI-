@@ -121,3 +121,72 @@ export class WaterGuide {
     this.dayKey = this.today();
   }
 }
+
+// --- Hyperfocus ---------------------------------------------------------------
+
+/**
+ * How long unbroken before he asks.
+ *
+ * Ninety minutes, not sixty: an hour is a normal stretch of work and being
+ * asked about it is nagging. Ninety is past the point where most people have
+ * lost track, which is the thing worth noticing — and it is roughly one
+ * ultradian cycle, which is where the round number came from.
+ */
+export const HYPERFOCUS_SECONDS = 90 * 60;
+
+/**
+ * Asked once, gently, and then not again for a long while.
+ *
+ * The value of noticing that someone has been at it for ninety minutes is
+ * entirely in it being rare. A reminder that arrives every ninety minutes for
+ * eight hours is an alarm clock, and the fourth one gets the app closed.
+ */
+export const HYPERFOCUS_PROMPTS: readonly string[] = [
+  "You've been at it for a while. Need a break?",
+  "That's a long stretch. Worth standing up?",
+  "Still going. Want to stop for a minute?",
+];
+
+/**
+ * Continuous active use, and whether it is worth mentioning.
+ *
+ * Counts ACTIVE seconds, not elapsed ones: a machine sitting idle for an hour
+ * has not been focused for an hour, and treating it as though it had is how a
+ * check-in arrives about work nobody did. Any real break resets it, which is
+ * the point — the streak is what it claims to be.
+ */
+export class HyperfocusWatch {
+  private streak = 0;
+  private asked = false;
+
+  constructor(private readonly thresholdSeconds = HYPERFOCUS_SECONDS) {}
+
+  /** Seconds of unbroken activity so far. */
+  get continuousSeconds(): number {
+    return this.streak;
+  }
+
+  /**
+   * @param activeSeconds seconds of activity this tick, or 0 when idle.
+   * @param breakTaken true when the user has plainly stopped — an idle stretch,
+   *   or a focus session ending. Resets the streak and re-arms the question.
+   */
+  tick(activeSeconds: number, breakTaken: boolean): boolean {
+    if (breakTaken) {
+      this.streak = 0;
+      this.asked = false;
+      return false;
+    }
+    this.streak += activeSeconds;
+    if (this.asked || this.streak < this.thresholdSeconds) return false;
+    // Asked once per streak. Only a real break arms it again, so someone who
+    // works straight through four hours is asked once, not four times.
+    this.asked = true;
+    return true;
+  }
+
+  reset(): void {
+    this.streak = 0;
+    this.asked = false;
+  }
+}

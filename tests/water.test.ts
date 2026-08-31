@@ -118,3 +118,53 @@ describe("WaterGuide", () => {
     expect(new Set(seen).size).toBe(WATER_PROMPTS.length);
   });
 });
+
+import { HyperfocusWatch, HYPERFOCUS_SECONDS, HYPERFOCUS_PROMPTS } from "../src/behaviour/water";
+
+describe("HyperfocusWatch", () => {
+  const MIN = 60;
+
+  it("says nothing for a normal stretch of work", () => {
+    const w = new HyperfocusWatch(90 * MIN);
+    for (let i = 0; i < 60; i++) expect(w.tick(MIN, false)).toBe(false);
+    expect(w.continuousSeconds).toBe(60 * MIN);
+  });
+
+  it("asks once the streak is long enough", () => {
+    const w = new HyperfocusWatch(90 * MIN);
+    let asked = false;
+    for (let i = 0; i < 90; i++) asked = w.tick(MIN, false) || asked;
+    expect(asked).toBe(true);
+  });
+
+  // Someone who works straight through four hours is asked once, not four times.
+  it("asks once per streak, however long it runs", () => {
+    const w = new HyperfocusWatch(90 * MIN);
+    let count = 0;
+    for (let i = 0; i < 240; i++) if (w.tick(MIN, false)) count++;
+    expect(count).toBe(1);
+  });
+
+  it("re-arms after a real break", () => {
+    const w = new HyperfocusWatch(90 * MIN);
+    let count = 0;
+    for (let i = 0; i < 90; i++) if (w.tick(MIN, false)) count++;
+    w.tick(0, true);
+    expect(w.continuousSeconds).toBe(0);
+    for (let i = 0; i < 90; i++) if (w.tick(MIN, false)) count++;
+    expect(count).toBe(2);
+  });
+
+  // A machine idle for an hour has not been focused for an hour.
+  it("counts active seconds, not elapsed ones", () => {
+    const w = new HyperfocusWatch(90 * MIN);
+    for (let i = 0; i < 200; i++) w.tick(0, false);
+    expect(w.continuousSeconds).toBe(0);
+  });
+
+  it("is ninety minutes by default, and has something to say", () => {
+    expect(HYPERFOCUS_SECONDS).toBe(90 * 60);
+    expect(HYPERFOCUS_PROMPTS.length).toBeGreaterThan(1);
+    expect(HYPERFOCUS_PROMPTS[0]).toContain("break");
+  });
+});

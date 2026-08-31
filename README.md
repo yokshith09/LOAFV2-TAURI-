@@ -62,8 +62,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Version shown in the app | ✅ dashboard footer |
 | Radar settings persist | ✅ and fail closed — a corrupt value can only switch it OFF |
 | Right-click the character | ✅ the same menu the tray shows, one definition |
+| Hyperfocus check-in | ✅ asks once after 90 minutes unbroken, re-armed only by a real break |
+| Wander is one switch | ✅ drift no longer moves the window with wandering off |
 
-Tests: **667 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
+Tests: **673 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
 
 **v0.2.1 released** as a pre-release, and verified by running it on Windows:
 the tracker attributing seven applications into the right hourly buckets, Reset
