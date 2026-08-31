@@ -88,85 +88,98 @@ jobs:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           releaseName: "Loaf ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
           releaseBody: |
-            Early test build. A small cat sits on your desktop.
+            **A small desktop pet that quietly tracks where your time goes.**
 
-            ---
+            He sits in the corner of your screen. Click him to see your day;
+            leave him alone and he gets on with his own life.
 
-            ## ⚠️ macOS — DO NOT DOUBLE-CLICK IT
+            ## Download
 
-            This app is **not signed by Apple yet**. If you double-click it,
-            macOS says *"Loaf cannot be opened because the developer cannot be
-            verified"* and only offers you **Cancel**. The app is fine — macOS
-            just cannot confirm who built it.
+            | | |
+            |---|---|
+            | **macOS** | `Loaf_${{ steps.ver.outputs.v }}_universal.dmg` — one file for Apple Silicon and Intel |
+            | **Windows** | `Loaf_${{ steps.ver.outputs.v }}_x64-setup.exe` |
 
-            **Download `Loaf_${{ steps.ver.outputs.v }}_universal.dmg`** (works on both Apple Silicon
-            and Intel), open it, drag **Loaf** into **Applications**, then:
+            ## First launch
 
-            **On macOS 14 (Sonoma) and earlier**
-            1. Open your **Applications** folder
+            This build is not code-signed yet, so both systems will stop you the
+            first time you open it. The app is fine — they simply cannot confirm
+            who built it. One-time steps:
+
+            <details>
+            <summary><b>macOS</b> — please do not just double-click it</summary>
+
+            Double-clicking gives you *"Loaf cannot be opened because the
+            developer cannot be verified"* and only a **Cancel** button.
+
+            Open the `.dmg`, drag **Loaf** into **Applications**, then:
+
+            **macOS 14 (Sonoma) and earlier**
+            1. Open **Applications**
             2. **Right-click** Loaf → **Open**
-            3. Click **Open** in the dialog that appears
-            4. Only needed the first time
+            3. Click **Open** in the dialog
 
-            **On macOS 15 (Sequoia) and later** — right-click → Open was removed
-            by Apple, so it must be done from Settings:
+            **macOS 15 (Sequoia) and later** — Apple removed right-click → Open, so:
             1. Double-click Loaf once. It gets blocked. This is expected.
-            2. Open **System Settings** → **Privacy & Security**
-            3. Scroll down. There is a line saying *"Loaf was blocked"* with an
-               **Open Anyway** button. Click it.
+            2. **System Settings** → **Privacy & Security**
+            3. Scroll down to *"Loaf was blocked"* → **Open Anyway**
             4. Confirm with Touch ID or your password
-            5. Only needed the first time
 
-            **If it still refuses**, run this in Terminal and try again:
+            Still refusing? In Terminal:
 
             ```
             xattr -dr com.apple.quarantine /Applications/Loaf.app
             ```
 
-            ---
+            </details>
 
-            ## Windows
+            <details>
+            <summary><b>Windows</b></summary>
 
-            Download `Loaf_${{ steps.ver.outputs.v }}_x64-setup.exe`. SmartScreen will warn because
-            the build is unsigned — click **More info** → **Run anyway**.
+            SmartScreen will warn because the build is unsigned.
+            Click **More info** → **Run anyway**.
 
-            ---
+            </details>
 
-            ## Using it
+            ## Using him
 
-            There is no window and no Dock icon. The character appears in the
-            bottom-right of your screen.
+            There is no window and no Dock or taskbar icon — he just appears in
+            the bottom-right of your screen.
 
-            - **Click** him for your screen time. **Click twice** to close it.
-            - **Right-click** him for everything else: the closet, the focus
-              timer, and the rest.
-            - **Drag** him anywhere. He stays where you drop him.
-            - **Hover** for a second to see today at a glance.
+            | | |
+            |---|---|
+            | **Click** | your screen time — **click twice** to close it |
+            | **Right-click** | everything else: the closet, the focus timer, the rest |
+            | **Drag** | put him anywhere, he stays there |
+            | **Hover** a second | today at a glance |
 
-            ## What is in this build
+            ## What is in it
 
             Screen-time tracking with a full history, eighteen characters with
             outfits and pixel art, the closet, the focus timer, speech bubbles,
-            ambient behaviour, and the privacy radar — on Windows as well as
-            macOS.
+            ambient behaviour, and the privacy radar — on Windows as well as macOS.
 
-            **Coming later:** your own sounds and hand-drawn character packs.
-            Both are labelled as such in the app.
+            *Coming later:* your own sounds and hand-drawn characters. Both are
+            labelled as such in the app.
 
             ## Privacy
 
-            Loaf makes no network calls, keeps no account and uploads nothing.
-            The privacy radar is off until you switch it on, and it reads only
-            the DOMAIN of the frontmost browser tab — never page content, never
-            a screenshot. Starring the repo is an invitation: nothing checks
-            whether you did, and no feature depends on it.
+            No network calls, no account, nothing uploaded — it all stays on your
+            machine.
+
+            The privacy radar is **off until you turn it on**. Even then it reads
+            only the DOMAIN of your frontmost browser tab (`github.com`) — never
+            page content, never a screenshot.
+
+            Starring the repo is an invitation, not a gate: nothing checks whether
+            you did, and no feature depends on it.
 
             ## Known gaps
 
             - **macOS is unverified.** It compiles and its platform code is
-              tested, but this is the first build anyone has run on a Mac.
-              Please say what breaks.
-            - Unsigned on both platforms, hence the warnings above.
+              tested, but this is the first build to reach a Mac. Please say what
+              breaks.
+            - Unsigned on both platforms, hence the steps above.
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
