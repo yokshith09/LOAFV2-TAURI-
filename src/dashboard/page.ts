@@ -8,6 +8,8 @@ import {
   COMMAND_EVENT,
   TASK_COMMAND_EVENT,
   TASKS_CHANGED_EVENT,
+  SPOKEN_EVENT,
+  SPOKEN_REPLY_EVENT,
   STATS_CHANGED_EVENT,
   RADAR_STATE_EVENT,
   RADAR_HELLO_EVENT,
@@ -116,6 +118,11 @@ root.addEventListener("click", (ev) => {
     return;
   }
 
+  if (target.closest("[data-loaf-ask]")) {
+    sendAsk();
+    return;
+  }
+
   const task = target.closest<HTMLElement>("[data-loaf-task]");
   if (task) {
     sendTask(task.dataset.loafTask!);
@@ -214,4 +221,41 @@ void listen(TASKS_CHANGED_EVENT, (e) => {
   void render();
 }).catch(() => {
   // The next render will be right regardless.
+});
+
+/**
+ * Hand a sentence to the companion.
+ *
+ * This window does not parse it. Deciding what a sentence means and then asking
+ * for that action would be a second place that knows what commands exist, and
+ * the two would drift.
+ */
+function sendAsk(): void {
+  const box = document.getElementById("ask-box") as HTMLInputElement | null;
+  const text = box?.value ?? "";
+  if (text.trim().length === 0) {
+    box?.focus();
+    return;
+  }
+  void emit(SPOKEN_EVENT, text);
+  if (box) box.value = "";
+  box?.focus();
+}
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  const el = ev.target;
+  if (el instanceof HTMLElement && el.id === "ask-box") {
+    ev.preventDefault();
+    sendAsk();
+  }
+});
+
+// What it understood, shown where the examples were. The character says it too;
+// this is for when the dashboard is what you are looking at.
+void listen(SPOKEN_REPLY_EVENT, (e) => {
+  const hint = document.getElementById("ask-reply");
+  if (hint && typeof e.payload === "string") hint.textContent = e.payload;
+}).catch(() => {
+  // The character still answers.
 });

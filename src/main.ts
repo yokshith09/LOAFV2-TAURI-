@@ -48,10 +48,19 @@ import {
   STATS_CHANGED_EVENT,
   TASK_COMMAND_EVENT,
   TASKS_CHANGED_EVENT,
+  SPOKEN_EVENT,
+  SPOKEN_REPLY_EVENT,
   isCommand,
   isTaskCommand,
 } from "./dashboard/events";
 import { TaskList, isPriority, type Priority } from "./tasks/tasks";
+import {
+  parseIntent,
+  acknowledge,
+  needsConfirmation,
+  isAffirmative,
+  type Intent,
+} from "./voice/commands";
 import { BUBBLE_SHOW_EVENT, BUBBLE_HIDE_EVENT, type BubblePayload } from "./bubble/events";
 import {
   BREAK_PROMPTS,
@@ -381,6 +390,108 @@ function usualDaySeconds(): number | null {
   if (past.length < 3) return null;
   const mid = Math.floor(past.length / 2);
   return past.length % 2 === 1 ? past[mid]! : (past[mid - 1]! + past[mid]!) / 2;
+}
+
+/**
+ * A destructive intent waiting for a yes, and when it expires.
+ *
+ * Held for a short while only. An unanswered "reset today?" that stayed armed
+ * would let an unrelated "yes" ten minutes later delete somebody's history, and
+ * a confirmation nobody remembers giving is not a confirmation.
+ */
+let pendingIntent: { intent: Intent; until: number } | null = null;
+const CONFIRM_WINDOW_MS = 30_000;
+
+/**
+ * Act on a sentence, from the command box or one day from a microphone.
+ *
+ * Everything it does routes through the same functions the menu and the
+ * dashboard call. There is no second path that could drift from the first, and
+ * nothing here can do something a button cannot.
+ */
+function applySpoken(raw: unknown): void {
+  if (typeof raw !== "string") return;
+
+  const replyWith = (text: string): void => {
+    say({ kind: "speech", text, seconds: 8 });
+    if (hasTauriHost()) void emit(SPOKEN_REPLY_EVENT, text).catch(() => {});
+  };
+
+  // An outstanding confirmation takes the next sentence, whatever it is.
+  if (pendingIntent !== null) {
+    const { intent, until } = pendingIntent;
+    pendingIntent = null;
+    if (Date.now() > until) {
+      replyWith("That took a while — ask me again if you still want it.");
+      return;
+    }
+    if (!isAffirmative(raw)) {
+      replyWith("Left it alone.");
+      return;
+    }
+    runIntent(intent);
+    return;
+  }
+
+  const intent = parseIntent(raw);
+  if (intent === null) {
+    // Says so rather than doing the closest thing. See commands.ts, rule 1.
+    replyWith("I didn't catch that.");
+    return;
+  }
+  if (needsConfirmation(intent)) {
+    pendingIntent = { intent, until: Date.now() + CONFIRM_WINDOW_MS };
+    replyWith(acknowledge(intent));
+    return;
+  }
+  replyWith(acknowledge(intent));
+  runIntent(intent);
+}
+
+function runIntent(intent: Intent): void {
+  switch (intent.kind) {
+    case "focus.start":
+      focus.setDurationMinutes(intent.minutes);
+      focus.start();
+      announceFocus();
+      break;
+    case "focus.stop":
+      if (focus.isActive) bakery.abandon();
+      focus.reset();
+      announceFocus();
+      break;
+    case "task.add":
+      tasks.add(intent.title, intent.priority, intent.minutes ?? undefined);
+      announceTasks();
+      break;
+    case "sleep":
+      applyCommand("sleep");
+      break;
+    case "wake":
+      applyCommand("wake");
+      break;
+    case "open":
+      applyCommand(
+        intent.what === "closet"
+          ? "open:closet"
+          : intent.what === "timer"
+            ? "open:focus"
+            : "open:dashboard",
+      );
+      break;
+    case "recap":
+      void saveRecap();
+      break;
+    case "report.today":
+      if (tracker) say({ kind: "speech", text: tracker.statsMessage(), seconds: 10 });
+      break;
+    case "reset.today":
+      applyCommand("reset");
+      break;
+    case "forget.sites":
+      applyCommand("sites:forget");
+      break;
+  }
 }
 
 /** Tell the closet what the state is now. It renders from this, not from storage. */
@@ -1784,6 +1895,10 @@ if (hasTauriHost()) {
   void listen(CLOSET_HELLO_EVENT, () => announceCloset()).catch(() => {
     // The closet falls back to reading storage itself.
   });
+  void listen(SPOKEN_EVENT, (e) => applySpoken(e.payload)).catch(() => {
+    // The command box is one of two ways in; the menu still works.
+  });
+
   void listen(TASK_COMMAND_EVENT, (e) => applyTaskCommand(e.payload)).catch(() => {
     // Without this the notetaker has no front door, which is how it shipped.
   });

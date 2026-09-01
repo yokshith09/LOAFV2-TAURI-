@@ -75,8 +75,10 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Tab count in context | ✅ compares against your own usual; does not name tabs |
 | Shareable weekly recap | ✅ a PNG Loaf saves — never posts, never uploads |
 | Behaviour notices | ✅ app hopping, one-app tunnel, late night, a long day |
+| Command box ("Ask Loaf") | ✅ type a sentence; the parser voice will reuse |
+| Voice recognition | ❌ not built — needs a microphone permission and a per-platform recogniser |
 
-Tests: **844 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
+Tests: **930 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
 
 **v0.2.1 released** as a pre-release, and verified by running it on Windows:
 the tracker attributing seven applications into the right hourly buckets, Reset
@@ -310,6 +312,13 @@ zero-network promise, not an oversight; see the note on it below.
 **Verified on a Mac by a person.** The macOS build compiles, its platform code
 is unit-tested, and testers have now run it — but far less of it has been
 exercised there than on Windows.
+
+**Beware when working on Windows:** roughly half the Rust here is behind
+`#[cfg(target_os = "macos")]`, and `cargo check`, `cargo clippy` and
+`cargo test` never compile any of it. A syntax error in `macos_probe.rs` passes
+every local gate silently. `cargo fmt --check` is the ONLY local command that
+parses those files — run it before every push that touched Rust, and treat a
+parse error there as a build break rather than a formatting nit.
 
 ### The zero-network promise, and what it costs
 

@@ -149,6 +149,24 @@ export const PLUS_CSS = `
   /* The task list, as it appears on the hover card. Priority is a dot rather
      than a word: three words down the left of a 190px card is a form, and the
      colour carries the same information in a quarter of the space. */
+  /* The command box. The same parser a microphone would feed one day, given a
+     surface that works today and can be tested by typing. */
+  .ask { display:flex; gap:6px; margin:2px 0 6px; }
+  .ask-input {
+    font:inherit; font-size:13px; flex:1;
+    border:1px solid var(--edge); border-radius:8px; padding:9px 11px;
+    background:var(--paper); color:var(--ink);
+  }
+  .ask-input:focus { outline:2px solid var(--accent-dark); outline-offset:1px; }
+  .ask-go {
+    font:inherit; font-size:13px; font-weight:600; cursor:pointer;
+    background:var(--accent-dark); color:var(--paper);
+    border:none; border-radius:8px; padding:9px 18px;
+  }
+  .ask-go:hover { filter:brightness(1.08); }
+  .ask-hint { font-size:11px; color:var(--ink-soft); margin:0 0 4px; line-height:1.5; }
+  .ask-hint em { font-style:normal; color:var(--ink); }
+
   /* The notetaker panel on the dashboard. Form controls sized to be usable
      without being the loudest thing on a page that is mostly about time. */
   .tp { margin:2px 0 6px; }

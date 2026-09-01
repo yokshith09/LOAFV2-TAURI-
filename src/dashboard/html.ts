@@ -707,6 +707,14 @@ export function dashboardBody(
     <div class="hours">${hourBars}</div>
     <div class="hours-axis"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>
 
+    <h2>Ask Loaf</h2>
+    <div class="ask">
+      <input id="ask-box" class="ask-input" type="text" maxlength="200"
+             placeholder="start a 25 minute focus session" aria-label="Ask Loaf to do something">
+      <button class="ask-go" data-loaf-ask="go">Go</button>
+    </div>
+    <p class="ask-hint" id="ask-reply">Try: <em>remind me to call the bank in 20 minutes</em> · <em>open the closet</em> · <em>go quiet</em></p>
+
     <h2>What you meant to do</h2>
     ${taskPanel(opts.tasks ?? [])}
 

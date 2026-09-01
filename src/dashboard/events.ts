@@ -98,6 +98,18 @@ export function isTaskCommand(v: unknown): v is TaskCommand {
 export const TASK_COMMAND_EVENT = "loaf://task";
 /** Companion -> dashboard: the current list, as the only writer sees it. */
 export const TASKS_CHANGED_EVENT = "loaf://tasks/changed";
+
+/**
+ * Dashboard -> companion: a sentence to interpret.
+ *
+ * Carries the raw text and nothing else. The companion parses it, because the
+ * companion is what can act on the result — a window that decided what a
+ * sentence meant and then asked for that action would be inventing authority it
+ * does not have.
+ */
+export const SPOKEN_EVENT = "loaf://spoken";
+/** Companion -> dashboard: what it understood, or that it did not. */
+export const SPOKEN_REPLY_EVENT = "loaf://spoken/reply";
 export type Command = (typeof COMMANDS)[number];
 
 /** Tab counts the tantrum can be set to. 0 is "never complain". */
