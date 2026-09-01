@@ -50,6 +50,54 @@ export const COMMANDS = [
   /** Draw the week as a picture and save it. Nothing is uploaded or posted. */
   "recap",
 ] as const;
+
+/**
+ * Adding and changing tasks.
+ *
+ * Separate from `Command` because these carry a payload, and validating a
+ * string against a fixed list is a different job from validating an object with
+ * user text in it. Same reason `tantrum:<n>` is handled apart from the rest.
+ */
+export interface TaskCommand {
+  readonly kind: "task";
+  readonly action: "add" | "done" | "remove" | "clear-done";
+  /** For `add`. Trimmed and length-capped by the companion, not here. */
+  readonly title?: string;
+  readonly priority?: string;
+  /** Minutes until its timer. Absent or 0 means no timer. */
+  readonly minutes?: number;
+  /** For `done` and `remove`. */
+  readonly id?: string;
+}
+
+export function isTaskCommand(v: unknown): v is TaskCommand {
+  if (typeof v !== "object" || v === null) return false;
+  const c = v as Record<string, unknown>;
+  if (c.kind !== "task") return false;
+  if (
+    c.action !== "add" &&
+    c.action !== "done" &&
+    c.action !== "remove" &&
+    c.action !== "clear-done"
+  ) {
+    return false;
+  }
+  if (c.title !== undefined && typeof c.title !== "string") return false;
+  if (c.priority !== undefined && typeof c.priority !== "string") return false;
+  if (c.id !== undefined && typeof c.id !== "string") return false;
+  if (
+    c.minutes !== undefined &&
+    (typeof c.minutes !== "number" || !Number.isFinite(c.minutes))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** Dashboard -> companion: a task was added or changed. */
+export const TASK_COMMAND_EVENT = "loaf://task";
+/** Companion -> dashboard: the current list, as the only writer sees it. */
+export const TASKS_CHANGED_EVENT = "loaf://tasks/changed";
 export type Command = (typeof COMMANDS)[number];
 
 /** Tab counts the tantrum can be set to. 0 is "never complain". */

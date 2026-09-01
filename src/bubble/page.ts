@@ -54,7 +54,10 @@ async function show(p: BubblePayload): Promise<void> {
     style.textContent = MINI_STYLES + PREVIEW_CSS;
     document.body.className = "mini";
     const tracker = new Tracker({ json: p.stats });
-    root.innerHTML = miniBody(tracker, { radar: unavailableRadar() });
+    root.innerHTML = miniBody(tracker, {
+      radar: unavailableRadar(),
+      tasks: (p.tasks ?? []) as never,
+    });
   }
 
   // Two frames: one for layout, one for the fonts and the flex pass to settle.

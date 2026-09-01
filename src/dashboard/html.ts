@@ -360,6 +360,55 @@ function taskBlock(tasks: readonly TaskView[]): string {
   return `<div class="tasks">${rows}</div>`;
 }
 
+/**
+ * The notetaker's front door.
+ *
+ * The list, priorities, timers and persistence all existed before this did, and
+ * none of it could be reached &mdash; a finished feature with no way in is worth
+ * exactly as much as an unfinished one.
+ *
+ * Plain form controls rather than anything clever: a task is a sentence, a
+ * choice from three, and optionally a number of minutes. Anything more elaborate
+ * would be a second task.
+ */
+function taskPanel(tasks: readonly TaskView[]): string {
+  const rows =
+    tasks.length === 0
+      ? `<p class="empty">Nothing on the list.</p>`
+      : tasks
+          .map((t, i) => {
+            const timer =
+              t.minutesLeft === null
+                ? ""
+                : `<span class="tp-timer">${t.minutesLeft}m</span>`;
+            return (
+              `<div class="tp-row">` +
+              `<button class="tp-tick" data-loaf-task="done:${i}" title="Mark done">✓</button>` +
+              `<span class="task-dot p-${escapeHTML(t.priority)}"></span>` +
+              `<span class="tp-title">${escapeHTML(t.title)}</span>${timer}` +
+              `<button class="tp-x" data-loaf-task="remove:${i}" title="Remove">×</button>` +
+              `</div>`
+            );
+          })
+          .join("");
+
+  return `<div class="tp">
+    ${rows}
+    <div class="tp-add">
+      <input id="tp-title" class="tp-input" type="text" maxlength="80"
+             placeholder="Something you mean to do" aria-label="New task">
+      <select id="tp-priority" class="tp-select" aria-label="Priority">
+        <option value="now">Now</option>
+        <option value="soon" selected>Soon</option>
+        <option value="whenever">Whenever</option>
+      </select>
+      <input id="tp-minutes" class="tp-mins" type="number" min="0" max="600" step="5"
+             placeholder="min" aria-label="Remind me in, minutes">
+      <button class="tp-save" data-loaf-task="add">Add</button>
+    </div>
+  </div>`;
+}
+
 /** A button that asks the host to do something. See the note on inline handlers. */
 function cmdButton(cls: string, cmd: string, label: string): string {
   return `<button class="${cls}" data-loaf-cmd="${escapeHTML(cmd)}">${escapeHTML(label)}</button>`;
@@ -657,6 +706,9 @@ export function dashboardBody(
     ${peakCallout}
     <div class="hours">${hourBars}</div>
     <div class="hours-axis"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>
+
+    <h2>What you meant to do</h2>
+    ${taskPanel(opts.tasks ?? [])}
 
     <h2>Everything else</h2>
     <div class="shelf">

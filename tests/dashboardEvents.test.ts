@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isCommand,
+  isTaskCommand,
   COMMANDS,
   COMMAND_EVENT,
   STATS_CHANGED_EVENT,
@@ -58,5 +59,30 @@ describe("sending him to sleep", () => {
   it("accepts sleep and wake", () => {
     expect(isCommand("sleep")).toBe(true);
     expect(isCommand("wake")).toBe(true);
+  });
+});
+
+describe("task commands", () => {
+  it("accepts adding a task", () => {
+    expect(isTaskCommand({ kind: "task", action: "add", title: "x", priority: "now" })).toBe(true);
+  });
+
+  it("accepts ticking and removing", () => {
+    expect(isTaskCommand({ kind: "task", action: "done", id: "0" })).toBe(true);
+    expect(isTaskCommand({ kind: "task", action: "remove", id: "2" })).toBe(true);
+  });
+
+  it("refuses anything else off the wire", () => {
+    for (const bad of [
+      null,
+      "task",
+      { kind: "task" },
+      { kind: "task", action: "drop-everything" },
+      { kind: "command", action: "add" },
+      { kind: "task", action: "add", title: 42 },
+      { kind: "task", action: "add", minutes: "soon" },
+    ]) {
+      expect(isTaskCommand(bad)).toBe(false);
+    }
   });
 });

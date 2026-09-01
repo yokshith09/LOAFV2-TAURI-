@@ -6,6 +6,8 @@ import type { RadarSnapshot } from "./html";
 import type { Platform } from "./html";
 import {
   COMMAND_EVENT,
+  TASK_COMMAND_EVENT,
+  TASKS_CHANGED_EVENT,
   STATS_CHANGED_EVENT,
   RADAR_STATE_EVENT,
   RADAR_HELLO_EVENT,
@@ -48,6 +50,14 @@ let platform: Platform = "other";
 let version = "";
 
 /**
+ * The task list, as the companion last broadcast it.
+ *
+ * Held rather than read: this window renders what it is told, and the
+ * notetaker's storage belongs to the companion like everything else with state.
+ */
+let tasks: Array<{ title: string; priority: string; minutesLeft: number | null }> = [];
+
+/**
  * What the companion last said about the radar.
  *
  * Unavailable until it answers, which is also the truthful state if it never
@@ -73,7 +83,12 @@ async function render(): Promise<void> {
 
   const tracker = new Tracker({ json });
   try {
-    root!.innerHTML = dashboardBody(tracker, { radar, platform, version });
+    root!.innerHTML = dashboardBody(tracker, {
+      radar,
+      platform,
+      version,
+      tasks: tasks as never,
+    });
   } catch (err) {
     throw err;
   }
@@ -98,6 +113,12 @@ root.addEventListener("click", (ev) => {
     for (const panel of root.querySelectorAll<HTMLElement>(".strip-panel")) {
       panel.style.display = panel.id === which ? "flex" : "none";
     }
+    return;
+  }
+
+  const task = target.closest<HTMLElement>("[data-loaf-task]");
+  if (task) {
+    sendTask(task.dataset.loafTask!);
     return;
   }
 
@@ -133,3 +154,64 @@ void detectPlatform()
   .catch(() => {
     // No companion listening; the unavailable state above stands.
   });
+
+/**
+ * Turn a click on the task panel into a command for the companion.
+ *
+ * The row buttons carry an INDEX rather than an id, because the dashboard
+ * renders from a broadcast list and has no business knowing about ids it did
+ * not invent. The companion resolves the index against the same ordered list it
+ * sent, which keeps this window a view of state rather than a second owner of
+ * it.
+ */
+function sendTask(action: string): void {
+  if (action === "add") {
+    const titleEl = document.getElementById("tp-title") as HTMLInputElement | null;
+    const priorityEl = document.getElementById("tp-priority") as HTMLSelectElement | null;
+    const minutesEl = document.getElementById("tp-minutes") as HTMLInputElement | null;
+    const title = titleEl?.value ?? "";
+    // An empty box is not a mistake worth reporting — the user pressed Add
+    // before typing, and the honest response is to do nothing visible.
+    if (title.trim().length === 0) {
+      titleEl?.focus();
+      return;
+    }
+    void emit(TASK_COMMAND_EVENT, {
+      kind: "task",
+      action: "add",
+      title,
+      priority: priorityEl?.value ?? "soon",
+      minutes: Number(minutesEl?.value ?? 0) || 0,
+    });
+    if (titleEl) titleEl.value = "";
+    if (minutesEl) minutesEl.value = "";
+    titleEl?.focus();
+    return;
+  }
+
+  const [what, index] = action.split(":", 2);
+  if ((what === "done" || what === "remove") && index !== undefined) {
+    void emit(TASK_COMMAND_EVENT, { kind: "task", action: what, id: index });
+  }
+}
+
+// Enter in the title box adds the task. Typing a sentence and reaching for the
+// mouse to commit it is the friction this feature exists to remove.
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  const el = ev.target;
+  if (el instanceof HTMLElement && el.id === "tp-title") {
+    ev.preventDefault();
+    sendTask("add");
+  }
+});
+
+// The companion owns the list; this window redraws when it says so.
+void listen(TASKS_CHANGED_EVENT, (e) => {
+  if (Array.isArray(e.payload)) {
+    tasks = e.payload as typeof tasks;
+  }
+  void render();
+}).catch(() => {
+  // The next render will be right regardless.
+});

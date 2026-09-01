@@ -27,5 +27,17 @@ export type BubblePayload =
        * lower than the one the character is standing next to.
        */
       readonly stats: string;
+      /**
+       * What is on the list, highest first.
+       *
+       * Passed for the same reason as `stats`: the companion owns the notetaker,
+       * and a bubble window that read its own copy could show a task the user
+       * ticked off a second ago.
+       */
+      readonly tasks?: ReadonlyArray<{
+        readonly title: string;
+        readonly priority: string;
+        readonly minutesLeft: number | null;
+      }>;
       readonly seconds?: number;
     };

@@ -149,6 +149,44 @@ export const PLUS_CSS = `
   /* The task list, as it appears on the hover card. Priority is a dot rather
      than a word: three words down the left of a 190px card is a form, and the
      colour carries the same information in a quarter of the space. */
+  /* The notetaker panel on the dashboard. Form controls sized to be usable
+     without being the loudest thing on a page that is mostly about time. */
+  .tp { margin:2px 0 6px; }
+  .tp-row {
+    display:flex; align-items:center; gap:8px; font-size:13px;
+    padding:7px 0; border-bottom:1px solid var(--edge);
+  }
+  .tp-row:last-of-type { border-bottom:none; }
+  .tp-tick, .tp-x {
+    font:inherit; cursor:pointer; background:none; border:1px solid var(--edge);
+    border-radius:6px; width:22px; height:22px; line-height:1; padding:0;
+    color:var(--ink-soft); flex-shrink:0;
+  }
+  .tp-tick:hover { border-color:var(--ok, #2C7355); color:#2C7355; }
+  .tp-x:hover { border-color:#C2402C; color:#C2402C; }
+  .tp-title { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tp-timer { color:var(--ink-soft); font-size:11.5px; flex-shrink:0; }
+  .tp-add { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
+  .tp-input {
+    font:inherit; font-size:12.5px; flex:1; min-width:140px;
+    border:1px solid var(--edge); border-radius:8px; padding:7px 9px;
+    background:var(--paper); color:var(--ink);
+  }
+  .tp-input:focus, .tp-select:focus, .tp-mins:focus {
+    outline:2px solid var(--accent-dark); outline-offset:1px;
+  }
+  .tp-select, .tp-mins {
+    font:inherit; font-size:12.5px; border:1px solid var(--edge);
+    border-radius:8px; padding:7px 8px; background:var(--paper); color:var(--ink);
+  }
+  .tp-mins { width:62px; }
+  .tp-save {
+    font:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+    background:var(--accent-dark); color:var(--paper);
+    border:none; border-radius:8px; padding:7px 14px;
+  }
+  .tp-save:hover { filter:brightness(1.08); }
+
   .tasks { margin-top:11px; padding-top:9px; border-top:1px solid var(--edge); }
   .task-row { display:flex; align-items:center; gap:7px; font-size:11.5px; margin-bottom:5px; }
   .task-row:last-child { margin-bottom:0; }

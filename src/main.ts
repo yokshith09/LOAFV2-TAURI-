@@ -43,7 +43,15 @@ import {
   type StatsStore,
 } from "./tracker/statsStore";
 import { emit, listen } from "@tauri-apps/api/event";
-import { COMMAND_EVENT, STATS_CHANGED_EVENT, isCommand } from "./dashboard/events";
+import {
+  COMMAND_EVENT,
+  STATS_CHANGED_EVENT,
+  TASK_COMMAND_EVENT,
+  TASKS_CHANGED_EVENT,
+  isCommand,
+  isTaskCommand,
+} from "./dashboard/events";
+import { TaskList, isPriority, type Priority } from "./tasks/tasks";
 import { BUBBLE_SHOW_EVENT, BUBBLE_HIDE_EVENT, type BubblePayload } from "./bubble/events";
 import {
   BREAK_PROMPTS,
@@ -103,6 +111,14 @@ import {
   HYPERFOCUS_PROMPTS,
 } from "./behaviour/water";
 import { gazeToward, easeGaze, LOOKING_AHEAD, type Gaze } from "./behaviour/gaze";
+import {
+  AppSwitchWatch,
+  OncePer,
+  hoppingLine,
+  tunnelLine,
+  lateNightLine,
+  overworkLine,
+} from "./insights/behaviour";
 import {
   ALL_MOODS,
   asCtx2D,
@@ -346,6 +362,24 @@ It is in ${path.replace(/^.*[\/]/, "")}, in the Recaps folder.`,
   });
 }
 
+/**
+ * The median of the days before today, or null when there are too few.
+ *
+ * The same definition the dashboard's pattern notes use, so "a long day by your
+ * standards" and "more than usual" can never disagree with each other.
+ */
+function usualDaySeconds(): number | null {
+  if (!tracker) return null;
+  const past = tracker
+    .history(30)
+    .filter((d) => d.hasData && !d.isToday)
+    .map((d) => d.total)
+    .sort((a, b) => a - b);
+  if (past.length < 3) return null;
+  const mid = Math.floor(past.length / 2);
+  return past.length % 2 === 1 ? past[mid]! : (past[mid - 1]! + past[mid]!) / 2;
+}
+
 /** Tell the closet what the state is now. It renders from this, not from storage. */
 function announceCloset(): void {
   if (!hasTauriHost()) return;
@@ -515,6 +549,18 @@ const waterPrompts = new PromptRotation(WATER_PROMPTS);
 /** Notices a very long unbroken stretch, and mentions it once. */
 const hyperfocus = new HyperfocusWatch();
 const hyperfocusPrompts = new PromptRotation(HYPERFOCUS_PROMPTS);
+
+/** Which application, how often it changed, and how long it has been the one. */
+const switches = new AppSwitchWatch();
+
+/**
+ * The gate that keeps a companion from becoming an alarm.
+ *
+ * Every behaviour note is worth hearing once and unbearable on a loop. Two
+ * hours between any two of the same kind, and they compete with each other for
+ * one slot per tick rather than queueing up.
+ */
+const behaviourGate = new OncePer(2 * 60 * 60);
 
 /**
  * Sent to sleep by hand, and staying there until told otherwise.
@@ -919,6 +965,70 @@ const workingWatch = new WorkingWatch();
 
 /** The oven and the shelf. A focus session bakes; abandoning one collapses. */
 const bakery = new Bakery(browserStore());
+
+/** The notetaker. The companion owns it, like everything else with state. */
+const tasks = new TaskList(browserStore());
+
+/**
+ * What the dashboard and the hover card are shown.
+ *
+ * Built from `visible()` so both surfaces agree, and the index a click comes
+ * back with means the same thing in both directions.
+ */
+function taskViews(): Array<{ title: string; priority: Priority; minutesLeft: number | null }> {
+  const now = Date.now();
+  return tasks.visible().map((t) => ({
+    title: t.title,
+    priority: t.priority,
+    minutesLeft:
+      t.dueAt === null ? null : Math.max(0, Math.round((t.dueAt - now) / 60_000)),
+  }));
+}
+
+/** Tell every window the list changed. */
+function announceTasks(): void {
+  if (!hasTauriHost()) return;
+  void emit(TASKS_CHANGED_EVENT, taskViews()).catch(() => {
+    // The dashboard re-reads when it next renders.
+  });
+}
+
+/**
+ * Apply a task command from the dashboard.
+ *
+ * `done` and `remove` carry an INDEX into the visible list rather than an id,
+ * because the dashboard renders from a broadcast and should not be inventing
+ * ids. Resolving it here keeps this the only place that knows what a task's
+ * identity is.
+ */
+function applyTaskCommand(raw: unknown): void {
+  if (!isTaskCommand(raw)) return;
+
+  switch (raw.action) {
+    case "add": {
+      const priority = isPriority(raw.priority) ? raw.priority : "soon";
+      const minutes =
+        typeof raw.minutes === "number" && raw.minutes > 0 ? raw.minutes : undefined;
+      const added = tasks.add(raw.title ?? "", priority, minutes);
+      if (added === null) return;
+      break;
+    }
+    case "done":
+    case "remove": {
+      const index = Number(raw.id);
+      if (!Number.isInteger(index) || index < 0) return;
+      const target = tasks.visible()[index];
+      if (target === undefined) return;
+      if (raw.action === "done") tasks.complete(target.id);
+      else tasks.remove(target.id);
+      break;
+    }
+    case "clear-done":
+      tasks.clearDone();
+      break;
+  }
+  announceTasks();
+}
 let secondsSinceScroll: number | null = null;
 const SCROLL_POLL_MS = 200;
 const PROUD_SECONDS = 6;
@@ -1337,7 +1447,7 @@ function wireInteraction(): void {
       // statistics should be able to have that, and hovering still wakes him —
       // the fade and the happy face happen either way.
       if (!behaviour.preview) return;
-      say({ kind: "preview", stats: tracker.serialize() });
+      say({ kind: "preview", stats: tracker.serialize(), tasks: taskViews() });
     }, HOVER_DWELL_MS);
   });
   canvas!.addEventListener("mouseleave", () => {
@@ -1521,6 +1631,9 @@ async function pollPlatform(): Promise<void> {
     // not be flattened into a guess on the way there.
     const idle = await invokeSafe<number | null>("idle_seconds");
     lastTickResult = tracker.tick(report.app?.name ?? null, idle ?? null);
+    // Idle ticks are not switches: coming back to the same app after lunch
+    // has not changed anything.
+    if (lastTickResult !== "idle") switches.note(report.app?.name ?? null, Date.now());
     sleeping = lastTickResult === "idle";
     if (lastTickResult === "breakDue") nudge();
 
@@ -1543,6 +1656,38 @@ async function pollPlatform(): Promise<void> {
         text: hyperfocusPrompts.next(),
         seconds: BREAK_BUBBLE_SECONDS,
       });
+    }
+
+    // At most ONE behaviour remark per tick, and only when nothing louder is
+    // happening. Ordered by how much it took to notice: a long day beats a long
+    // stretch in one app, which beats a burst of switching.
+    if (!busy && !checkIn) {
+      const nowMs = Date.now();
+      const app = switches.app;
+      const usual = usualDaySeconds();
+      const remark =
+        (usual !== null
+          ? overworkLine(tracker.totalToday, usual, formatDuration)
+          : null) ??
+        (app !== null ? tunnelLine(app, switches.streakSeconds(nowMs) / 60) : null) ??
+        hoppingLine(switches.recent(nowMs)) ??
+        lateNightLine(new Date().getHours());
+      if (remark !== null && behaviourGate.allow(remark.slice(0, 12), nowMs)) {
+        say({ kind: "speech", text: remark, seconds: BREAK_BUBBLE_SECONDS });
+      }
+    }
+
+    // A task whose timer has come up says so, whatever else is going on: you
+    // asked to be told at a particular moment, and this is that moment.
+    for (const due of tasks.due()) {
+      say({
+        kind: "speech",
+        text: `${due.title}
+— you asked me to say.`,
+        seconds: BREAK_BUBBLE_SECONDS,
+      });
+      announceTasks();
+      break;
     }
 
     if (water.askNow(busy || checkIn)) {
@@ -1610,6 +1755,10 @@ if (hasTauriHost()) {
   void listen(CLOSET_HELLO_EVENT, () => announceCloset()).catch(() => {
     // The closet falls back to reading storage itself.
   });
+  void listen(TASK_COMMAND_EVENT, (e) => applyTaskCommand(e.payload)).catch(() => {
+    // Without this the notetaker has no front door, which is how it shipped.
+  });
+
   void listen(COMMAND_EVENT, (e) => applyCommand(e.payload)).catch((err) => {
     // Not fatal — it only means the dashboard is read-only.
     console.error("dashboard commands unavailable", err);
