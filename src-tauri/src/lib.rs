@@ -23,6 +23,7 @@ pub mod packs;
 pub mod platform;
 pub mod scroll;
 pub mod sounds;
+pub mod speech;
 pub mod storage;
 
 use platform::{ForegroundApp, PlatformProbe};
@@ -910,6 +911,25 @@ fn save_recap(app: tauri::AppHandle, png: Vec<u8>, name: String) -> Result<Strin
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Listen once, and hand back what was heard.
+///
+/// Async because it BLOCKS until the recogniser decides you have stopped
+/// talking — on the main thread that would freeze the character mid-sentence,
+/// which is the same deadlock this codebase already learned about the hard way.
+///
+/// Nothing here decides what the words mean. That is `voice/commands.ts`, which
+/// is testable; this only produces the string it is given.
+#[tauri::command(async)]
+fn listen_once() -> speech::Heard {
+    speech::listen_once()
+}
+
+/// Whether to offer a microphone button at all.
+#[tauri::command]
+fn speech_available() -> bool {
+    speech::available()
+}
+
 /// The running build's version.
 ///
 /// Read from the binary's own package info rather than passed in from the
@@ -1131,6 +1151,8 @@ pub fn run() {
             start_drag,
             close_dashboard,
             app_version,
+            listen_once,
+            speech_available,
             save_recap,
             cursor_pos,
             open_star,

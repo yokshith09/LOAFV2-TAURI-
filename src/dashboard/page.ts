@@ -118,8 +118,10 @@ root.addEventListener("click", (ev) => {
     return;
   }
 
-  if (target.closest("[data-loaf-ask]")) {
-    sendAsk();
+  const ask = target.closest<HTMLElement>("[data-loaf-ask]");
+  if (ask) {
+    if (ask.dataset.loafAsk === "mic") void listenOnce();
+    else sendAsk();
     return;
   }
 
@@ -259,3 +261,62 @@ void listen(SPOKEN_REPLY_EVENT, (e) => {
 }).catch(() => {
   // The character still answers.
 });
+
+/**
+ * What the recogniser heard, as a discriminated union from Rust.
+ *
+ * Mirrored rather than shared because it crosses a language boundary; the
+ * `kind` tag is what `speech.rs` serialises.
+ */
+type Heard =
+  | { kind: "text"; text: string; confidence: string }
+  | { kind: "nothing" }
+  | { kind: "unavailable"; why: string };
+
+let listening = false;
+
+/**
+ * Listen once, then hand the words to the same place typing does.
+ *
+ * The button is the push in push-to-talk: there is no wake word and nothing
+ * listens until this runs. It is disabled while a recognition is in flight,
+ * because two overlapping recognisers is a way to get one sentence acted on
+ * twice.
+ */
+async function listenOnce(): Promise<void> {
+  if (listening) return;
+  const mic = document.getElementById("ask-mic");
+  const hint = document.getElementById("ask-reply");
+  listening = true;
+  mic?.classList.add("listening");
+  if (hint) hint.textContent = "Listening…";
+
+  try {
+    const heard = await invoke<Heard>("listen_once");
+    if (heard.kind === "text") {
+      // Straight to the companion, exactly as a typed sentence would go. The
+      // parser does not know or care which way the words arrived.
+      if (hint) hint.textContent = `Heard: “${heard.text}”`;
+      void emit(SPOKEN_EVENT, heard.text);
+    } else if (heard.kind === "nothing") {
+      if (hint) hint.textContent = "I didn't catch that.";
+    } else if (hint) {
+      hint.textContent = heard.why;
+    }
+  } catch {
+    if (hint) hint.textContent = "Speech isn't available here.";
+  } finally {
+    listening = false;
+    mic?.classList.remove("listening");
+  }
+}
+
+// The microphone button only exists where a microphone can actually be used.
+// Offering one that always fails is worse than not offering one.
+void invoke<boolean>("speech_available")
+  .then((ok) => {
+    if (ok) document.getElementById("ask-mic")?.removeAttribute("hidden");
+  })
+  .catch(() => {
+    // Stays hidden, which is the right answer.
+  });

@@ -76,7 +76,7 @@ that transparency needs a Cargo feature as well as a config flag, and that
 | Shareable weekly recap | ✅ a PNG Loaf saves — never posts, never uploads |
 | Behaviour notices | ✅ app hopping, one-app tunnel, late night, a long day |
 | Command box ("Ask Loaf") | ✅ type a sentence; the parser voice will reuse |
-| Voice recognition | ❌ not built — needs a microphone permission and a per-platform recogniser |
+| Speak to Loaf | ✅ Windows, on-device, push-to-talk — ❌ macOS not implemented |
 
 Tests: **930 frontend** (Vitest) + **51 Rust**. CI green on macOS and Windows.
 

@@ -158,6 +158,23 @@ export const PLUS_CSS = `
     background:var(--paper); color:var(--ink);
   }
   .ask-input:focus { outline:2px solid var(--accent-dark); outline-offset:1px; }
+  .ask-mic {
+    font:inherit; font-size:15px; cursor:pointer; line-height:1;
+    background:var(--paper); color:var(--ink);
+    border:1px solid var(--edge); border-radius:8px; padding:8px 11px;
+  }
+  .ask-mic:hover { border-color:var(--accent-dark); }
+  /* Listening has to be unmistakable. A microphone that is on and does not look
+     on is the single worst thing this feature could do. */
+  .ask-mic.listening {
+    background:#C2402C; color:#fff; border-color:#C2402C;
+    animation: askPulse 1.1s ease-in-out infinite;
+  }
+  @keyframes askPulse { 0%,100% { opacity:1; } 50% { opacity:.55; } }
+  @media (prefers-reduced-motion: reduce) {
+    .ask-mic.listening { animation:none; }
+  }
+
   .ask-go {
     font:inherit; font-size:13px; font-weight:600; cursor:pointer;
     background:var(--accent-dark); color:var(--paper);
