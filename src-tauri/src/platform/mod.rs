@@ -209,7 +209,8 @@ pub mod cpu {
         // a buffer that is too large cannot be overrun by a kernel that writes
         // the smaller struct. A buffer that is too small could.
         let mut buf = [0u64; RI_U64_LEN];
-        let rc = unsafe { proc_pid_rusage(pid as i32, RUSAGE_INFO_V2, buf.as_mut_ptr() as *mut u8) };
+        let rc =
+            unsafe { proc_pid_rusage(pid as i32, RUSAGE_INFO_V2, buf.as_mut_ptr() as *mut u8) };
         if rc != 0 {
             // Non-zero means the kernel refused — most often because the
             // process is gone, or is owned by another user. "No idea", not

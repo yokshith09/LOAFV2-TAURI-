@@ -280,3 +280,31 @@ describe("the shape of the feature", () => {
     expect(PRIORITIES).toHaveLength(3);
   });
 });
+
+describe("several timers coming up at once", () => {
+  // The bug this guards: the caller said the first and stopped, but due()
+  // clears the timer on every ready task — so a second reminder due in the
+  // same minute was silently swallowed. The worst possible failure for a
+  // feature whose only job is to tell you a thing at a time you chose.
+  it("reports every task that is ready, not just the first", () => {
+    const c = clock();
+    const { list } = fresh(c);
+    list.add("bread", "now", 10);
+    list.add("call back", "now", 10);
+    list.add("later thing", "now", 60);
+    c.advanceMinutes(11);
+    const ready = list.due();
+    expect(ready.map((t) => t.title).sort()).toEqual(["bread", "call back"]);
+  });
+
+  it("clears every one of them, so none fires twice", () => {
+    const c = clock();
+    const { list } = fresh(c);
+    list.add("a", "now", 5);
+    list.add("b", "now", 5);
+    c.advanceMinutes(6);
+    expect(list.due()).toHaveLength(2);
+    c.advanceMinutes(5);
+    expect(list.due()).toHaveLength(0);
+  });
+});

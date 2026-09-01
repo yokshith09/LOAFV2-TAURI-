@@ -180,3 +180,35 @@ describe("OncePer", () => {
     expect(gate.allow("late", 0)).toBe(true);
   });
 });
+
+describe("the gate must not be walked through by a changing number", () => {
+  // The bug: the caller keyed the gate on the first twelve characters of the
+  // message. Three of the four lines begin with a figure that moves, so the
+  // key moved with it and the remark re-fired every time the number ticked.
+  it("produces a different message as the number changes", () => {
+    const span = (s: number) => `${Math.round(s / 3600)}h`;
+    const a = overworkLine(9 * 3600, 2 * 3600, span)!;
+    const b = overworkLine(11 * 3600, 2 * 3600, span)!;
+    expect(a).not.toBe(b);
+    // ...which is exactly why the key cannot be derived from the text.
+    expect(a.slice(0, 12)).not.toBe(b.slice(0, 12));
+  });
+
+  it("holds when keyed on a stable kind instead", () => {
+    const gate = new OncePer(2 * 60 * 60);
+    expect(gate.allow("overwork", 0)).toBe(true);
+    // An hour later, with a different number in the message, still gated.
+    expect(gate.allow("overwork", 60 * 60 * 1000)).toBe(false);
+    expect(gate.allow("overwork", 3 * 60 * 60 * 1000)).toBe(true);
+  });
+
+  it("keeps the four kinds independent", () => {
+    const gate = new OncePer(2 * 60 * 60);
+    for (const kind of ["overwork", "tunnel", "hopping", "late"]) {
+      expect(gate.allow(kind, 0)).toBe(true);
+    }
+    for (const kind of ["overwork", "tunnel", "hopping", "late"]) {
+      expect(gate.allow(kind, 1000)).toBe(false);
+    }
+  });
+});

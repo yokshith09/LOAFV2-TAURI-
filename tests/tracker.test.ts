@@ -511,3 +511,37 @@ describe("the first recorded day", () => {
     expect(t.firstRecordedDay()).toBe("2025-11-04");
   });
 });
+
+describe("totals across a set of days", () => {
+  // Added for the weekly recap, which was reading `today` and printing it
+  // under a heading that said "my week".
+  const week = JSON.stringify({
+    "2026-08-29": { apps: { Chrome: 3600, Code: 1800 }, hours: new Array(24).fill(0), sites: {}, peakTabs: 20 },
+    "2026-08-30": { apps: { Chrome: 1800, Mail: 600 }, hours: new Array(24).fill(0), sites: {}, peakTabs: 55 },
+    "2026-08-31": { apps: { Code: 7200 }, hours: new Array(24).fill(0), sites: {}, peakTabs: 0 },
+  });
+
+  it("adds each app up across the days given", () => {
+    const t = new Tracker({ json: week });
+    const totals = t.appTotalsAcross(["2026-08-29", "2026-08-30", "2026-08-31"]);
+    expect(totals).toEqual({ Chrome: 5400, Code: 9000, Mail: 600 });
+  });
+
+  it("ignores days it was not given", () => {
+    const t = new Tracker({ json: week });
+    expect(t.appTotalsAcross(["2026-08-31"])).toEqual({ Code: 7200 });
+  });
+
+  it("skips days with no record rather than inventing a zero", () => {
+    const t = new Tracker({ json: week });
+    expect(t.appTotalsAcross(["2020-01-01"])).toEqual({});
+  });
+
+  // "Never measured" and "zero tabs" are different, and the recap has to be
+  // able to tell them apart.
+  it("reports peak tabs only for days that have one", () => {
+    const t = new Tracker({ json: week });
+    const peaks = t.peakTabsAcross(["2026-08-29", "2026-08-30", "2026-08-31"]);
+    expect(peaks).toEqual({ "2026-08-29": 20, "2026-08-30": 55 });
+  });
+});

@@ -292,6 +292,40 @@ export class Tracker {
     return out;
   }
 
+  /**
+   * Per-app seconds summed across the given days.
+   *
+   * Added for the weekly recap, which was reading `today` and printing it under
+   * a heading that said "my week" — a wrong number on the one artefact of Loaf
+   * that other people see.
+   */
+  appTotalsAcross(dayKeys: readonly string[]): Record<string, number> {
+    const totals: Record<string, number> = {};
+    for (const key of dayKeys) {
+      const record = this.days[key];
+      if (!record) continue;
+      for (const [app, seconds] of Object.entries(record.apps)) {
+        totals[app] = (totals[app] ?? 0) + seconds;
+      }
+    }
+    return totals;
+  }
+
+  /**
+   * The peak tab count recorded on each of the given days.
+   *
+   * Only days that have one appear, because "never measured" and "zero tabs"
+   * are different and the recap has to be able to tell them apart.
+   */
+  peakTabsAcross(dayKeys: readonly string[]): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const key of dayKeys) {
+      const record = this.days[key];
+      if (record && record.peakTabs > 0) out[key] = record.peakTabs;
+    }
+    return out;
+  }
+
   /** Seconds active per hour-of-day (0 = midnight), across every recorded day. */
   hourlyHistogram(): number[] {
     const buckets = new Array<number>(24).fill(0);

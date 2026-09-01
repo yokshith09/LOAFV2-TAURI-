@@ -76,14 +76,17 @@ impl PlatformProbe for MacProbe {
         // app it is. The pid is asked for here rather than in a second script
         // because `osascript` costs a subprocess, and the CPU probe needs a pid
         // it can sample twice without paying that twice.
-        const SCRIPT: &str = r#"tell application "System Events" to tell (first application process whose frontmost is true) to return name & "
-" & (unix id as text)"#;
+        // `linefeed` rather than an escape sequence: AppleScript has no `\n`,
+        // and a string literal cannot span lines there any more than it can in
+        // Rust. Both mistakes were in this line at once, and neither could be
+        // caught on Windows — this file is `cfg(target_os = "macos")`, so it is
+        // not compiled here and only `cargo fmt` noticed it would not parse.
+        const SCRIPT: &str = r#"tell application "System Events" to tell (first application process whose frontmost is true) to return name & linefeed & (unix id as text)"#;
 
         let Some(out) = run_with_timeout("/usr/bin/osascript", &["-e", SCRIPT])? else {
             return Ok(None);
         };
-        let mut lines = out.splitn(2, '
-');
+        let mut lines = out.splitn(2, '\n');
         let name = lines.next().unwrap_or("").trim().to_string();
         if name.is_empty() {
             return Ok(None);

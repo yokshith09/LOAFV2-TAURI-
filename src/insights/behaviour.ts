@@ -107,7 +107,10 @@ export class AppSwitchWatch {
  * Loaf does not know whether you were hunting for a file or falling apart, and
  * a companion that assumed the second would be wrong most of the time.
  */
-export function hoppingLine(switches: number, windowMinutes = 10): string | null {
+export function hoppingLine(
+  switches: number,
+  windowMinutes = HOPPING_WINDOW_SECONDS / 60,
+): string | null {
   if (switches < HOPPING_THRESHOLD) return null;
   return `That's ${switches} apps in ${windowMinutes} minutes. Looking for something?`;
 }

@@ -375,7 +375,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 // on the same channel — one handler for them, wherever they came
                 // from, rather than a second path that can drift from the first.
                 "recap" => send_command(app, "recap"),
-            "sleep" => send_command(app, "sleep"),
+                "sleep" => send_command(app, "sleep"),
                 "reset" => send_command(app, "reset"),
                 "forget" => send_command(app, "sites:forget"),
                 "about" => send_command(app, "about"),

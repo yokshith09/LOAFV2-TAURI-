@@ -23,7 +23,7 @@ import { ScrollEnergy } from "./behaviour/scroll";
 import { WorkingWatch, WORTH_MENTIONING_SECONDS } from "./behaviour/working";
 import { Bakery } from "./bakery/bakery";
 import { drawLoaf } from "./render/loafDraw";
-import { collectWrapped, worthMaking } from "./wrapped/wrapped";
+import { collectWrapped, worthMaking, WEEK_DAYS } from "./wrapped/wrapped";
 import { drawCard, CARD_SIZE, CARD_SCALE, CHARACTER_BOX } from "./wrapped/card";
 import { TauriMovableWindow } from "./platform/tauriWindow";
 import { applyFit, computeFit } from "./render/scene";
@@ -294,7 +294,7 @@ function applyClosetPick(raw: unknown): void {
 async function saveRecap(): Promise<void> {
   if (!tracker) return;
 
-  const history = tracker.history(7);
+  const history = tracker.history(WEEK_DAYS);
   if (!worthMaking(history)) {
     say({
       kind: "speech",
@@ -308,8 +308,11 @@ async function saveRecap(): Promise<void> {
   const stats = collectWrapped({
     history,
     loaves: bakery.loaves,
-    appTotals: tracker.today,
-    peakTabsByDay: {},
+    // Across the WEEK, not today. This read `tracker.today` and printed it
+    // under a heading that says "my week" — the wrong number on the one thing
+    // other people see.
+    appTotals: tracker.appTotalsAcross(dayKeys),
+    peakTabsByDay: tracker.peakTabsAcross(dayKeys),
     dayKeys,
   });
   if (stats === null) return;
@@ -1665,29 +1668,55 @@ async function pollPlatform(): Promise<void> {
       const nowMs = Date.now();
       const app = switches.app;
       const usual = usualDaySeconds();
-      const remark =
-        (usual !== null
-          ? overworkLine(tracker.totalToday, usual, formatDuration)
-          : null) ??
-        (app !== null ? tunnelLine(app, switches.streakSeconds(nowMs) / 60) : null) ??
-        hoppingLine(switches.recent(nowMs)) ??
-        lateNightLine(new Date().getHours());
-      if (remark !== null && behaviourGate.allow(remark.slice(0, 12), nowMs)) {
-        say({ kind: "speech", text: remark, seconds: BREAK_BUBBLE_SECONDS });
+      // Each candidate carries a STABLE kind, and the gate keys on that.
+      //
+      // It used to key on the first twelve characters of the message, which
+      // three of these four lines begin with a number that moves: "4h 30m
+      // today" and "4h 45m today" are different keys, so the long-day remark
+      // re-fired every time the figure ticked. A gate that a changing number
+      // walks straight through is not a gate, and the failure it let through is
+      // exactly the one it exists to prevent.
+      const candidates: ReadonlyArray<readonly [string, string | null]> = [
+        ["overwork", usual !== null ? overworkLine(tracker.totalToday, usual, formatDuration) : null],
+        ["tunnel", app !== null ? tunnelLine(app, switches.streakSeconds(nowMs) / 60) : null],
+        ["hopping", hoppingLine(switches.recent(nowMs))],
+        ["late", lateNightLine(new Date().getHours())],
+      ];
+      for (const [kind, remark] of candidates) {
+        if (remark === null) continue;
+        if (behaviourGate.allow(kind, nowMs)) {
+          say({ kind: "speech", text: remark, seconds: BREAK_BUBBLE_SECONDS });
+        }
+        // One per tick either way: a remark that is gated does not hand its
+        // turn to the next one down, or a quiet kind would speak on behalf of
+        // a loud one every two hours.
+        break;
       }
     }
 
     // A task whose timer has come up says so, whatever else is going on: you
     // asked to be told at a particular moment, and this is that moment.
-    for (const due of tasks.due()) {
+    //
+    // `due()` clears the timer on EVERY ready task, so every one of them has to
+    // be accounted for here. An earlier version said the first and stopped,
+    // which silently swallowed a second reminder that came up in the same
+    // minute — the worst possible failure for a feature whose only job is to
+    // tell you a thing at a time you chose.
+    const ready = tasks.due();
+    if (ready.length > 0) {
+      const first = ready[0]!;
+      const others =
+        ready.length > 1
+          ? `
+(and ${ready.length - 1} more just came up)`
+          : "";
       say({
         kind: "speech",
-        text: `${due.title}
-— you asked me to say.`,
+        text: `${first.title}
+— you asked me to say.${others}`,
         seconds: BREAK_BUBBLE_SECONDS,
       });
       announceTasks();
-      break;
     }
 
     if (water.askNow(busy || checkIn)) {
