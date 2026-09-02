@@ -22,6 +22,7 @@ pub mod browser;
 pub mod browser_windows;
 pub mod control;
 pub mod mcp;
+pub mod mcp_client;
 pub mod packs;
 pub mod platform;
 pub mod scroll;
@@ -1049,6 +1050,27 @@ fn wake_listening() -> bool {
     wake::is_listening()
 }
 
+/// Write the meeting log where the MCP server can read it.
+///
+/// Meetings live in the companion window's storage, which is inside the
+/// webview and invisible to anything else. Writing them beside stats.json is
+/// what makes "when were my meetings" answerable by an assistant \u2014 without
+/// it, the MCP server would have nothing to say about them.
+///
+/// The log holds when a call happened, where, how long, and whatever the user
+/// typed. No audio, no participants, no titles. See meetings/meetings.ts.
+#[tauri::command(async)]
+fn save_meetings(app: tauri::AppHandle, json: String) -> Result<(), String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .data_dir()
+        .map_err(|e| e.to_string())?
+        .join("LoafPlus");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("meetings.json"), json).map_err(|e| e.to_string())
+}
+
 /// Whether to offer a microphone button at all.
 ///
 /// Async because answering now means compiling a real constraint, which is the
@@ -1294,6 +1316,7 @@ pub fn run() {
             press_keys,
             clickables,
             click_element,
+            save_meetings,
             start_wake,
             stop_wake,
             wake_listening,

@@ -1,5 +1,9 @@
 [package]
 name = "loaf"
+# There are two binaries now (the app and the MCP server), so cargo has to
+# be told which one `cargo run` means. Without this, `tauri dev` and the
+# release build both stop with "could not determine which binary to run".
+default-run = "loaf"
 version = "0.2.1"
 description = "Loaf — a private desktop companion"
 authors = ["Loaf"]

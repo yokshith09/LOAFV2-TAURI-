@@ -81,6 +81,25 @@ fn tools() -> Value {
             }
         },
         {
+            "name": "recent_meetings",
+            "description":
+                "Calls the user has been in recently: where, how long, and any \
+                 notes they typed. Loaf notices meetings from which application \
+                 is in the foreground. IT DOES NOT RECORD OR TRANSCRIBE THEM \
+                 and holds nothing anyone else said.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "How many, 1 to 50. Defaults to 10.",
+                        "minimum": 1,
+                        "maximum": 50
+                    }
+                }
+            }
+        },
+        {
             "name": "busiest_hours",
             "description":
                 "Which hours of today the user was most at the machine. Useful \
@@ -88,6 +107,16 @@ fn tools() -> Value {
             "inputSchema": { "type": "object", "properties": {} }
         }
     ])
+}
+
+fn read_meetings() -> Vec<mcp::Meeting> {
+    let Some(dir) = data_dir() else {
+        return Vec::new();
+    };
+    match std::fs::read_to_string(dir.join("LoafPlus").join("meetings.json")) {
+        Ok(text) => mcp::parse_meetings(&text),
+        Err(_) => Vec::new(),
+    }
 }
 
 fn newest_date(history: &mcp::History) -> Option<String> {
@@ -118,6 +147,14 @@ fn call(name: &str, args: &Value) -> String {
                 .map(|d| mcp::describe_day(d, &history[d], with_sites))
                 .collect::<Vec<_>>()
                 .join("\n\n")
+        }
+        "recent_meetings" => {
+            let limit = args
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(10)
+                .clamp(1, 50) as usize;
+            mcp::describe_meetings(&read_meetings(), limit)
         }
         "busiest_hours" => match newest_date(&history) {
             None => "Nothing has been recorded yet.".into(),

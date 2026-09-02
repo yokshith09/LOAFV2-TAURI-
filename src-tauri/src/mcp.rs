@@ -199,6 +199,80 @@ pub fn describe_hours(day: &Day) -> String {
         .join("\n")
 }
 
+/// One meeting, as the app writes it. Mirrors `Meeting` in meetings.ts.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct Meeting {
+    #[serde(default)]
+    pub where_: String,
+    #[serde(default)]
+    pub started_at: f64,
+    #[serde(default)]
+    pub seconds: f64,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// Parse the meeting log, tolerating anything odd in it.
+///
+/// The frontend writes `where`, which is a Rust keyword, so the field is
+/// renamed here rather than in the TypeScript — the file format belongs to the
+/// app, and bending it to suit this language would be the wrong way round.
+pub fn parse_meetings(json: &str) -> Vec<Meeting> {
+    #[derive(serde::Deserialize)]
+    struct Raw {
+        #[serde(default, rename = "where")]
+        where_: String,
+        #[serde(default, rename = "startedAt")]
+        started_at: f64,
+        #[serde(default)]
+        seconds: f64,
+        #[serde(default)]
+        notes: Vec<String>,
+    }
+    let Ok(raw) = serde_json::from_str::<Vec<Raw>>(json) else {
+        return Vec::new();
+    };
+    raw.into_iter()
+        .filter(|m| !m.where_.is_empty() && m.seconds.is_finite() && m.seconds > 0.0)
+        .map(|m| Meeting {
+            where_: m.where_,
+            started_at: m.started_at,
+            seconds: m.seconds,
+            notes: m.notes,
+        })
+        .collect()
+}
+
+/// The most recent meetings, as prose.
+///
+/// Says plainly what this is and is not, because an assistant reading it will
+/// otherwise assume a meeting record contains what was said.
+pub fn describe_meetings(meetings: &[Meeting], limit: usize) -> String {
+    if meetings.is_empty() {
+        return "No meetings recorded. Loaf notices calls from which application \
+                is in front; it does not record or transcribe them."
+            .into();
+    }
+    let mut recent: Vec<&Meeting> = meetings.iter().collect();
+    recent.sort_by(|a, b| {
+        b.started_at
+            .partial_cmp(&a.started_at)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    recent.truncate(limit);
+    let mut out = String::from(
+        "Meetings Loaf noticed. These are times and the user's own typed notes \
+         — no audio was recorded and nothing was transcribed.\n",
+    );
+    for m in recent {
+        out.push_str(&format!("\n{} in {}", human(m.seconds), m.where_));
+        for note in &m.notes {
+            out.push_str(&format!("\n    note: {note}"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,6 +295,37 @@ mod tests {
             hours: vec![0.0; 9].into_iter().chain([2400.0, 1200.0]).collect(),
             sites,
         }
+    }
+
+    #[test]
+    fn parses_the_meeting_log_the_app_writes() {
+        let json = r#"[{"id":"1","where":"Zoom","startedAt":1000,"endedAt":2000,
+            "seconds":1800,"notes":["send the spec"]}]"#;
+        let meetings = parse_meetings(json);
+        assert_eq!(meetings.len(), 1);
+        assert_eq!(meetings[0].where_, "Zoom");
+        assert_eq!(meetings[0].notes, vec!["send the spec"]);
+    }
+
+    #[test]
+    fn drops_meetings_that_make_no_sense() {
+        assert!(parse_meetings("not json").is_empty());
+        assert!(parse_meetings(r#"[{"where":"","seconds":10}]"#).is_empty());
+        assert!(parse_meetings(r#"[{"where":"Zoom","seconds":0}]"#).is_empty());
+    }
+
+    // An assistant reading this will otherwise assume a meeting record holds
+    // what was said in it.
+    #[test]
+    fn says_that_nothing_was_recorded() {
+        let text = describe_meetings(&[], 5);
+        assert!(text.contains("does not record"));
+        let one =
+            parse_meetings(r#"[{"where":"Zoom","startedAt":1,"seconds":1800,"notes":["a"]}]"#);
+        let text = describe_meetings(&one, 5);
+        assert!(text.contains("nothing was transcribed"), "{text}");
+        assert!(text.contains("30m in Zoom"));
+        assert!(text.contains("note: a"));
     }
 
     #[test]

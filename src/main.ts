@@ -18,6 +18,13 @@ import { WanderController } from "./behaviour/wander";
 import { drawBall, drawSwipe } from "./behaviour/furBall";
 import { Speaker, browserSynth, saveVoice, loadVoice } from "./voice/speak";
 import { WakeGate, wakePhrases, wakeWordsFor, normaliseWakeWord } from "./voice/wake";
+import {
+  MeetingWatch,
+  loadMeetings,
+  saveMeetings,
+  describeMeeting,
+  type Meeting,
+} from "./meetings/meetings";
 import { spokenPhrases } from "./voice/phrases";
 import { usesWakeWord, NEEDS_MICROPHONE, type ListenMode } from "./voice/mode";
 import {
@@ -527,6 +534,10 @@ function runIntent(intent: Intent): void {
       break;
     case "task.add":
       tasks.add(intent.title, intent.priority, intent.minutes ?? undefined);
+      // A task written down during a call is what you said you would do in
+      // that call. It goes on the list AND on the meeting, so "what did I
+      // agree to on Tuesday" has an answer without anything being recorded.
+      meetingWatch.note(intent.title);
       announceTasks();
       break;
     case "sleep":
@@ -1223,10 +1234,16 @@ async function pollRadar(raw: string | null, name: string, seconds: number): Pro
     safari: browser.flavour === "safari",
   });
   if (!outcome) return;
+  // Remembered for the meeting watch, which needs to know a call is in a
+  // browser tab. Domain only, exactly as the radar already records it.
+  lastRadarDomain = outcome.kind === "reading" ? outcome.domain : null;
   radar.absorb(browser, name, outcome, seconds);
 }
 
 // --- Speaking ----------------------------------------------------------------
+
+/** The domain the radar last read, for spotting a call in a browser tab. */
+let lastRadarDomain: string | null = null;
 
 const breakPrompts = new PromptRotation(BREAK_PROMPTS);
 
@@ -1512,6 +1529,17 @@ function engineAvailability(): EngineAvailability {
 
 /** Set once the Windows recogniser has proved it can compile a constraint. */
 let speechAvailable = false;
+
+/**
+ * Noticing meetings, without listening to them.
+ *
+ * Fed from the same foreground sample the tracker uses, so this needs no new
+ * permission and no new kind of watching. It records that a call happened and
+ * how long it ran — never audio, never participants, never a window title.
+ * See meetings/meetings.ts.
+ */
+const meetingWatch = new MeetingWatch();
+let meetings: Meeting[] = loadMeetings(browserStore());
 
 const speaker = new Speaker(browserSynth());
 // Restored before anything can speak, so a chosen voice survives a restart.
@@ -2116,6 +2144,24 @@ async function pollPlatform(): Promise<void> {
     // Idle ticks are not switches: coming back to the same app after lunch
     // has not changed anything.
     if (lastTickResult !== "idle") switches.note(report.app?.name ?? null, Date.now());
+
+    // Meetings, from the same sample. The domain comes from the radar, which
+    // already reads the address bar, so a call in a browser tab is spotted
+    // without looking at anything new.
+    const finished = meetingWatch.see({
+      app: report.app?.name ?? "",
+      domain: lastRadarDomain,
+      at: Date.now(),
+    });
+    if (finished !== null) {
+      meetings = [...meetings, finished];
+      saveMeetings(browserStore(), meetings);
+      // Also beside stats.json, so the MCP server can answer "when were my
+      // meetings". Browser storage is invisible to anything outside the
+      // webview.
+      void invokeSafe("save_meetings", { json: JSON.stringify(meetings) });
+      say({ kind: "speech", text: `That was ${describeMeeting(finished)}.`, seconds: 8 });
+    }
     sleeping = lastTickResult === "idle";
     if (lastTickResult === "breakDue") nudge();
 
