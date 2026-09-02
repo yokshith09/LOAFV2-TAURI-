@@ -21,6 +21,7 @@ pub mod browser;
 #[cfg(windows)]
 pub mod browser_windows;
 pub mod control;
+pub mod mcp;
 pub mod packs;
 pub mod platform;
 pub mod scroll;
