@@ -7,11 +7,15 @@
  * wake word and then nothing, or says a command four minutes later, or says
  * "hey Loaf" twice. Those are cheap to test and expensive to get wrong.
  *
- * THE SHAPE IS DELIBERATELY BORING. Say the wake word, get a short window,
- * say one command. The window then closes. It does not stay open, it does not
- * extend on every utterance, and there is no conversation state — because a
- * window that quietly stays open is indistinguishable, from the outside, from
- * an assistant that is always acting on what it hears.
+ * THE SHAPE. Say the wake word, get a short window, say a command. Acting on
+ * a command RE-OPENS the window rather than closing it, so a follow-up needs
+ * no second wake word — "open Notepad" is usually followed by something else,
+ * and a wake word between every step is what makes assistants tiring.
+ *
+ * SILENCE IS WHAT CLOSES IT. The window is only ever extended by Loaf ACTING;
+ * a spell of nothing ends it. That matters, because a window that stayed open
+ * on its own would be indistinguishable, from the outside, from an assistant
+ * always acting on what it hears.
  *
  * WHAT THIS DOES NOT PROTECT AGAINST, said plainly: the microphone is open the
  * whole time this is switched on. The gate decides what is ACTED ON, not what
@@ -171,8 +175,10 @@ export class WakeGate {
     const wasAddressed = stripped !== spoken;
 
     if (wasAddressed && stripped.length > 0) {
-      this.awakeUntil = 0;
-      return { command: stripped, awake: false, justWoke: false };
+      // Addressed directly, so it acts — and then stays open for a follow-up
+      // on the same terms as any other command.
+      this.awakeUntil = this.now() + this.windowMs;
+      return { command: stripped, awake: true, justWoke: false };
     }
 
     if (isWakeWord(spoken, this.words)) {
@@ -183,9 +189,16 @@ export class WakeGate {
     }
 
     if (this.isAwake) {
-      // One command per wake. The window closes rather than extending.
-      this.awakeUntil = 0;
-      return { command: spoken, awake: false, justWoke: false };
+      // The window RE-OPENS rather than closing, so a second instruction needs
+      // no second wake word. "Open Notepad" is usually followed by something
+      // else, and making people say the wake word between every step is the
+      // thing that makes assistants tiring to use.
+      //
+      // It re-opens rather than never closing: silence still ends it after
+      // `windowMs`, so a conversation that has moved on does not leave Loaf
+      // acting on the room.
+      this.awakeUntil = this.now() + this.windowMs;
+      return { command: spoken, awake: true, justWoke: false };
     }
 
     // Heard, and deliberately ignored. This is the common case while the

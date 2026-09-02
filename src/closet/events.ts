@@ -12,6 +12,7 @@
 
 import { isHabit } from "../behaviour/habits";
 import { isListenMode, type ListenMode } from "../voice/mode";
+import { isEngineId, type EngineId, type EngineAvailability } from "../voice/engine";
 
 export const CLOSET_PICK_EVENT = "loaf://closet/pick";
 export const CLOSET_CHANGED_EVENT = "loaf://closet/changed";
@@ -37,6 +38,10 @@ export type ClosetPick =
   | { readonly kind: "voice"; readonly name: string | null }
   /** A wake word of your own. Null restores the built-in ones. */
   | { readonly kind: "wakeWord"; readonly word: string | null }
+  /** How long to hold the cursor on Loaf before the microphone opens. */
+  | { readonly kind: "hoverListenMs"; readonly ms: number }
+  /** Which recogniser to use. See voice/engine.ts. */
+  | { readonly kind: "engine"; readonly id: EngineId }
   /** An empty or whitespace-only name is how the user resets to the default. */
   | { readonly kind: "rename"; readonly name: string };
 
@@ -90,6 +95,10 @@ export interface ClosetStatePayload {
   readonly voice: string | null;
   /** The chosen wake word, or null for the built-in ones. */
   readonly wakeWord: string | null;
+  readonly hoverListenMs: number;
+  readonly engine: EngineId;
+  /** What each engine needs before it can run. */
+  readonly engineAvailability: EngineAvailability;
 }
 
 export function isClosetPick(v: unknown): v is ClosetPick {
@@ -112,6 +121,12 @@ export function isClosetPick(v: unknown): v is ClosetPick {
       return p.name === null || typeof p.name === "string";
     case "wakeWord":
       return p.word === null || typeof p.word === "string";
+    case "hoverListenMs":
+      return typeof p.ms === "number" && p.ms >= 1000 && p.ms <= 30000;
+    case "engine":
+      // Checked rather than trusted: one of these sends audio off the
+      // machine.
+      return isEngineId(p.id);
     case "rename":
       return typeof p.name === "string";
     default:

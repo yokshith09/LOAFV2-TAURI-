@@ -1,6 +1,7 @@
 import { DEFAULT_COMPANION_ID } from "../companions/registry";
 import { SEASONAL_ID } from "../outfits/registry";
 import { DEFAULT_LISTEN_MODE, type ListenMode } from "../voice/mode";
+import { DEFAULT_ENGINE, type EngineId, type EngineAvailability } from "../voice/engine";
 
 /**
  * What the closet remembers. Ported from `ClosetSettings` in the reference.
@@ -87,6 +88,9 @@ export interface ClosetState {
   readonly voice: string | null;
   /** A wake word of your own, or null for the built-in ones. */
   readonly wakeWord: string | null;
+  readonly hoverListenMs: number;
+  readonly engine: EngineId;
+  readonly engineAvailability: EngineAvailability;
 }
 
 /**
@@ -114,6 +118,13 @@ export class ClosetSettings {
   voices: readonly string[] = [];
   voice: string | null = null;
   wakeWord: string | null = null;
+  hoverListenMs = 5000;
+  engine: EngineId = DEFAULT_ENGINE;
+  engineAvailability: EngineAvailability = {
+    whisperModel: false,
+    hostedConnected: false,
+    builtinReady: false,
+  };
 
   constructor(private readonly store: SettingsStore) {}
 
@@ -129,6 +140,9 @@ export class ClosetSettings {
       voices: this.voices,
       voice: this.voice,
       wakeWord: this.wakeWord,
+      hoverListenMs: this.hoverListenMs,
+      engine: this.engine,
+      engineAvailability: this.engineAvailability,
     };
   }
 

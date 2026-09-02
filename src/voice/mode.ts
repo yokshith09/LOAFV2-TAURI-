@@ -25,8 +25,8 @@ export function isListenMode(v: unknown): v is ListenMode {
 /** Short labels, for the setting itself. */
 export const LABELS: Readonly<Record<ListenMode, string>> = {
   off: "Never",
-  push: "When I click Loaf",
-  hover: "While I hover over Loaf",
+  push: "When I press the microphone button",
+  hover: "While I hold the cursor on Loaf",
   always: "Always — listen for “Hey Loaf”",
 };
 
@@ -40,11 +40,12 @@ export const LABELS: Readonly<Record<ListenMode, string>> = {
 export const DESCRIPTIONS: Readonly<Record<ListenMode, string>> = {
   off: "The microphone is never opened. Typed commands still work.",
   push:
-    "The microphone opens for one sentence when you click Loaf, then closes. " +
-    "Audio is processed on this device.",
+    "The microphone opens for one sentence when you press the microphone " +
+    "button on the dashboard, then closes. Audio is processed on this device.",
   hover:
-    "The microphone opens while your cursor rests on Loaf and closes when it leaves. " +
-    "Audio is processed on this device.",
+    "Hovering shows the day's card. Hold the cursor there longer and the " +
+    "microphone opens, then closes when you move away. Audio is processed on " +
+    "this device.",
   always:
     "Microphone stays active and listens for your wake word. Audio is processed on this " +
     "device. Loaf can only recognise its own list of phrases, so it cannot transcribe a " +

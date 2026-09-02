@@ -20,6 +20,12 @@ import { Speaker, browserSynth, saveVoice, loadVoice } from "./voice/speak";
 import { WakeGate, wakePhrases, wakeWordsFor, normaliseWakeWord } from "./voice/wake";
 import { spokenPhrases } from "./voice/phrases";
 import { usesWakeWord, NEEDS_MICROPHONE, type ListenMode } from "./voice/mode";
+import {
+  resolveEngine,
+  leavesMachine,
+  audioLine,
+  type EngineAvailability,
+} from "./voice/engine";
 import { resolveLicence, licenceInputs } from "./behaviour/licence";
 import { HABITS, loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/habits";
 import { resolveMood } from "./behaviour/mood";
@@ -308,6 +314,21 @@ function applyClosetPick(raw: unknown): void {
       }
       return;
     }
+    case "hoverListenMs":
+      behaviour.hoverListenMs = raw.ms;
+      saveHabits(browserStore(), behaviour);
+      announceCloset();
+      return;
+    case "engine":
+      // Only ever set to something that can actually run. resolveEngine falls
+      // back to the local recogniser, never to the hosted one.
+      behaviour.engine = resolveEngine(raw.id, engineAvailability());
+      saveHabits(browserStore(), behaviour);
+      announceCloset();
+      if (leavesMachine(behaviour.engine)) {
+        say({ kind: "speech", text: audioLine(behaviour.engine), seconds: 10 });
+      }
+      return;
     case "voice":
       // Null is "let Loaf choose", which pickVoice already does.
       speaker.preferred = raw.name;
@@ -674,6 +695,9 @@ function announceCloset(): void {
   closet.voices = speaker.voices().map((v) => v.name);
   closet.voice = speaker.preferred;
   closet.wakeWord = behaviour.wakeWord;
+  closet.hoverListenMs = behaviour.hoverListenMs;
+  closet.engine = behaviour.engine;
+  closet.engineAvailability = engineAvailability();
   closetState = closet.read();
   void emit(CLOSET_CHANGED_EVENT, closetState).catch(() => {
     // The closet will still be right the next time it is opened.
@@ -1465,6 +1489,25 @@ async function syncListening(): Promise<void> {
  */
 let programNames: readonly string[] = [];
 
+/**
+ * What each recogniser needs before it can run.
+ *
+ * Whisper and the hosted engine are both listed and both unavailable: the
+ * model is not bundled yet and nothing is connected through MCP. They are
+ * shown rather than hidden so the answer to "can Loaf do dictation" is a
+ * reason rather than a silence.
+ */
+function engineAvailability(): EngineAvailability {
+  return {
+    builtinReady: speechAvailable,
+    whisperModel: false,
+    hostedConnected: false,
+  };
+}
+
+/** Set once the Windows recogniser has proved it can compile a constraint. */
+let speechAvailable = false;
+
 const speaker = new Speaker(browserSynth());
 // Restored before anything can speak, so a chosen voice survives a restart.
 speaker.preferred = loadVoice(browserStore());
@@ -1857,16 +1900,20 @@ function wireInteraction(): void {
   // `hovering` never became true — which also kept the "happy" mood rung, the
   // one the hover is supposed to trigger, permanently unreachable.
   let dwell: number | undefined;
+  /** Separate from `dwell`: the card and the microphone have different bars. */
+  let listenDwell: number | undefined;
   canvas!.addEventListener("mouseenter", () => {
     hovering = true;
-    // Hover-to-talk opens the microphone on the same dwell the preview card
-    // uses, rather than the instant the cursor crosses him: the cursor passes
-    // over the companion on its way to everything else in that corner, and a
-    // microphone that opened each time would be open most of the day.
+    // Hovering shows the card on the short dwell; LISTENING waits for a much
+    // longer hold. The cursor passes over the companion on its way to
+    // everything else in that corner, and a microphone that opened on the same
+    // dwell as the card would be open most of the day. Holding still for
+    // several seconds is a deliberate act; crossing him is not.
+    clearTimeout(listenDwell);
     if (behaviour.listenMode === "hover") {
-      window.setTimeout(() => {
+      listenDwell = window.setTimeout(() => {
         if (hovering) void listenOnce();
-      }, HOVER_DWELL_MS);
+      }, behaviour.hoverListenMs);
     }
     clearTimeout(dwell);
     dwell = window.setTimeout(() => {
@@ -1882,6 +1929,7 @@ function wireInteraction(): void {
   canvas!.addEventListener("mouseleave", () => {
     hovering = false;
     clearTimeout(dwell);
+    clearTimeout(listenDwell);
     // Only the preview follows the cursor away. A nudge you moved the mouse
     // past is a nudge you have not read yet, so it keeps its own timer.
     if (moodOverride === null) hush();
@@ -1948,14 +1996,6 @@ function wireInteraction(): void {
         return;
       }
       makeNoise("greeting");
-      // In click-to-talk the click is the microphone button, and opening the
-      // dashboard on top of it would bury the one thing you wanted to see:
-      // whether he is listening. The dashboard is still on the right-click
-      // menu, the tray, and a double tap.
-      if (behaviour.listenMode === "push") {
-        void listenOnce();
-        return;
-      }
       // Opens IMMEDIATELY. This used to wait 260ms to see whether a second tap
       // was coming, and the first Mac testers reported the click "doesn't work"
       // and rage-clicked. They were right, and the delay caused the very thing
@@ -2204,7 +2244,17 @@ if (hasTauriHost()) {
     // this particular window to fail.
   });
   void listen(ONBOARD_HELLO_EVENT, () => announceOnboarding()).catch(() => {});
-  void listen(RADAR_HELLO_EVENT, () => announceRadar()).catch(() => {
+  // A dashboard that just opened knows nothing yet. It says hello, and this is
+  // where everything it needs gets sent.
+  //
+  // Tasks were missing from this, which is why a freshly-opened dashboard said
+  // "Nothing on the list" however many notes were outstanding: the list only
+  // arrived on the next CHANGE, so the window that had never seen a change
+  // showed an empty panel and there was no way to tick anything off.
+  void listen(RADAR_HELLO_EVENT, () => {
+    announceRadar();
+    announceTasks();
+  }).catch(() => {
     // The dashboard falls back to showing the radar as unavailable.
   });
   void listen(FOCUS_HELLO_EVENT, () => announceFocus()).catch(() => {
@@ -2250,6 +2300,11 @@ if (hasTauriHost()) {
   // The program list first, then listening: starting a wake session before the
   // names arrive would compile a grammar that cannot hear "open Notepad", and
   // the grammar is fixed for the life of the session.
+  void invokeSafe<boolean>("speech_available").then((ok) => {
+    speechAvailable = ok === true;
+    announceCloset();
+  });
+
   void invokeSafe<{ name: string }[]>("list_apps").then((apps) => {
     // Voice still works for everything that is not a program name, so a null
     // here needs no message.

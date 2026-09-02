@@ -16,6 +16,7 @@ import {
 } from "./events";
 import { asCtx2D, type Outfit } from "../core/types";
 import type { ListenMode } from "../voice/mode";
+import type { EngineId } from "../voice/engine";
 
 
 /**
@@ -109,6 +110,16 @@ function render(state: ClosetState): void {
     // this is the one pick that decides whether a microphone is used.
     send({ kind: "listenMode", mode: listen.value as ListenMode });
   });
+
+  const engine = root.querySelector<HTMLSelectElement>("[data-engine]");
+  engine?.addEventListener("change", () =>
+    send({ kind: "engine", id: engine.value as EngineId }),
+  );
+
+  const hold = root.querySelector<HTMLSelectElement>("[data-hold]");
+  hold?.addEventListener("change", () =>
+    send({ kind: "hoverListenMs", ms: Number(hold.value) }),
+  );
 
   const wake = root.querySelector<HTMLInputElement>("[data-wake-word]");
   // On change rather than on every keystroke: each send restarts the speech

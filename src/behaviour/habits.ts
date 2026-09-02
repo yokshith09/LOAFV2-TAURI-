@@ -1,6 +1,7 @@
 import { defaultBehaviourSettings, type BehaviourSettings } from "./settings";
 import type { SettingsStore } from "../closet/settings";
 import { readListenMode } from "../voice/mode";
+import { readEngineId } from "../voice/engine";
 
 /**
  * The four habits a user can switch on and off, and remembering their answer.
@@ -87,6 +88,13 @@ export function loadHabits(store: SettingsStore): BehaviourSettings {
     settings.listenMode = readListenMode(saved["listenMode"]);
     const wake = saved["wakeWord"];
     settings.wakeWord = typeof wake === "string" ? wake : null;
+    const hold = saved["hoverListenMs"];
+    if (typeof hold === "number" && hold >= 1000 && hold <= 30000) {
+      settings.hoverListenMs = hold;
+    }
+    // readEngineId falls back to the local engine, never the hosted one, so
+    // a hand-edited file cannot start uploading audio.
+    settings.engine = readEngineId(saved["engine"]);
   } catch {
     // A corrupt file costs the user their four toggles, not their launch.
   }
@@ -94,10 +102,12 @@ export function loadHabits(store: SettingsStore): BehaviourSettings {
 }
 
 export function saveHabits(store: SettingsStore, settings: BehaviourSettings): void {
-  const out: Record<string, boolean | string> = {};
+  const out: Record<string, boolean | string | number> = {};
   for (const habit of HABITS) out[habit] = settings[habit];
   out["listenMode"] = settings.listenMode;
   if (settings.wakeWord !== null) out["wakeWord"] = settings.wakeWord;
+  out["hoverListenMs"] = settings.hoverListenMs;
+  out["engine"] = settings.engine;
   store.setItem(KEY, JSON.stringify(out));
 }
 

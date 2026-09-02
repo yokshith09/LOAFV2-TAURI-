@@ -6,6 +6,7 @@ import { habitsFor, HABIT_LABELS } from "../behaviour/habits";
 import { findCompanion } from "../companions/registry";
 import { LISTEN_MODES, LABELS, DESCRIPTIONS } from "../voice/mode";
 import { MAX_WAKE_LENGTH } from "../voice/wake";
+import { ENGINES, ENGINE_INFO, unavailableReason, leavesMachine } from "../voice/engine";
 
 /**
  * The closet's markup. Ported from `ClosetWindow.html`.
@@ -166,6 +167,49 @@ function voiceRow(state: ClosetState): string {
   return `<div class="voice"><select data-voice>${options}</select></div>`;
 }
 
+/**
+ * Which recogniser, and what each one costs.
+ *
+ * All three are always listed, including ones that cannot run yet, with the
+ * reason attached. Hiding an engine leaves people wondering whether Loaf can
+ * do dictation at all; showing it with "Not downloaded yet" answers that.
+ */
+function engineRow(state: ClosetState): string {
+  const options = ENGINES.map((id) => {
+    const why = unavailableReason(id, state.engineAvailability);
+    const label = why === null ? ENGINE_INFO[id].label : `${ENGINE_INFO[id].label} — ${why}`;
+    return (
+      `<option value="${escapeHTML(id)}"${id === state.engine ? " selected" : ""}` +
+      `${why === null ? "" : " disabled"}>${escapeHTML(label)}</option>`
+    );
+  }).join("");
+  const info = ENGINE_INFO[state.engine];
+  return (
+    `<div class="listen${leavesMachine(state.engine) ? " hot" : ""}">` +
+    `<select data-engine>${options}</select>` +
+    `<p class="why">${escapeHTML(info.summary)}</p>` +
+    "</div>"
+  );
+}
+
+/** How long the cursor has to rest on Loaf before the microphone opens. */
+function holdRow(state: ClosetState): string {
+  if (state.listenMode !== "hover") return "";
+  const options = HOLD_CHOICES.map(
+    (ms) =>
+      `<option value="${ms}"${ms === state.hoverListenMs ? " selected" : ""}>` +
+      `${ms / 1000} seconds</option>`,
+  ).join("");
+  return (
+    `<div class="listen"><select data-hold>${options}</select>` +
+    `<p class="why">How long to hold the cursor on Loaf before it listens. ` +
+    `The day’s card still appears straight away.</p></div>`
+  );
+}
+
+/** Offered hold times. Short enough to be usable, long enough to be deliberate. */
+const HOLD_CHOICES: readonly number[] = [2000, 3000, 5000, 8000, 12000];
+
 function habitRows(state: ClosetState): string {
   const companion = findCompanion(state.companionId);
   return habitsFor(companion.drifts)
@@ -264,7 +308,7 @@ export function closetBody(state: ClosetState): string {
   ${shelves}
 
   <h2>Habits <span class="shelf-note">what they get up to on their own</span></h2>
-  <div class="habits">${habitRows(state)}${listenRow(state)}${voiceRow(state)}${soundRow(state)}</div>
+  <div class="habits">${habitRows(state)}${listenRow(state)}${holdRow(state)}${engineRow(state)}${voiceRow(state)}${soundRow(state)}</div>
   <p class="fine">Wandering is off until you say otherwise — you put the window
   where it is, and a pet that starts crossing a screen you're working on, unasked,
   is a bug report.</p>

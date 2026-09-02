@@ -73,15 +73,39 @@ describe("WakeGate", () => {
     expect(acted.command).toBe("open notepad");
   });
 
-  // A window that quietly stays open is indistinguishable from an assistant
-  // that is always acting on what it hears.
-  it("closes the window after one command", () => {
+  // A follow-up needs no second wake word: "open Notepad" is usually followed
+  // by something else.
+  it("re-opens the window after a command instead of closing it", () => {
     const c = clock();
     const gate = new WakeGate(c.now);
     gate.heard("hey loaf");
     expect(gate.heard("open notepad").command).toBe("open notepad");
+    expect(gate.isAwake).toBe(true);
+    c.tick(2000);
+    expect(gate.heard("go quiet").command).toBe("go quiet");
+  });
+
+  // Silence is the only thing that closes it. A window extended by anything
+  // other than Loaf acting would be an assistant always acting on the room.
+  it("closes on silence, however many commands came before", () => {
+    const c = clock();
+    const gate = new WakeGate(c.now);
+    gate.heard("hey loaf");
+    gate.heard("open notepad");
+    c.tick(2000);
+    gate.heard("go quiet");
+    c.tick(COMMAND_WINDOW_MS + 1);
     expect(gate.isAwake).toBe(false);
-    expect(gate.heard("go quiet").command).toBeNull();
+    expect(gate.heard("open notepad").command).toBeNull();
+  });
+
+  it("gives a full window after each command, not the remainder", () => {
+    const c = clock();
+    const gate = new WakeGate(c.now);
+    gate.heard("hey loaf");
+    c.tick(COMMAND_WINDOW_MS - 500);
+    gate.heard("open notepad");
+    expect(gate.remainingMs).toBe(COMMAND_WINDOW_MS);
   });
 
   it("closes the window when nobody follows up", () => {
@@ -121,13 +145,14 @@ describe("WakeGate", () => {
     expect(gate.isAwake).toBe(true);
   });
 
-  it("acts on a combined phrase without leaving the window open", () => {
+  it("acts on a combined phrase and stays open for a follow-up", () => {
     const c = clock();
     const gate = new WakeGate(c.now);
     const verdict = gate.heard("hey loaf open notepad");
     expect(verdict.command).toBe("open notepad");
-    expect(verdict.awake).toBe(false);
-    expect(gate.isAwake).toBe(false);
+    expect(verdict.awake).toBe(true);
+    c.tick(1000);
+    expect(gate.heard("go quiet").command).toBe("go quiet");
   });
 
   it("can be closed early", () => {

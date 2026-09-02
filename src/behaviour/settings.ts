@@ -8,6 +8,7 @@
 
 /** An inclusive range of seconds, matching the Swift's `ClosedRange<Double>`. */
 import { DEFAULT_LISTEN_MODE, type ListenMode } from "../voice/mode";
+import { DEFAULT_ENGINE, type EngineId } from "../voice/engine";
 
 export interface SecondsRange {
   readonly min: number;
@@ -90,6 +91,16 @@ export interface BehaviourSettings {
    */
   wakeWord: string | null;
   /**
+   * How long the cursor must rest on Loaf before the microphone opens.
+   *
+   * Much longer than the preview card's dwell, and settable, because this is
+   * the difference between a deliberate hold and walking the cursor past him
+   * on the way to something else.
+   */
+  hoverListenMs: number;
+  /** Which recogniser turns speech into text. See voice/engine.ts. */
+  engine: EngineId;
+  /**
    * Barely a pause: drift is meant to look continuous, so one leg starts about
    * as soon as the last ends.
    */
@@ -129,6 +140,8 @@ export function defaultBehaviourSettings(): BehaviourSettings {
     talking: false,
     listenMode: DEFAULT_LISTEN_MODE,
     wakeWord: null,
+    hoverListenMs: 5000,
+    engine: DEFAULT_ENGINE,
     driftEvery: { min: 0.3, max: 2.0 },
     driftLeash: 330,
     driftSpeed: 17,
