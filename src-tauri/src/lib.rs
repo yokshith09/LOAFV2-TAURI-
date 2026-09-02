@@ -1145,6 +1145,36 @@ fn whisper_status(binary: String, model: String) -> Option<String> {
     transcribe::missing(&setup).map(|m| transcribe::missing_reason(&m))
 }
 
+/// The titles of the tabs open in the front browser window.
+///
+/// Titles only \u2014 what the browser writes on the tab strip, which is what you
+/// can already read by looking at the screen. No URLs, no page content.
+#[tauri::command(async)]
+fn list_tabs() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        browser_windows::list_tabs()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+/// Close one tab by title. False means it was not found.
+#[tauri::command(async)]
+fn close_tab(title: String) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        browser_windows::close_tab(&title)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = title;
+        Err("Closing tabs is Windows-only for now.".into())
+    }
+}
+
 /// Whether to offer a microphone button at all.
 ///
 /// Async because answering now means compiling a real constraint, which is the
@@ -1391,6 +1421,8 @@ pub fn run() {
             clickables,
             click_element,
             save_meetings,
+            list_tabs,
+            close_tab,
             microphone_name,
             start_recording,
             recording_seconds,

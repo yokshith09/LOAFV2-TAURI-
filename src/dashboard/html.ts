@@ -119,6 +119,10 @@ export interface DashboardOptions {
    * and the list belongs to the companion window like everything else.
    */
   readonly tasks?: readonly TaskView[];
+  /** Browser tab titles, for the panel that lets you close them. */
+  readonly tabs?: readonly string[];
+  /** False when Loaf could not read them — different from none open. */
+  readonly tabsRead?: boolean;
   /** Tabs open right now, for the tab note. Null when the browser will not say. */
   readonly tabsNow?: number | null;
   /** The most tabs seen on each past day, oldest first. */
@@ -371,6 +375,51 @@ function taskBlock(tasks: readonly TaskView[]): string {
  * choice from three, and optionally a number of minutes. Anything more elaborate
  * would be a second task.
  */
+/**
+ * The tabs open in the browser, each with a way to close it.
+ *
+ * This is the answer to "Loaf tells me I have forty tabs and I cannot do
+ * anything about it from here". It lists titles — what the browser writes on
+ * the tab strip — and never URLs or page content.
+ *
+ * Rendered empty rather than hidden when there are none, because "no tabs" and
+ * "Loaf could not read them" are different answers and the empty state says
+ * which.
+ */
+export function tabPanel(tabs: readonly string[], read: boolean): string {
+  if (!read) {
+    return '<div class="tp"><p class="empty">Loaf could not read the browser tabs.</p></div>';
+  }
+  if (tabs.length === 0) {
+    return '<div class="tp"><p class="empty">No browser tabs open.</p></div>';
+  }
+  const rows = tabs
+    .map(
+      (title, i) =>
+        `<div class="tp-row">` +
+        `<span class="tp-title">${escapeHTML(tidyTabTitle(title))}</span>` +
+        `<button class="tp-x" data-loaf-tabclose="${i}" title="Close this tab">×</button>` +
+        `</div>`,
+    )
+    .join("");
+  return `<div class="tp">${rows}</div>`;
+}
+
+/**
+ * Chrome appends its own notes to a tab's accessible name.
+ *
+ * "Gmail - Memory usage - 510 MB" is one tab and a remark Chrome is making
+ * about itself. Trimmed for reading; the untrimmed title is what gets sent
+ * back to close it, so the two cannot drift apart.
+ */
+export function tidyTabTitle(raw: string): string {
+  for (const marker of [" - Memory usage - ", " - High memory usage - "]) {
+    const at = raw.indexOf(marker);
+    if (at !== -1) return raw.slice(0, at).trim();
+  }
+  return raw.trim();
+}
+
 function taskPanel(tasks: readonly TaskView[]): string {
   const rows =
     tasks.length === 0
@@ -719,6 +768,7 @@ export function dashboardBody(
 
     <h2>What you meant to do</h2>
     ${taskPanel(opts.tasks ?? [])}
+    ${tabPanel(opts.tabs ?? [], opts.tabsRead ?? false)}
 
     <h2>Everything else</h2>
     <div class="shelf">

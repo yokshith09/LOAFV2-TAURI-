@@ -203,9 +203,292 @@ fn count_tabs(
     }
 }
 
+/// The title of every open tab in the front browser window.
+///
+/// TAB TITLES, NOT PAGE CONTENT. A tab's accessible Name is what the browser
+/// itself writes on the tab strip — the same string you can read by looking at
+/// the screen. Nothing here opens, reads or scripts a page, and the URL is not
+/// collected: the radar records the address bar of the ACTIVE tab only, and
+/// this does not extend that.
+///
+/// Empty when the front window is not a browser, which is a real answer rather
+/// than an error.
+pub fn list_tabs() -> Vec<String> {
+    imp_tabs::list().unwrap_or_default()
+}
+
+/// Close one tab by its exact title. False means it was not found.
+///
+/// Closes it the way you would: by pressing the tab's own close button through
+/// UI Automation. NOT by sending Ctrl+W, which closes whatever happens to be in
+/// front and would lose the wrong thing if the user changed tabs between asking
+/// and Loaf acting.
+pub fn close_tab(title: &str) -> Result<bool, String> {
+    imp_tabs::close(title)
+}
+
+#[cfg(windows)]
+mod imp_tabs {
+    use windows::core::{Interface, BSTR, VARIANT};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_MULTITHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
+        TreeScope_Children, TreeScope_Descendants, UIA_ButtonControlTypeId,
+        UIA_ControlTypePropertyId, UIA_InvokePatternId, UIA_NamePropertyId,
+        UIA_TabItemControlTypeId,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    struct Apartment(bool);
+
+    impl Apartment {
+        fn enter() -> Self {
+            let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+            Apartment(hr.is_ok())
+        }
+    }
+
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    /// Executables whose windows have a tab strip worth listing.
+    const BROWSERS: &[&str] = &[
+        "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "arc", "chromium",
+    ];
+
+    /// Find a BROWSER window, not the foreground one.
+    ///
+    /// The foreground window is the wrong target here and it took running it to
+    /// see why: the dashboard asking "what tabs are open" IS the foreground
+    /// window at that moment, so it would list its own. The browser is found by
+    /// executable instead, which also means the list still works while the user
+    /// is reading it rather than only while they are in the browser.
+    fn browser_window(automation: &IUIAutomation) -> Option<IUIAutomationElement> {
+        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+        use windows::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+        };
+
+        struct Hunt {
+            found: Option<HWND>,
+        }
+
+        unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let hunt = unsafe { &mut *(lparam.0 as *mut Hunt) };
+            if hunt.found.is_some() || !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+                return true.into();
+            }
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+            if pid == 0 {
+                return true.into();
+            }
+            let Ok(handle) =
+                (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+            else {
+                return true.into();
+            };
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            let got = unsafe {
+                QueryFullProcessImageNameW(
+                    handle,
+                    PROCESS_NAME_FORMAT(0),
+                    windows::core::PWSTR(buf.as_mut_ptr()),
+                    &mut len,
+                )
+            };
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
+            if got.is_err() {
+                return true.into();
+            }
+            let exe = String::from_utf16_lossy(&buf[..len as usize]).to_lowercase();
+            let stem = exe
+                .rsplit('\\')
+                .next()
+                .unwrap_or(&exe)
+                .trim_end_matches(".exe")
+                .to_string();
+            if BROWSERS.contains(&stem.as_str()) {
+                hunt.found = Some(hwnd);
+            }
+            true.into()
+        }
+
+        let mut hunt = Hunt { found: None };
+        unsafe {
+            let _ = EnumWindows(Some(visit), LPARAM(&mut hunt as *mut Hunt as isize));
+        }
+        // Falls back to the foreground window, so this still does something
+        // sensible on a machine whose browser is not on the list above.
+        let hwnd = hunt
+            .found
+            .unwrap_or_else(|| unsafe { GetForegroundWindow() });
+        if hwnd.0.is_null() {
+            return None;
+        }
+        unsafe { automation.ElementFromHandle(hwnd).ok() }
+    }
+
+    fn name_of(element: &IUIAutomationElement) -> Option<String> {
+        let value = unsafe { element.GetCurrentPropertyValue(UIA_NamePropertyId) }.ok()?;
+        let text = BSTR::try_from(&value).ok()?.to_string();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn tabs(
+        automation: &IUIAutomation,
+        root: &IUIAutomationElement,
+    ) -> Option<Vec<IUIAutomationElement>> {
+        let condition = unsafe {
+            automation
+                .CreatePropertyCondition(
+                    UIA_ControlTypePropertyId,
+                    &VARIANT::from(UIA_TabItemControlTypeId.0),
+                )
+                .ok()?
+        };
+        let found = unsafe { root.FindAll(TreeScope_Descendants, &condition) }.ok()?;
+        let length = unsafe { found.Length() }.ok()?;
+        let mut out = Vec::new();
+        for i in 0..length {
+            if let Ok(element) = unsafe { found.GetElement(i) } {
+                out.push(element);
+            }
+        }
+        Some(out)
+    }
+
+    /// A browser tab has a close button; a tab-shaped control inside a web page
+    /// does not.
+    ///
+    /// Without this, WhatsApp Web's own "All / Unread / Groups" filters came
+    /// back as browser tabs, because they are TabItems too. Listing something
+    /// Loaf cannot close is worse than not listing it — the button would be
+    /// there and do nothing.
+    fn close_button(
+        automation: &IUIAutomation,
+        tab: &IUIAutomationElement,
+    ) -> Option<IUIAutomationElement> {
+        let condition = unsafe {
+            automation
+                .CreatePropertyCondition(
+                    UIA_ControlTypePropertyId,
+                    &VARIANT::from(UIA_ButtonControlTypeId.0),
+                )
+                .ok()?
+        };
+        let found = unsafe { tab.FindAll(TreeScope_Children, &condition) }.ok()?;
+        let count = unsafe { found.Length() }.ok()?;
+        for i in 0..count {
+            let Ok(button) = (unsafe { found.GetElement(i) }) else {
+                continue;
+            };
+            if name_of(&button)
+                .unwrap_or_default()
+                .to_lowercase()
+                .contains("close")
+            {
+                return Some(button);
+            }
+        }
+        None
+    }
+
+    pub fn list() -> Option<Vec<String>> {
+        let _apartment = Apartment::enter();
+        let automation: IUIAutomation =
+            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }.ok()?;
+        let root = browser_window(&automation)?;
+        Some(
+            tabs(&automation, &root)?
+                .iter()
+                .filter(|t| close_button(&automation, t).is_some())
+                .filter_map(name_of)
+                .collect(),
+        )
+    }
+
+    pub fn close(title: &str) -> Result<bool, String> {
+        let _apartment = Apartment::enter();
+        let automation: IUIAutomation =
+            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+                .map_err(|e| e.to_string())?;
+        let Some(root) = browser_window(&automation) else {
+            return Ok(false);
+        };
+        let Some(all) = tabs(&automation, &root) else {
+            return Ok(false);
+        };
+        let Some(tab) = all
+            .into_iter()
+            .find(|t| name_of(t).as_deref() == Some(title))
+        else {
+            return Ok(false);
+        };
+
+        // The close button is a child of THIS tab. Found under the tab rather
+        // than searched for in the window, which is what makes this close the
+        // tab the user picked instead of whichever one is in front.
+        let Some(button) = close_button(&automation, &tab) else {
+            // Reported honestly rather than falling back to Ctrl+W, which would
+            // close a different tab.
+            return Err("That tab has no close button Loaf can press.".into());
+        };
+        let pattern =
+            unsafe { button.GetCurrentPattern(UIA_InvokePatternId) }.map_err(|e| e.to_string())?;
+        let invoker: IUIAutomationInvokePattern = pattern.cast().map_err(|e| e.to_string())?;
+        unsafe { invoker.Invoke() }.map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+}
+
+#[cfg(not(windows))]
+mod imp_tabs {
+    pub fn list() -> Option<Vec<String>> {
+        None
+    }
+    pub fn close(_title: &str) -> Result<bool, String> {
+        Err("Closing tabs is Windows-only for now.".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::host_of;
+
+    /// What tabs are open in whatever is in front right now.
+    ///
+    /// Ignored: it depends on a browser being the foreground window, which a
+    /// CI runner does not have. Bring a browser to the front, then:
+    ///
+    ///     cargo test -- --ignored --nocapture what_tabs_are_open
+    #[test]
+    #[ignore]
+    fn what_tabs_are_open() {
+        let tabs = super::list_tabs();
+        println!("{} tabs in the front window", tabs.len());
+        for t in tabs.iter().take(15) {
+            println!("  - {t}");
+        }
+    }
 
     #[test]
     fn takes_the_host_out_of_a_full_url() {

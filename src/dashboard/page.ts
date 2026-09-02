@@ -91,6 +91,8 @@ async function render(): Promise<void> {
       platform,
       version,
       tasks: tasks as never,
+      tabs: browserTabs,
+      tabsRead,
     });
   } catch (err) {
     throw err;
@@ -123,6 +125,14 @@ root.addEventListener("click", (ev) => {
   if (ask) {
     if (ask.dataset.loafAsk === "mic") void listenOnce();
     else sendAsk();
+    return;
+  }
+
+  const tabClose = target.closest<HTMLElement>("[data-loaf-tabclose]");
+  if (tabClose) {
+    const index = Number(tabClose.dataset.loafTabclose);
+    const title = browserTabs[index];
+    if (title !== undefined) void closeBrowserTab(title, tabClose);
     return;
   }
 
@@ -161,6 +171,7 @@ void detectPlatform()
   })
   .then(render)
   .then(() => emit(RADAR_HELLO_EVENT))
+  .then(() => refreshTabs())
   .catch(() => {
     // No companion listening; the unavailable state above stands.
   });
@@ -284,6 +295,44 @@ let listening = false;
  * because two overlapping recognisers is a way to get one sentence acted on
  * twice.
  */
+/** The browser tabs, as last read. Titles only. */
+let browserTabs: string[] = [];
+/** False when Loaf could not read them, which is a different answer to none. */
+let tabsRead = false;
+
+async function refreshTabs(): Promise<void> {
+  try {
+    const tabs = await invoke<string[]>("list_tabs");
+    browserTabs = tabs;
+    tabsRead = true;
+  } catch {
+    tabsRead = false;
+  }
+  void render();
+}
+
+/**
+ * Close one tab, by the title Loaf read.
+ *
+ * The list is re-read afterwards rather than patched: the browser is the owner
+ * of what is open, and guessing that our row disappeared would show a list that
+ * disagrees with the tab strip the moment anything else changes it.
+ */
+async function closeBrowserTab(title: string, button: HTMLElement): Promise<void> {
+  button.setAttribute("disabled", "true");
+  try {
+    const closed = await invoke<boolean>("close_tab", { title });
+    if (!closed) {
+      const hint = document.getElementById("ask-reply");
+      if (hint) hint.textContent = "That tab is not open any more.";
+    }
+  } catch (e) {
+    const hint = document.getElementById("ask-reply");
+    if (hint) hint.textContent = String(e);
+  }
+  await refreshTabs();
+}
+
 async function listenOnce(): Promise<void> {
   if (listening) return;
   const mic = document.getElementById("ask-mic");
