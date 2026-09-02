@@ -354,3 +354,24 @@ describe("driving the machine", () => {
     }
   });
 });
+
+describe("handing over to Windows voice typing", () => {
+  it.each(["dictate", "start dictation", "voice typing", "type what i say"])(
+    "understands %s",
+    (text) => {
+      expect(parseIntent(text)).toEqual({ kind: "dictate" });
+    },
+  );
+
+  // Loaf never sees the text: Windows types it into whatever has focus. The
+  // acknowledgement must not imply Loaf is listening or recording.
+  it("says what it is doing without claiming to hear anything", () => {
+    const line = acknowledge(parseIntent("dictate")!);
+    expect(line).toContain("Windows");
+    expect(line.toLowerCase()).not.toContain("listening");
+  });
+
+  it("is not confused with the typing command", () => {
+    expect(parseIntent("type hello there")).toEqual({ kind: "type", text: "hello there" });
+  });
+});

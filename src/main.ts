@@ -562,6 +562,11 @@ function runIntent(intent: Intent): void {
     case "level.ask":
       void reportLevel(intent.what);
       break;
+    case "dictate":
+      // Windows types into whatever has focus. Loaf hands over and steps
+      // back; it never receives what was said.
+      void machine("press_keys", { combo: "win+h" });
+      break;
     case "type":
       void machine("type_text", { text: intent.text });
       break;

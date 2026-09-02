@@ -42,6 +42,8 @@ export type Intent =
   | { readonly kind: "media"; readonly key: string }
   | { readonly kind: "click"; readonly target: string }
   | { readonly kind: "level.ask"; readonly what: "volume" | "brightness" }
+  /** Hand over to Windows' own voice typing. See the note in the parser. */
+  | { readonly kind: "dictate" }
   /** Typed only — see the note in the parser. */
   | { readonly kind: "type"; readonly text: string }
   | { readonly kind: "app.open"; readonly app: string }
@@ -275,6 +277,18 @@ export function parseIntent(raw: string): Intent | null {
   if (/\b(how (?:loud|high)|what.*volume)\b/.test(t)) {
     return { kind: "level.ask", what: "volume" };
   }
+  // --- Windows' own dictation.
+  //
+  // This opens the Win+H voice-typing bar and stops there. Loaf NEVER SEES THE
+  // TEXT: Windows types it straight into whatever has focus, and there is no
+  // API to read it back. That is what makes it nearly free — it is a keystroke,
+  // not a recogniser — and also why it cannot feed Loaf's parser.
+  //
+  // Whether it runs on the machine or in Microsoft's cloud is decided by
+  // Windows' own privacy setting, not by Loaf, so this makes no claim about it.
+  if (/\b(dictate|dictation|voice typing|type what i say)\b/.test(t)) {
+    return { kind: "dictate" };
+  }
   if (/\b(how bright|what.*brightness)\b/.test(t)) {
     return { kind: "level.ask", what: "brightness" };
   }
@@ -380,6 +394,8 @@ export function acknowledge(intent: Intent): string {
       return "Done.";
     case "level.ask":
       return `Checking the ${intent.what}.`;
+    case "dictate":
+      return "Opening Windows voice typing.";
     case "type":
       return `Typing: ${intent.text}`;
     case "click":
