@@ -587,6 +587,12 @@ function runIntent(intent: Intent): void {
     case "app.close":
       void closeProgram(intent.app);
       break;
+    case "record.start":
+      void startRecording();
+      break;
+    case "record.stop":
+      void stopRecording();
+      break;
     case "recap":
       void saveRecap();
       break;
@@ -634,6 +640,68 @@ async function machine(cmd: string, args: Record<string, unknown>): Promise<void
  * window may have changed since the grammar was built.
  */
 /** Say how loud or how bright it currently is. */
+/**
+ * Begin recording the user's own microphone for the meeting in progress.
+ *
+ * Only reached after the confirmation in `acknowledge`, which names exactly
+ * what will and will not be captured. The device is shown too, so "record"
+ * never means "some microphone, somewhere".
+ */
+async function startRecording(): Promise<void> {
+  if (!hasTauriHost()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  try {
+    const why = await invoke<string | null>("whisper_status", {
+      binary: behaviour.whisperBinary,
+      model: behaviour.whisperModel,
+    });
+    if (why) {
+      say({ kind: "speech", text: why, seconds: 12 });
+      return;
+    }
+    const device = await invoke<string | null>("microphone_name");
+    await invoke("start_recording");
+    say({
+      kind: "speech",
+      text: `Recording ${device ?? "your microphone"}. Say "stop recording" when you are done.`,
+      seconds: 10,
+    });
+  } catch (e) {
+    say({ kind: "speech", text: String(e), seconds: 10 });
+  }
+}
+
+/**
+ * Stop, transcribe, and attach the words to the meeting.
+ *
+ * The audio file is deleted by the Rust side whether this succeeds or not.
+ * Loaf keeps the words, never the voice.
+ */
+async function stopRecording(): Promise<void> {
+  if (!hasTauriHost()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  say({ kind: "speech", text: "Transcribing… this can take a minute.", seconds: 8 });
+  try {
+    const text = await invoke<string>("stop_recording", {
+      binary: behaviour.whisperBinary,
+      model: behaviour.whisperModel,
+    });
+    if (text.trim().length === 0) {
+      say({ kind: "speech", text: "Nothing was said, so there is nothing to keep.", seconds: 8 });
+      return;
+    }
+    // Onto the meeting if one is running, and onto the task list either way —
+    // a transcript with nowhere to go is worse than one in the wrong place.
+    if (!meetingWatch.note(text)) {
+      tasks.add(text.slice(0, 200), "soon");
+      announceTasks();
+    }
+    say({ kind: "speech", text: "Kept what you said.", seconds: 6 });
+  } catch (e) {
+    say({ kind: "speech", text: String(e), seconds: 12 });
+  }
+}
+
 async function reportLevel(what: "volume" | "brightness"): Promise<void> {
   if (!hasTauriHost()) return;
   try {

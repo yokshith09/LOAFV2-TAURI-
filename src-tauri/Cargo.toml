@@ -30,6 +30,11 @@ tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# Recording the user's own microphone for meeting transcription. cpal gives
+# the default INPUT device only; system-audio loopback is a different API
+# and is deliberately not used. See audio.rs.
+cpal = "0.15"
+hound = "3"
 
 # Windows: foreground-window and idle detection come straight from Win32.
 [target.'cfg(windows)'.dependencies.windows]

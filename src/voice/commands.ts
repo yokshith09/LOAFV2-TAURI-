@@ -48,6 +48,15 @@ export type Intent =
   | { readonly kind: "type"; readonly text: string }
   | { readonly kind: "app.open"; readonly app: string }
   | { readonly kind: "app.close"; readonly app: string }
+  /**
+   * Record YOUR OWN microphone for the meeting in progress.
+   *
+   * Carries `confirm` for the same reason deleting does, and a stronger one:
+   * it is the only command in Loaf whose effect reaches other people. The
+   * confirmation is where the user states that everyone knows.
+   */
+  | { readonly kind: "record.start"; readonly confirm: true }
+  | { readonly kind: "record.stop" }
   | { readonly kind: "reset.today"; readonly confirm: true }
   | { readonly kind: "forget.sites"; readonly confirm: true };
 
@@ -199,7 +208,16 @@ export function parseIntent(raw: string): Intent | null {
   const t = normalise(raw);
   if (t.length === 0) return null;
 
-  // --- Destructive first, so a partial match on something else cannot shadow
+  // --- Recording first, alongside the destructive commands and for the same
+  // --- reason: it must never be reached by a partial match on something else.
+  if (/\b(stop|end|finish)\b.*\brecord(ing)?\b/.test(t)) {
+    return { kind: "record.stop" };
+  }
+  if (/\brecord(ing)?\b/.test(t) && /\b(this|the|meeting|call|me|start|begin)\b/.test(t)) {
+    return { kind: "record.start", confirm: true };
+  }
+
+  // --- Destructive next, so a partial match on something else cannot shadow
   // --- them and quietly become the wrong action.
   if (/\b(reset|clear|wipe|delete)\b.*\b(today|stats|screen ?time)\b/.test(t)) {
     return { kind: "reset.today", confirm: true };
@@ -411,6 +429,15 @@ export function acknowledge(intent: Intent): string {
       return "Drawing your week.";
     case "report.today":
       return "Here's today.";
+    case "record.start":
+      // Names what it will and will not capture, every time. This is the
+      // moment the user decides, so it is the moment it has to be true.
+      return (
+        "Record your microphone only \u2014 not the other people \u2014 for this meeting? " +
+        "Only say yes if everyone here knows. Say yes to start."
+      );
+    case "record.stop":
+      return "Stopping the recording.";
     case "reset.today":
       return "Clear everything recorded today? Say yes to confirm.";
     case "forget.sites":
@@ -434,6 +461,8 @@ export const EXAMPLE_COMMANDS: readonly string[] = [
   "set volume to fifty",
   "mute",
   "set brightness to seventy",
+  "record this meeting",
+  "stop recording",
   "how long have I been at it",
   "go quiet",
 ];

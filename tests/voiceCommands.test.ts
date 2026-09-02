@@ -375,3 +375,46 @@ describe("handing over to Windows voice typing", () => {
     expect(parseIntent("type hello there")).toEqual({ kind: "type", text: "hello there" });
   });
 });
+
+describe("recording a meeting", () => {
+  it.each(["record this meeting", "record the call", "start recording"])(
+    "understands %s",
+    (text) => {
+      expect(parseIntent(text)).toEqual({ kind: "record.start", confirm: true });
+    },
+  );
+
+  it.each(["stop recording", "end the recording", "finish recording"])(
+    "understands %s",
+    (text) => {
+      expect(parseIntent(text)).toEqual({ kind: "record.stop" });
+    },
+  );
+
+  // The only command in Loaf whose effect reaches other people. It gets the
+  // same gate as deleting, for a stronger reason.
+  it("always asks before recording", () => {
+    const intent = parseIntent("record this meeting")!;
+    expect(needsConfirmation(intent)).toBe(true);
+  });
+
+  // The confirmation is the moment the user decides, so it is the moment the
+  // wording has to be true.
+  it("names exactly what will and will not be captured", () => {
+    const line = acknowledge(parseIntent("record this meeting")!);
+    expect(line).toContain("microphone only");
+    expect(line).toContain("not the other people");
+    expect(line).toContain("everyone here knows");
+  });
+
+  // Stopping must never need a confirmation: a user trying to stop a
+  // recording is the one case where hesitating is the wrong behaviour.
+  it("stops without asking", () => {
+    expect(needsConfirmation(parseIntent("stop recording")!)).toBe(false);
+  });
+
+  it("is not shadowed by anything else", () => {
+    expect(parseIntent("record this meeting")).toMatchObject({ kind: "record.start" });
+    expect(parseIntent("stop the focus session")).toMatchObject({ kind: "focus.stop" });
+  });
+});

@@ -17,6 +17,7 @@
 //! central promise and it is enforced by review, not by comment.
 
 pub mod apps;
+pub mod audio;
 pub mod browser;
 #[cfg(windows)]
 pub mod browser_windows;
@@ -29,6 +30,7 @@ pub mod scroll;
 pub mod sounds;
 pub mod speech;
 pub mod storage;
+pub mod transcribe;
 pub mod wake;
 
 use platform::{ForegroundApp, PlatformProbe};
@@ -1071,6 +1073,78 @@ fn save_meetings(app: tauri::AppHandle, json: String) -> Result<(), String> {
     std::fs::write(dir.join("meetings.json"), json).map_err(|e| e.to_string())
 }
 
+/// A recording in progress, if there is one.
+///
+/// One at a time, deliberately. Two overlapping recordings would produce two
+/// files nobody asked for and a microphone indicator that lies about one of
+/// them.
+static RECORDING: std::sync::Mutex<Option<audio::Recording>> = std::sync::Mutex::new(None);
+
+/// The microphone Loaf would record, so the user can see it BEFORE agreeing.
+///
+/// Named rather than assumed: "record this meeting" should show which device
+/// is about to open, and it is always an input device \u2014 never system audio.
+/// See audio.rs.
+#[tauri::command(async)]
+fn microphone_name() -> Option<String> {
+    audio::input_device_name()
+}
+
+/// Start recording the user's own microphone.
+///
+/// Nothing here checks consent, and that is on purpose: consent is a decision
+/// the UI makes with the user in front of it, and burying it in a Rust command
+/// would make it look enforced when it is not. What this guarantees is
+/// narrower and checkable \u2014 the microphone only, never the room.
+#[tauri::command(async)]
+fn start_recording() -> Result<(), String> {
+    let mut slot = RECORDING.lock().map_err(|_| "recording lock poisoned")?;
+    if slot.is_some() {
+        return Err("Already recording.".into());
+    }
+    *slot = Some(audio::start()?);
+    Ok(())
+}
+
+/// How long the current recording has run, or null when nothing is recording.
+#[tauri::command]
+fn recording_seconds() -> Option<u64> {
+    RECORDING.lock().ok()?.as_ref().map(|r| r.seconds())
+}
+
+/// Stop, transcribe, and delete the audio.
+///
+/// THE RECORDING IS DELETED whether transcription succeeded or not. Loaf keeps
+/// the words, not the voice: an audio file of a meeting sitting on disk is a
+/// different and much heavier thing to hold than a transcript, and nothing in
+/// the product needs it after this point.
+#[tauri::command(async)]
+fn stop_recording(binary: String, model: String) -> Result<String, String> {
+    let recording = RECORDING
+        .lock()
+        .map_err(|_| "recording lock poisoned")?
+        .take()
+        .ok_or("Nothing is recording.")?;
+
+    let wav = transcribe::scratch_wav();
+    let seconds = audio::stop(recording, &wav)?;
+    let setup = transcribe::WhisperSetup { binary, model };
+    let result = if seconds < 0.5 {
+        Ok(String::new())
+    } else {
+        transcribe::transcribe(&setup, &wav)
+    };
+    let _ = std::fs::remove_file(&wav);
+    result
+}
+
+/// Whether Whisper is ready, and what is missing when it is not.
+#[tauri::command(async)]
+fn whisper_status(binary: String, model: String) -> Option<String> {
+    let setup = transcribe::WhisperSetup { binary, model };
+    transcribe::missing(&setup).map(|m| transcribe::missing_reason(&m))
+}
+
 /// Whether to offer a microphone button at all.
 ///
 /// Async because answering now means compiling a real constraint, which is the
@@ -1317,6 +1391,11 @@ pub fn run() {
             clickables,
             click_element,
             save_meetings,
+            microphone_name,
+            start_recording,
+            recording_seconds,
+            stop_recording,
+            whisper_status,
             start_wake,
             stop_wake,
             wake_listening,

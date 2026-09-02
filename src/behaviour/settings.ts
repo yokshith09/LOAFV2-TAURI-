@@ -100,6 +100,10 @@ export interface BehaviourSettings {
   hoverListenMs: number;
   /** Which recogniser turns speech into text. See voice/engine.ts. */
   engine: EngineId;
+  /** Path to a whisper.cpp executable. Empty until the user sets it. */
+  whisperBinary: string;
+  /** Path to a ggml model file. Empty until the user sets it. */
+  whisperModel: string;
   /**
    * Barely a pause: drift is meant to look continuous, so one leg starts about
    * as soon as the last ends.
@@ -142,6 +146,8 @@ export function defaultBehaviourSettings(): BehaviourSettings {
     wakeWord: null,
     hoverListenMs: 5000,
     engine: DEFAULT_ENGINE,
+    whisperBinary: "",
+    whisperModel: "",
     driftEvery: { min: 0.3, max: 2.0 },
     driftLeash: 330,
     driftSpeed: 17,

@@ -94,6 +94,8 @@ const FIXED_PHRASES: readonly string[] = [
   "dictate",
   "start dictation",
   "voice typing",
+  "record this meeting",
+  "stop recording",
 
   // Destructive. They are in the vocabulary because refusing to hear them
   // would not make them safe — it would make them typed. They are heard, then

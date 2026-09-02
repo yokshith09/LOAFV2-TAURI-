@@ -95,6 +95,10 @@ export function loadHabits(store: SettingsStore): BehaviourSettings {
     // readEngineId falls back to the local engine, never the hosted one, so
     // a hand-edited file cannot start uploading audio.
     settings.engine = readEngineId(saved["engine"]);
+    const binary = saved["whisperBinary"];
+    if (typeof binary === "string") settings.whisperBinary = binary;
+    const model = saved["whisperModel"];
+    if (typeof model === "string") settings.whisperModel = model;
   } catch {
     // A corrupt file costs the user their four toggles, not their launch.
   }
@@ -108,6 +112,8 @@ export function saveHabits(store: SettingsStore, settings: BehaviourSettings): v
   if (settings.wakeWord !== null) out["wakeWord"] = settings.wakeWord;
   out["hoverListenMs"] = settings.hoverListenMs;
   out["engine"] = settings.engine;
+  out["whisperBinary"] = settings.whisperBinary;
+  out["whisperModel"] = settings.whisperModel;
   store.setItem(KEY, JSON.stringify(out));
 }
 
