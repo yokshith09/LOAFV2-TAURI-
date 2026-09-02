@@ -4,6 +4,7 @@ import { Tracker } from "../tracker/tracker";
 import { dashboardBody, DASHBOARD_STYLES, unavailableRadar } from "./html";
 import type { RadarSnapshot } from "./html";
 import type { Platform } from "./html";
+import { spokenPhrases } from "../voice/phrases";
 import {
   COMMAND_EVENT,
   TASK_COMMAND_EVENT,
@@ -292,7 +293,10 @@ async function listenOnce(): Promise<void> {
   if (hint) hint.textContent = "Listening…";
 
   try {
-    const heard = await invoke<Heard>("listen_once");
+    // The vocabulary goes WITH the request. Windows recognises free
+    // speech only through its online recogniser, so the phrase list is
+    // what keeps this on the machine — see voice/phrases.ts.
+    const heard = await invoke<Heard>("listen_once", { phrases: spokenPhrases(programNames) });
     if (heard.kind === "text") {
       // Straight to the companion, exactly as a typed sentence would go. The
       // parser does not know or care which way the words arrived.
@@ -310,6 +314,24 @@ async function listenOnce(): Promise<void> {
     mic?.classList.remove("listening");
   }
 }
+
+/**
+ * The names of the programs on this machine, for the spoken vocabulary.
+ *
+ * Read once. A closed grammar cannot contain "Notepad" unless something told
+ * it the word, so this is what makes "open Notepad" work without falling back
+ * to Windows' online dictation. Empty until it arrives, and an empty list
+ * simply means program names are not heard yet.
+ */
+let programNames: readonly string[] = [];
+
+void invoke<{ name: string }[]>("list_apps")
+  .then((apps) => {
+    programNames = apps.map((a) => a.name);
+  })
+  .catch(() => {
+    // Voice still works for everything that is not a program name.
+  });
 
 // The microphone button only exists where a microphone can actually be used.
 // Offering one that always fails is worse than not offering one.

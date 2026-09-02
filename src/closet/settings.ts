@@ -1,5 +1,6 @@
 import { DEFAULT_COMPANION_ID } from "../companions/registry";
 import { SEASONAL_ID } from "../outfits/registry";
+import { DEFAULT_LISTEN_MODE, type ListenMode } from "../voice/mode";
 
 /**
  * What the closet remembers. Ported from `ClosetSettings` in the reference.
@@ -78,6 +79,14 @@ export interface ClosetState {
   readonly habits: Readonly<Record<string, boolean>>;
   /** Global mute, carried alongside the habits because it sits with them. */
   readonly muted: boolean;
+  /** How much of the time Loaf may listen. See voice/mode.ts. */
+  readonly listenMode: ListenMode;
+  /** Local speech voices on this machine. Remote ones never appear. */
+  readonly voices: readonly string[];
+  /** The chosen voice, or null for whichever Loaf picks. */
+  readonly voice: string | null;
+  /** A wake word of your own, or null for the built-in ones. */
+  readonly wakeWord: string | null;
 }
 
 /**
@@ -99,6 +108,12 @@ export class ClosetSettings {
    */
   habits: Readonly<Record<string, boolean>> = {};
   muted = false;
+  /** Carried, not owned: `behaviour/habits` stores it. */
+  listenMode: ListenMode = DEFAULT_LISTEN_MODE;
+  /** Local voices only; the companion filters the remote ones out. */
+  voices: readonly string[] = [];
+  voice: string | null = null;
+  wakeWord: string | null = null;
 
   constructor(private readonly store: SettingsStore) {}
 
@@ -110,6 +125,10 @@ export class ClosetSettings {
       names: this.readNames(),
       habits: this.habits,
       muted: this.muted,
+      listenMode: this.listenMode,
+      voices: this.voices,
+      voice: this.voice,
+      wakeWord: this.wakeWord,
     };
   }
 

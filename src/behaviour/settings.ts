@@ -7,6 +7,8 @@
  */
 
 /** An inclusive range of seconds, matching the Swift's `ClosedRange<Double>`. */
+import { DEFAULT_LISTEN_MODE, type ListenMode } from "../voice/mode";
+
 export interface SecondsRange {
   readonly min: number;
   readonly max: number;
@@ -62,6 +64,32 @@ export interface BehaviourSettings {
   /** Whether hovering shows today's card, or only wakes him up. */
   preview: boolean;
   /**
+   * Whether Loaf speaks its bubbles aloud.
+   *
+   * OFF by default, unlike every other habit here. The rest change how a
+   * small character moves in the corner of a screen; this one makes noise
+   * in a room, and a pet that started talking on first launch would be
+   * uninstalled before it finished the sentence.
+   */
+  talking: boolean;
+  /**
+   * When the microphone may be opened at all.
+   *
+   * A mode rather than a switch, because "whether" is not the interesting
+   * question and "when" is. See voice/mode.ts. This must never gain a
+   * default other than off: it is the one setting that contradicts the
+   * whole pitch, and it is only defensible while deliberately chosen.
+   */
+  listenMode: ListenMode;
+  /**
+   * A wake word of the user's own, or null for the built-in ones.
+   *
+   * Stored raw as typed; `normaliseWakeWord` decides whether it is usable
+   * and the grammar is built from the result, so an unusable one falls back
+   * to the defaults rather than leaving Loaf deaf.
+   */
+  wakeWord: string | null;
+  /**
    * Barely a pause: drift is meant to look continuous, so one leg starts about
    * as soon as the last ends.
    */
@@ -98,6 +126,9 @@ export function defaultBehaviourSettings(): BehaviourSettings {
     fading: true,
     /** Whether hovering shows today's card, or just wakes him up. */
     preview: true,
+    talking: false,
+    listenMode: DEFAULT_LISTEN_MODE,
+    wakeWord: null,
     driftEvery: { min: 0.3, max: 2.0 },
     driftLeash: 330,
     driftSpeed: 17,

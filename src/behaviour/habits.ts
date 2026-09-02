@@ -1,5 +1,6 @@
 import { defaultBehaviourSettings, type BehaviourSettings } from "./settings";
 import type { SettingsStore } from "../closet/settings";
+import { readListenMode } from "../voice/mode";
 
 /**
  * The four habits a user can switch on and off, and remembering their answer.
@@ -19,6 +20,7 @@ export const HABITS = [
   "drifting",
   "fading",
   "preview",
+  "talking",
 ] as const;
 export type Habit = (typeof HABITS)[number];
 
@@ -34,6 +36,7 @@ export const HABIT_LABELS: Readonly<Record<Habit, string>> = {
   drifting: "Drift about (they're a ghost)",
   fading: "Fade until you look at him",
   preview: "Show today's card on hover",
+  talking: "Say replies out loud",
 };
 
 /**
@@ -77,6 +80,13 @@ export function loadHabits(store: SettingsStore): BehaviourSettings {
     for (const habit of HABITS) {
       if (typeof saved[habit] === "boolean") settings[habit] = saved[habit];
     }
+    // Not a boolean, and not defaulted like the timings are: a listening mode
+    // the user chose has to survive a restart. readListenMode falls back to
+    // "off" rather than to anything louder, so a hand-edited or corrupt file
+    // cannot leave a microphone open.
+    settings.listenMode = readListenMode(saved["listenMode"]);
+    const wake = saved["wakeWord"];
+    settings.wakeWord = typeof wake === "string" ? wake : null;
   } catch {
     // A corrupt file costs the user their four toggles, not their launch.
   }
@@ -84,8 +94,10 @@ export function loadHabits(store: SettingsStore): BehaviourSettings {
 }
 
 export function saveHabits(store: SettingsStore, settings: BehaviourSettings): void {
-  const out: Record<string, boolean> = {};
+  const out: Record<string, boolean | string> = {};
   for (const habit of HABITS) out[habit] = settings[habit];
+  out["listenMode"] = settings.listenMode;
+  if (settings.wakeWord !== null) out["wakeWord"] = settings.wakeWord;
   store.setItem(KEY, JSON.stringify(out));
 }
 

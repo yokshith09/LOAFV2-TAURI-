@@ -16,15 +16,18 @@
 //! No network code exists in this crate, and none should. That is the product's
 //! central promise and it is enforced by review, not by comment.
 
+pub mod apps;
 pub mod browser;
 #[cfg(windows)]
 pub mod browser_windows;
+pub mod control;
 pub mod packs;
 pub mod platform;
 pub mod scroll;
 pub mod sounds;
 pub mod speech;
 pub mod storage;
+pub mod wake;
 
 use platform::{ForegroundApp, PlatformProbe};
 use serde::Serialize;
@@ -919,13 +922,138 @@ fn save_recap(app: tauri::AppHandle, png: Vec<u8>, name: String) -> Result<Strin
 ///
 /// Nothing here decides what the words mean. That is `voice/commands.ts`, which
 /// is testable; this only produces the string it is given.
+/// `phrases` is the closed vocabulary from `voice/phrases.ts`, and it is
+/// required rather than optional. Windows will recognise anything you say if
+/// you compile no constraints — by sending the audio to Microsoft. The phrase
+/// list is what keeps this local, so an empty one is refused rather than
+/// quietly becoming the other thing.
 #[tauri::command(async)]
-fn listen_once() -> speech::Heard {
-    speech::listen_once()
+fn listen_once(phrases: Vec<String>) -> speech::Heard {
+    speech::listen_once(phrases)
+}
+
+/// Every program on this machine Loaf could be asked to open.
+///
+/// Sent to the frontend so it can build spoken phrases from it. A closed
+/// speech vocabulary cannot contain "Notepad" unless something told it the
+/// word, and this is that something.
+#[tauri::command(async)]
+fn list_apps() -> Vec<apps::App> {
+    apps::installed()
+}
+
+/// Start a program by the name that was heard.
+///
+/// Matching happens here rather than in the frontend because the installed
+/// list lives here and the rule that a near miss must NOT launch the closest
+/// thing is tested here.
+#[tauri::command(async)]
+fn open_app(name: String) -> Result<String, String> {
+    let installed = apps::installed();
+    match apps::best_match(&name, &installed) {
+        Some(app) => apps::open(&app.path).map(|()| app.name.clone()),
+        None => Err(format!("I could not find a program called {name}.")),
+    }
+}
+
+/// Ask a program's windows to close.
+///
+/// Returns how many were asked; zero means it was not running, which is a
+/// normal answer rather than a failure. This posts WM_CLOSE and never
+/// terminates anything — see apps.rs.
+#[tauri::command(async)]
+fn close_app(name: String) -> Result<usize, String> {
+    apps::close(&name)
+}
+
+/// The machine's volume, 0 to 100.
+#[tauri::command(async)]
+fn get_volume() -> Result<u8, String> {
+    control::volume()
+}
+
+#[tauri::command(async)]
+fn set_volume(percent: i64) -> Result<(), String> {
+    control::set_volume(control::clamp_percent(percent))
+}
+
+#[tauri::command(async)]
+fn set_muted(on: bool) -> Result<(), String> {
+    control::set_muted(on)
+}
+
+/// The internal display's brightness. External monitors are driven over DDC/CI,
+/// which most implement badly or not at all, so this reports an error there
+/// rather than appearing to work.
+#[tauri::command(async)]
+fn get_brightness() -> Result<u8, String> {
+    control::brightness()
+}
+
+#[tauri::command(async)]
+fn set_brightness(percent: i64) -> Result<(), String> {
+    control::set_brightness(control::clamp_percent(percent))
+}
+
+/// Type text into whatever has focus.
+///
+/// Reachable from the command box, not from the microphone: knowing WHAT to
+/// type means free-form speech, and free-form speech on Windows is the online
+/// recogniser. See speech.rs.
+#[tauri::command(async)]
+fn type_text(text: String) -> Result<(), String> {
+    control::type_text(&text)
+}
+
+/// Press a key combination, e.g. "ctrl+t".
+#[tauri::command(async)]
+fn press_keys(combo: String) -> Result<(), String> {
+    control::press(&combo)
+}
+
+/// The names of everything clickable in the window that is in front.
+///
+/// This is what makes "click Save" work through a closed vocabulary: the names
+/// on screen become phrases, exactly as installed programs do. Control names
+/// only \u2014 no values, no text content, no page contents.
+#[tauri::command(async)]
+fn clickables() -> Vec<String> {
+    control::clickables()
+}
+
+/// Click something by its name. False means nothing by that name was found.
+#[tauri::command(async)]
+fn click_element(name: String) -> Result<bool, String> {
+    control::click_named(&name)
+}
+
+/// Start always-on listening for the wake word.
+///
+/// `phrases` must include the wake word itself and every command, because a
+/// closed grammar is what keeps this on the machine. An empty list is refused
+/// rather than started — see wake.rs.
+#[tauri::command(async)]
+fn start_wake(app: tauri::AppHandle, phrases: Vec<String>) -> Result<(), String> {
+    wake::start(app, phrases)
+}
+
+#[tauri::command(async)]
+fn stop_wake() {
+    wake::stop()
+}
+
+/// Whether the microphone is currently open, for the indicator.
+#[tauri::command]
+fn wake_listening() -> bool {
+    wake::is_listening()
 }
 
 /// Whether to offer a microphone button at all.
-#[tauri::command]
+///
+/// Async because answering now means compiling a real constraint, which is the
+/// only honest test of the offline recogniser and far too slow for the main
+/// thread.
+#[tauri::command(async)]
 fn speech_available() -> bool {
     speech::available()
 }
@@ -1153,6 +1281,21 @@ pub fn run() {
             app_version,
             listen_once,
             speech_available,
+            list_apps,
+            open_app,
+            close_app,
+            get_volume,
+            set_volume,
+            set_muted,
+            get_brightness,
+            set_brightness,
+            type_text,
+            press_keys,
+            clickables,
+            click_element,
+            start_wake,
+            stop_wake,
+            wake_listening,
             save_recap,
             cursor_pos,
             open_star,

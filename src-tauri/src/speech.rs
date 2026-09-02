@@ -1,18 +1,29 @@
-//! Turning one held-down moment of speech into a string.
+//! Turning one held-down moment of speech into a string, on this machine only.
 //!
 //! WHAT THIS IS AND IS NOT. It listens ONCE, when you ask it to, and returns
 //! what it heard. There is no wake word, no continuous listening, and no way
 //! for this module to run without a deliberate call — which is the difference
 //! between a push-to-talk button and a microphone that is simply on. Nothing is
-//! recorded, nothing is written to disk, and the audio never leaves the
-//! recogniser.
+//! recorded and nothing is written to disk.
 //!
-//! The string it returns goes to `voice/commands.ts`, which is where the
-//! interesting decisions live and where they are tested. This file is the part
-//! that cannot be unit-tested, so it is deliberately as small as possible: get
-//! a recogniser, ask it once, hand back text or a reason there is none.
+//! THE PART THAT MATTERS. Windows offers two recognisers behind one API and
+//! only one of them is local:
 //!
-//! WINDOWS uses `Windows.Media.SpeechRecognition`, which runs on the machine.
+//!  - `CompileConstraintsAsync` with NO constraints added compiles the built-in
+//!    dictation grammar. That understands free speech, requires the user to
+//!    switch on "Online speech recognition" in Windows privacy settings, and
+//!    sends audio to Microsoft's servers. Free-form and cloud are the same
+//!    choice; there is no setting that separates them.
+//!
+//!  - A `SpeechRecognitionListConstraint` understands only the phrases it is
+//!    given and runs entirely on the machine.
+//!
+//! This module uses the second and REFUSES to run without a phrase list, rather
+//! than falling back to the first. That refusal is the whole safety property:
+//! an empty list is the one input that would otherwise turn a local feature
+//! into a network one silently. The phrases come from `voice/phrases.ts`, where
+//! they are tested against the parser that has to act on them.
+//!
 //! `RecognizeAsync` rather than `RecognizeWithUIAsync`: the latter shows
 //! Microsoft's own listening dialog, which would sit over the top of a desktop
 //! pet whose whole point is being unobtrusive.
@@ -39,8 +50,18 @@ pub enum Heard {
     Unavailable { why: String },
 }
 
-pub fn listen_once() -> Heard {
-    imp::listen_once()
+/// Shown when the caller passes no phrases. See the module note: this is a
+/// refusal, not a fallback.
+const NO_PHRASES: &str = "Loaf had no list of phrases to listen for, so it did not listen. \
+     Listening without one would mean using Windows' online recogniser.";
+
+pub fn listen_once(phrases: Vec<String>) -> Heard {
+    if phrases.is_empty() {
+        return Heard::Unavailable {
+            why: NO_PHRASES.into(),
+        };
+    }
+    imp::listen_once(phrases)
 }
 
 /// Whether a microphone button is worth showing at all.
@@ -51,7 +72,12 @@ pub fn available() -> bool {
 #[cfg(windows)]
 mod imp {
     use super::Heard;
-    use windows::Media::SpeechRecognition::{SpeechRecognitionConfidence, SpeechRecognizer};
+    use windows::core::HSTRING;
+    use windows::Foundation::Collections::IIterable;
+    use windows::Media::SpeechRecognition::{
+        SpeechRecognitionConfidence, SpeechRecognitionListConstraint,
+        SpeechRecognitionResultStatus, SpeechRecognizer,
+    };
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
     /// Entered per call, exactly as `browser_windows.rs` does and for the same
@@ -79,13 +105,40 @@ mod imp {
         }
     }
 
+    /// Build a recogniser that can only hear `phrases`.
+    ///
+    /// The constraint is added BEFORE compiling. Compiling with none added is
+    /// the dictation path, so the order of these two lines is the difference
+    /// between local and remote recognition rather than a matter of style.
+    fn local_recognizer(phrases: &[String]) -> windows::core::Result<SpeechRecognizer> {
+        let recognizer = SpeechRecognizer::new()?;
+        let words: Vec<HSTRING> = phrases.iter().map(HSTRING::from).collect();
+        let iterable = IIterable::<HSTRING>::try_from(words)?;
+        let constraint = SpeechRecognitionListConstraint::Create(&iterable)?;
+        recognizer.Constraints()?.Append(&constraint)?;
+
+        let compiled = recognizer.CompileConstraintsAsync()?.get()?;
+        let status = compiled.Status()?;
+        if status != SpeechRecognitionResultStatus::Success {
+            // A failed compile leaves a recogniser that would listen and never
+            // match anything, so it is an error here rather than a silence
+            // later that looks like the microphone not working.
+            return Err(windows::core::Error::new(
+                windows::Win32::Foundation::E_FAIL,
+                format!("constraint compilation returned {status:?}"),
+            ));
+        }
+        Ok(recognizer)
+    }
+
     pub fn available() -> bool {
         let _apartment = Apartment::enter();
-        // Constructing one is the only honest test. A machine with no speech
-        // language pack installed fails here rather than at the first attempt
-        // to listen, and it is better to hide the button than to offer one that
-        // always fails.
-        SpeechRecognizer::new().is_ok()
+        // Compiling a real constraint, not merely constructing a recogniser.
+        // Construction succeeds on machines where the offline recogniser then
+        // fails, and a button that always fails is worse than no button. The
+        // phrase is arbitrary; what is being tested is that a LIST constraint
+        // compiles, which is the path the real call takes.
+        local_recognizer(&["wake up".to_string()]).is_ok()
     }
 
     fn confidence_name(c: SpeechRecognitionConfidence) -> &'static str {
@@ -97,9 +150,9 @@ mod imp {
         }
     }
 
-    pub fn listen_once() -> Heard {
+    pub fn listen_once(phrases: Vec<String>) -> Heard {
         let _apartment = Apartment::enter();
-        let recognizer = match SpeechRecognizer::new() {
+        let recognizer = match local_recognizer(&phrases) {
             Ok(r) => r,
             Err(e) => {
                 return Heard::Unavailable {
@@ -111,16 +164,6 @@ mod imp {
                 };
             }
         };
-
-        // Constraints have to be compiled before the recogniser will listen.
-        // With none added, this compiles the built-in dictation grammar, which
-        // is what we want: Loaf's own grammar lives in TypeScript and is far
-        // easier to change there than as a WinRT constraint set.
-        if let Err(e) = recognizer.CompileConstraintsAsync().and_then(|op| op.get()) {
-            return Heard::Unavailable {
-                why: format!("Speech could not start. ({e})"),
-            };
-        }
 
         // RecognizeAsync, not RecognizeWithUIAsync: no system dialog over the
         // pet. This blocks until the recogniser decides the user has stopped
@@ -165,10 +208,46 @@ mod imp {
         false
     }
 
-    pub fn listen_once() -> Heard {
+    pub fn listen_once(_phrases: Vec<String>) -> Heard {
         Heard::Unavailable {
             why: "Speaking to Loaf is Windows-only for now. The command box works everywhere."
                 .into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Whether the OFFLINE recogniser actually works on this machine.
+    ///
+    /// Ignored by default because it needs a speech language pack and a real
+    /// audio stack, neither of which a CI runner has — a failure there would
+    /// mean nothing. Run it by hand on a machine you are about to speak into:
+    ///
+    ///     cargo test -- --ignored --nocapture local_recogniser
+    ///
+    /// This exists because the previous version of this file claimed to be
+    /// local and was not, and a claim like that should be executable.
+    #[test]
+    #[ignore]
+    fn local_recogniser_compiles_here() {
+        let ok = available();
+        println!("offline speech available on this machine: {ok}");
+        assert!(ok, "the offline list-constraint recogniser did not compile");
+    }
+
+    /// The one rule in this file that can be checked on any platform: no
+    /// phrases means no listening. The alternative implementation — listening
+    /// anyway — is the Windows dictation grammar, which is the cloud.
+    #[test]
+    fn refuses_to_listen_without_a_phrase_list() {
+        match listen_once(Vec::new()) {
+            Heard::Unavailable { why } => {
+                assert!(why.contains("online"), "the reason should say why: {why}")
+            }
+            other => panic!("expected a refusal, got {other:?}"),
         }
     }
 }

@@ -4,6 +4,8 @@ import { OUTFITS, SEASONAL_ID, seasonalLabel } from "../outfits/registry";
 import { displayName, NO_OUTFIT, MAX_NAME_LENGTH, type ClosetState } from "./settings";
 import { habitsFor, HABIT_LABELS } from "../behaviour/habits";
 import { findCompanion } from "../companions/registry";
+import { LISTEN_MODES, LABELS, DESCRIPTIONS } from "../voice/mode";
+import { MAX_WAKE_LENGTH } from "../voice/wake";
 
 /**
  * The closet's markup. Ported from `ClosetWindow.html`.
@@ -69,6 +71,15 @@ export const CLOSET_CSS = `
            background:var(--card); color:var(--ink-soft); }
   .habit.on { border-color:var(--site); background:rgba(138,80,128,.055); color:var(--ink); font-weight:600; }
   .habit input { accent-color:var(--site); margin:0; }
+  .listen { display:flex; flex-direction:column; gap:6px; }
+  .listen .why { font-size:11.5px; line-height:1.45; opacity:.78; margin:2px 0 0; }
+  .listen input { width:100%; padding:7px 8px; border-radius:8px; margin-top:2px;
+    border:1px solid var(--edge); background:var(--card); color:var(--ink);
+    font:inherit; font-size:12.5px; }
+  .listen select, .voice select { width:100%; padding:7px 8px; border-radius:8px;
+    border:1px solid var(--edge); background:var(--card); color:var(--ink);
+    font:inherit; font-size:12.5px; }
+  .listen.hot .why { color:var(--site); font-weight:600; opacity:1; }
 
   .fine { font-size:10.5px; color:var(--ink-soft); line-height:1.5; margin:11px 0 0; }
   .foot { font-size:11px; color:var(--ink-soft); line-height:1.55;
@@ -103,6 +114,58 @@ export const CLOSET_CSS = `
  * be a switch wired to nothing, and its default is the opposite of wandering's,
  * which would be baffling sitting right next to it on a cat.
  */
+/**
+ * The listening mode, with what it costs written next to it.
+ *
+ * A dropdown rather than a switch because "whether" is not the question the
+ * user needs to answer — "when" is — and the description under it changes with
+ * the choice so that nobody picks always-on without reading what it means.
+ */
+function listenRow(state: ClosetState): string {
+  const mode = state.listenMode;
+  const options = LISTEN_MODES.map(
+    (m) =>
+      `<option value="${escapeHTML(m)}"${m === mode ? " selected" : ""}>` +
+      `${escapeHTML(LABELS[m])}</option>`,
+  ).join("");
+  return (
+    `<div class="listen${mode === "always" ? " hot" : ""}">` +
+    `<select data-listen-mode>${options}</select>` +
+    `<p class="why">${escapeHTML(DESCRIPTIONS[mode])}</p>` +
+    // Only where it does something. A wake-word box next to "when I click"
+    // is a field wired to nothing.
+    (mode === "always"
+      ? `<input type="text" data-wake-word maxlength="${MAX_WAKE_LENGTH}" ` +
+        `placeholder="hey loaf" value="${escapeHTML(state.wakeWord ?? "")}">` +
+        `<p class="why">What Loaf answers to. Leave empty for “hey loaf”.</p>`
+      : "") +
+    "</div>"
+  );
+}
+
+/**
+ * Which voice speaks, when Loaf speaks.
+ *
+ * Only voices installed on this machine appear. The browser also offers
+ * "Online (Natural)" voices which sound better and send the text to a server;
+ * they are filtered out before they reach here, so there is nothing to warn
+ * about in this list.
+ */
+function voiceRow(state: ClosetState): string {
+  if (state.voices.length === 0) {
+    return '<div class="voice"><p class="why">No speech voices are installed on this machine.</p></div>';
+  }
+  const options = [
+    `<option value=""${state.voice === null ? " selected" : ""}>Let Loaf choose</option>`,
+    ...state.voices.map(
+      (v) =>
+        `<option value="${escapeHTML(v)}"${v === state.voice ? " selected" : ""}>` +
+        `${escapeHTML(v)}</option>`,
+    ),
+  ].join("");
+  return `<div class="voice"><select data-voice>${options}</select></div>`;
+}
+
 function habitRows(state: ClosetState): string {
   const companion = findCompanion(state.companionId);
   return habitsFor(companion.drifts)
@@ -201,7 +264,7 @@ export function closetBody(state: ClosetState): string {
   ${shelves}
 
   <h2>Habits <span class="shelf-note">what they get up to on their own</span></h2>
-  <div class="habits">${habitRows(state)}${soundRow(state)}</div>
+  <div class="habits">${habitRows(state)}${listenRow(state)}${voiceRow(state)}${soundRow(state)}</div>
   <p class="fine">Wandering is off until you say otherwise — you put the window
   where it is, and a pet that starts crossing a screen you're working on, unasked,
   is a bug report.</p>

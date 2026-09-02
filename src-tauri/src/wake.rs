@@ -1,0 +1,266 @@
+//! Listening all the time, for the two words that mean you are talking to Loaf.
+//!
+//! THIS IS THE ONE FEATURE THAT CONTRADICTS THE PITCH, SO IT IS BUILT TO ARGUE
+//! ITS OWN CASE. Loaf's claim is that it does not watch you. A wake word means
+//! a microphone that is on whenever the app is, which is the most intrusive
+//! thing this app could possibly do. Three things make it defensible, and all
+//! three are load-bearing rather than decorative:
+//!
+//!  1. IT IS OFF UNTIL SOMEONE TURNS IT ON. There is no default, no "try it and
+//!     see", and no first-run prompt that gets clicked through.
+//!  2. IT STAYS ON THE MACHINE. The same `SpeechRecognitionListConstraint` as
+//!     `speech.rs`, for the same reason: a continuous session with no
+//!     constraints would be continuous DICTATION, streaming everything said in
+//!     the room to Microsoft. This module refuses an empty phrase list exactly
+//!     as `speech.rs` does, and that refusal is the whole safety property.
+//!  3. IT CAN ONLY HEAR ITS OWN GRAMMAR. A closed vocabulary physically cannot
+//!     transcribe a conversation. Someone talking near a listening Loaf
+//!     produces "no match", not a transcript. This is the strongest privacy
+//!     property here and it is a consequence of the design rather than a
+//!     promise anyone has to trust.
+//!
+//! WHAT IS NOT DECIDED HERE. Whether a phrase followed the wake word, and
+//! whether it came soon enough to count, is `src/voice/wake.ts` — pure, tested,
+//! and easy to change. This file starts a session, forwards what it heard, and
+//! stops. Putting the timing rules in Rust would have made the one part with
+//! real edge cases the one part that cannot be tested.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether a session is running. Read by the frontend to render the indicator.
+static LISTENING: AtomicBool = AtomicBool::new(false);
+
+/// Emitted for every phrase the continuous session matches.
+pub const HEARD_EVENT: &str = "loaf://voice/heard";
+/// Emitted when the session stops on its own, so the UI cannot show a
+/// microphone that is not actually open.
+pub const STOPPED_EVENT: &str = "loaf://voice/stopped";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HeardPhrase {
+    pub text: String,
+    pub confidence: String,
+}
+
+pub fn is_listening() -> bool {
+    LISTENING.load(Ordering::SeqCst)
+}
+
+/// Refused rather than run: an empty grammar means continuous dictation, and
+/// continuous dictation means a hot microphone streaming to a server.
+pub const NO_PHRASES: &str = "Loaf had no phrases to listen for, so it did not start listening. \
+     Listening without them would mean Windows' online recogniser.";
+
+#[cfg(windows)]
+pub use imp::{start, stop};
+
+#[cfg(not(windows))]
+pub fn start<R: tauri::Runtime>(
+    _app: tauri::AppHandle<R>,
+    _phrases: Vec<String>,
+) -> Result<(), String> {
+    Err("Always-on listening is Windows-only for now.".into())
+}
+
+#[cfg(not(windows))]
+pub fn stop() {}
+
+#[cfg(windows)]
+mod imp {
+    use super::{HeardPhrase, HEARD_EVENT, LISTENING, NO_PHRASES, STOPPED_EVENT};
+    use std::sync::atomic::Ordering;
+    use tauri::Emitter;
+    use windows::core::HSTRING;
+    use windows::Foundation::Collections::IIterable;
+    use windows::Foundation::TypedEventHandler;
+    use windows::Media::SpeechRecognition::{
+        SpeechContinuousRecognitionResultGeneratedEventArgs, SpeechContinuousRecognitionSession,
+        SpeechRecognitionConfidence, SpeechRecognitionListConstraint,
+        SpeechRecognitionResultStatus, SpeechRecognizer,
+    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+
+    /// Set to ask the listening thread to wind the session up.
+    static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    struct Apartment(bool);
+
+    impl Apartment {
+        fn enter() -> Self {
+            let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+            Apartment(hr.is_ok())
+        }
+    }
+
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    fn confidence_name(c: SpeechRecognitionConfidence) -> &'static str {
+        match c {
+            SpeechRecognitionConfidence::High => "high",
+            SpeechRecognitionConfidence::Medium => "medium",
+            SpeechRecognitionConfidence::Low => "low",
+            _ => "rejected",
+        }
+    }
+
+    pub fn start<R: tauri::Runtime>(
+        app: tauri::AppHandle<R>,
+        phrases: Vec<String>,
+    ) -> Result<(), String> {
+        if phrases.is_empty() {
+            return Err(NO_PHRASES.into());
+        }
+        if LISTENING.swap(true, Ordering::SeqCst) {
+            // Already on. Starting twice would leave a session nothing can stop.
+            return Ok(());
+        }
+        STOP.store(false, Ordering::SeqCst);
+
+        // A dedicated thread, because the recogniser and its session are COM
+        // objects that must live and die on one apartment. Handing them across
+        // threads is how this would become an intermittent crash rather than a
+        // feature.
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+        std::thread::spawn(move || {
+            let _apartment = Apartment::enter();
+            match run(&app, phrases, &ready_tx) {
+                Ok(()) => {}
+                Err(e) => {
+                    // If it failed before reporting, the caller is still
+                    // waiting; if after, the UI needs to stop showing a
+                    // microphone that is not open.
+                    let _ = ready_tx.send(Err(e.clone()));
+                    let _ = app.emit(STOPPED_EVENT, e);
+                }
+            }
+            LISTENING.store(false, Ordering::SeqCst);
+            let _ = app.emit(STOPPED_EVENT, String::new());
+        });
+
+        match ready_rx.recv_timeout(std::time::Duration::from_secs(20)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                LISTENING.store(false, Ordering::SeqCst);
+                Err(e)
+            }
+            Err(_) => {
+                LISTENING.store(false, Ordering::SeqCst);
+                STOP.store(true, Ordering::SeqCst);
+                Err("Speech did not start in time.".into())
+            }
+        }
+    }
+
+    fn run<R: tauri::Runtime>(
+        app: &tauri::AppHandle<R>,
+        phrases: Vec<String>,
+        ready: &std::sync::mpsc::Sender<Result<(), String>>,
+    ) -> Result<(), String> {
+        let recognizer = SpeechRecognizer::new().map_err(|e| {
+            format!(
+                "Windows speech is unavailable. A speech language pack may not be installed. ({e})"
+            )
+        })?;
+
+        let words: Vec<HSTRING> = phrases.iter().map(HSTRING::from).collect();
+        let iterable = IIterable::<HSTRING>::try_from(words).map_err(|e| e.to_string())?;
+        let constraint =
+            SpeechRecognitionListConstraint::Create(&iterable).map_err(|e| e.to_string())?;
+        recognizer
+            .Constraints()
+            .map_err(|e| e.to_string())?
+            .Append(&constraint)
+            .map_err(|e| e.to_string())?;
+
+        let compiled = recognizer
+            .CompileConstraintsAsync()
+            .and_then(|op| op.get())
+            .map_err(|e| e.to_string())?;
+        let status = compiled.Status().map_err(|e| e.to_string())?;
+        if status != SpeechRecognitionResultStatus::Success {
+            return Err(format!("Speech could not start ({status:?})."));
+        }
+
+        let session: SpeechContinuousRecognitionSession = recognizer
+            .ContinuousRecognitionSession()
+            .map_err(|e| e.to_string())?;
+
+        let sink = app.clone();
+        session
+            .ResultGenerated(&TypedEventHandler::<
+                SpeechContinuousRecognitionSession,
+                SpeechContinuousRecognitionResultGeneratedEventArgs,
+            >::new(move |_, args| {
+                let Some(args) = args.as_ref() else {
+                    return Ok(());
+                };
+                if let Ok(result) = args.Result() {
+                    let text = result.Text().map(|t| t.to_string()).unwrap_or_default();
+                    let confidence = result
+                        .Confidence()
+                        .map(confidence_name)
+                        .unwrap_or("rejected");
+                    // A rejected result is the recogniser disbelieving its own
+                    // transcription. Forwarding it would hand the wake gate a
+                    // sentence nobody said.
+                    if !text.trim().is_empty() && confidence != "rejected" {
+                        let _ = sink.emit(
+                            HEARD_EVENT,
+                            HeardPhrase {
+                                text,
+                                confidence: confidence.to_string(),
+                            },
+                        );
+                    }
+                }
+                Ok(())
+            }))
+            .map_err(|e| e.to_string())?;
+
+        session
+            .StartAsync()
+            .and_then(|op| op.get())
+            .map_err(|e| e.to_string())?;
+
+        let _ = ready.send(Ok(()));
+
+        // Nothing to do but stay alive: the session runs on its own and calls
+        // back into the handler above. Polling a flag rather than blocking so
+        // that stopping is prompt and does not need the thread to be killed.
+        while !STOP.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+
+        // Best effort. A session that has already ended returns an error here
+        // and that is not worth reporting to anyone.
+        let _ = session.StopAsync().map(|op| op.get());
+        Ok(())
+    }
+
+    pub fn stop() {
+        STOP.store(true, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The rule that can be checked anywhere: nothing starts without a
+    /// vocabulary, because the alternative is continuous dictation.
+    #[test]
+    fn the_refusal_says_why() {
+        assert!(NO_PHRASES.contains("online"));
+    }
+
+    #[test]
+    fn starts_switched_off() {
+        assert!(!is_listening());
+    }
+}

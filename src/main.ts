@@ -16,6 +16,10 @@ import { CurlDirector, canCurl } from "./behaviour/curl";
 import { PlayDirector } from "./behaviour/play";
 import { WanderController } from "./behaviour/wander";
 import { drawBall, drawSwipe } from "./behaviour/furBall";
+import { Speaker, browserSynth, saveVoice, loadVoice } from "./voice/speak";
+import { WakeGate, wakePhrases, wakeWordsFor, normaliseWakeWord } from "./voice/wake";
+import { spokenPhrases } from "./voice/phrases";
+import { usesWakeWord, NEEDS_MICROPHONE, type ListenMode } from "./voice/mode";
 import { resolveLicence, licenceInputs } from "./behaviour/licence";
 import { HABITS, loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/habits";
 import { resolveMood } from "./behaviour/mood";
@@ -271,6 +275,46 @@ function applyClosetPick(raw: unknown): void {
       });
       break;
     }
+    case "listenMode":
+      setListenMode(raw.mode);
+      return;
+    case "wakeWord": {
+      // Validated here rather than trusted: an unusable word would leave Loaf
+      // listening for something nobody can say, which looks exactly like a
+      // broken microphone.
+      const cleaned = raw.word === null ? null : normaliseWakeWord(raw.word);
+      if (raw.word !== null && cleaned === null) {
+        say({
+          kind: "speech",
+          text: "That one would not work as a wake word. Try two short words.",
+          seconds: 8,
+        });
+        announceCloset();
+        return;
+      }
+      behaviour.wakeWord = cleaned;
+      saveHabits(browserStore(), behaviour);
+      wakeGate.words = wakeWordsFor(cleaned);
+      announceCloset();
+      // The grammar is fixed for the life of a session, so a new word needs a
+      // new one. Off then on, rather than a restart that could silently fail.
+      if (usesWakeWord(behaviour.listenMode)) {
+        void (async () => {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("stop_wake").catch(() => {});
+          wakeRunning = false;
+          await syncListening();
+        })();
+      }
+      return;
+    }
+    case "voice":
+      // Null is "let Loaf choose", which pickVoice already does.
+      speaker.preferred = raw.name;
+      saveVoice(browserStore(), raw.name);
+      saveHabits(browserStore(), behaviour);
+      announceCloset();
+      return;
     case "muted":
       sound.settings.muted = raw.on;
       saveSoundSettings(browserStore(), sound.settings);
@@ -479,6 +523,33 @@ function runIntent(intent: Intent): void {
             : "open:dashboard",
       );
       break;
+    case "volume.set":
+      void machine("set_volume", { percent: intent.percent });
+      break;
+    case "volume.mute":
+      void machine("set_muted", { on: intent.on });
+      break;
+    case "brightness.set":
+      void machine("set_brightness", { percent: intent.percent });
+      break;
+    case "media":
+      void machine("press_keys", { combo: intent.key });
+      break;
+    case "click":
+      void clickOnScreen(intent.target);
+      break;
+    case "level.ask":
+      void reportLevel(intent.what);
+      break;
+    case "type":
+      void machine("type_text", { text: intent.text });
+      break;
+    case "app.open":
+      void openProgram(intent.app);
+      break;
+    case "app.close":
+      void closeProgram(intent.app);
+      break;
     case "recap":
       void saveRecap();
       break;
@@ -491,6 +562,95 @@ function runIntent(intent: Intent): void {
     case "forget.sites":
       applyCommand("sites:forget");
       break;
+  }
+}
+
+/**
+ * Start a program by the name that was heard.
+ *
+ * The matching happens in Rust, where the installed list lives and where the
+ * "near miss launches the wrong thing" rule is tested. A miss is reported as a
+ * miss rather than as the closest guess.
+ */
+/**
+ * One machine command, reporting the reason if it will not work.
+ *
+ * Brightness on a desktop is the common failure: external monitors are driven
+ * over DDC/CI and most implement it badly or not at all, so Windows simply
+ * does not answer. Saying so is better than a command that silently does
+ * nothing.
+ */
+async function machine(cmd: string, args: Record<string, unknown>): Promise<void> {
+  if (!hasTauriHost()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke(cmd, args);
+  } catch (e) {
+    say({ kind: "speech", text: String(e), seconds: 8 });
+  }
+}
+
+/**
+ * Click something in the window that is in front, by name.
+ *
+ * False means nothing by that name was there, which is a normal answer: the
+ * window may have changed since the grammar was built.
+ */
+/** Say how loud or how bright it currently is. */
+async function reportLevel(what: "volume" | "brightness"): Promise<void> {
+  if (!hasTauriHost()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const level = await invoke<number>(what === "volume" ? "get_volume" : "get_brightness");
+    const name = what === "volume" ? "Volume" : "Brightness";
+    say({ kind: "speech", text: `${name} is ${level}.`, seconds: 6 });
+  } catch (e) {
+    say({ kind: "speech", text: String(e), seconds: 8 });
+  }
+}
+
+async function clickOnScreen(target: string): Promise<void> {
+  if (!hasTauriHost()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const hit = await invoke<boolean>("click_element", { name: target });
+    if (!hit) {
+      say({ kind: "speech", text: `I could not find ${target} on screen.`, seconds: 6 });
+    }
+  } catch (e) {
+    say({ kind: "speech", text: String(e), seconds: 8 });
+  }
+}
+
+async function openProgram(name: string): Promise<void> {
+  if (!hasTauriHost()) return;
+  // Not invokeSafe: that swallows the reason, and the reason here is the
+  // message worth saying out loud.
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("open_app", { name });
+  } catch (e) {
+    say({ kind: "speech", text: String(e), seconds: 8 });
+  }
+}
+
+/**
+ * Ask a program to close.
+ *
+ * Zero windows asked is a normal answer meaning it was not running, and it is
+ * said out loud rather than passing silently — otherwise a misheard program
+ * name looks exactly like a program that ignored the request.
+ */
+async function closeProgram(name: string): Promise<void> {
+  if (!hasTauriHost()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const asked = await invoke<number>("close_app", { name });
+    if (asked === 0) {
+      say({ kind: "speech", text: `${name} was not open.`, seconds: 6 });
+    }
+  } catch (e) {
+    say({ kind: "speech", text: String(e), seconds: 8 });
   }
 }
 
@@ -508,6 +668,12 @@ function announceCloset(): void {
   // from a state that had never heard of them and every press appeared to do
   // nothing. Derived from the list, a new habit cannot be forgotten here.
   closet.habits = Object.fromEntries(HABITS.map((h) => [h, behaviour[h]]));
+  closet.listenMode = behaviour.listenMode;
+  // Local voices only. speaker.voices() has already filtered the remote
+  // ones out, so nothing here needs a warning label.
+  closet.voices = speaker.voices().map((v) => v.name);
+  closet.voice = speaker.preferred;
+  closet.wakeWord = behaviour.wakeWord;
   closetState = closet.read();
   void emit(CLOSET_CHANGED_EVENT, closetState).catch(() => {
     // The closet will still be right the next time it is opened.
@@ -1171,6 +1337,138 @@ function currentMood(): Mood {
  */
 let sleeping = false;
 
+/**
+ * Loaf's voice, for the habit that lets it read its bubbles aloud.
+ *
+ * Local voices only, and silence rather than a remote one — see voice/speak.ts.
+ */
+
+/**
+ * Whether a phrase heard by the always-on session was meant for Loaf.
+ *
+ * The microphone being open and Loaf ACTING are deliberately different things.
+ * See voice/wake.ts for the timing rules and what this does not protect.
+ */
+const wakeGate = new WakeGate();
+
+/** True while a one-shot listen is in flight, so two cannot overlap. */
+let listeningOnce = false;
+
+/**
+ * Open the microphone for exactly one sentence.
+ *
+ * Used by the click and hover modes. Unlike the always-on session this opens
+ * the device, takes one phrase and closes it again, which is why it needs no
+ * wake word: touching the character IS the wake word.
+ */
+async function listenOnce(): Promise<void> {
+  if (listeningOnce || !hasTauriHost()) return;
+  if (!NEEDS_MICROPHONE[behaviour.listenMode]) return;
+  if (usesWakeWord(behaviour.listenMode)) return; // the session already has it
+  listeningOnce = true;
+  micOpen = true;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    // What is clickable in the front window RIGHT NOW. Only the one-shot
+    // modes can do this: the always-on grammar is compiled once, and by the
+    // time you speak the front window will be a different one.
+    const onScreen = (await invoke<string[]>("clickables").catch(() => [])) ?? [];
+    const heard = await invoke<{ kind: string; text?: string; why?: string }>("listen_once", {
+      phrases: spokenPhrases(programNames, onScreen),
+    });
+    if (heard.kind === "text" && heard.text) {
+      applySpoken(heard.text);
+    } else if (heard.kind === "unavailable" && heard.why) {
+      say({ kind: "speech", text: heard.why, seconds: 10 });
+    }
+    // "nothing" is silent on purpose: in hover mode this fires whenever the
+    // cursor rests on him, and "I didn't catch that" every time would be a
+    // character that complains about being looked at.
+  } catch {
+    // A failed listen is not worth a bubble; the character is still there.
+  } finally {
+    listeningOnce = false;
+    micOpen = false;
+  }
+}
+
+/** Whether a microphone is open right now, for the indicator. */
+let micOpen = false;
+
+export function isMicOpen(): boolean {
+  return micOpen || wakeRunning;
+}
+
+/** True while the wake session is up, so we do not start it twice. */
+let wakeRunning = false;
+
+/**
+ * Bring always-on listening into line with the habit.
+ *
+ * Called whenever the habit changes and once at startup. The phrase list is
+ * the same closed vocabulary push-to-talk uses, plus the wake words — an empty
+ * list is refused by Rust rather than started, because the fallback for an
+ * empty grammar is continuous dictation.
+ */
+/**
+ * Change how much of the time Loaf may listen.
+ *
+ * Exported through the closet rather than set directly, so that widening
+ * access always passes through one place that can say so out loud.
+ */
+export function setListenMode(mode: ListenMode): void {
+  const before = behaviour.listenMode;
+  if (before === mode) return;
+  behaviour.listenMode = mode;
+  saveHabits(browserStore(), behaviour);
+  announceCloset();
+  void syncListening();
+}
+
+async function syncListening(): Promise<void> {
+  if (!hasTauriHost()) return;
+  const want = usesWakeWord(behaviour.listenMode);
+  if (want === wakeRunning) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  if (want) {
+    // The gate and the grammar must agree, or Loaf would listen for one word
+    // and answer to another.
+    wakeGate.words = wakeWordsFor(behaviour.wakeWord);
+    const phrases = [...spokenPhrases(programNames), ...wakePhrases(behaviour.wakeWord)];
+    try {
+      await invoke("start_wake", { phrases });
+      wakeRunning = true;
+      const word = wakeGate.words[0] ?? "hey loaf";
+      say({ kind: "speech", text: `Listening. Say \u201c${word}\u201d.`, seconds: 6 });
+    } catch (e) {
+      wakeRunning = false;
+      behaviour.listenMode = "off";
+      announceCloset();
+      say({ kind: "speech", text: String(e), seconds: 10 });
+    }
+  } else {
+    try {
+      await invoke("stop_wake");
+    } catch {
+      // Already stopped is not a problem worth reporting.
+    }
+    wakeRunning = false;
+    wakeGate.reset();
+  }
+}
+
+/**
+ * Program names, for the spoken vocabulary.
+ *
+ * The companion needs its own copy because it owns the wake session; the
+ * dashboard reads its own for push-to-talk.
+ */
+let programNames: readonly string[] = [];
+
+const speaker = new Speaker(browserSynth());
+// Restored before anything can speak, so a chosen voice survives a restart.
+speaker.preferred = loadVoice(browserStore());
+
 function say(payload: BubblePayload): void {
   if (!hasTauriHost()) return;
   // ASLEEP MEANS QUIET. One gate, here, rather than a condition at every call
@@ -1181,6 +1479,14 @@ function say(payload: BubblePayload): void {
   // The preview card is exempt: it only appears because the cursor is on him,
   // which is a question, not an interruption.
   if (toldToSleep && payload.kind !== "preview") return;
+  // Spoken here rather than at the call sites, for the same reason the sleep
+  // gate is here: one place that every bubble passes through. A preview card
+  // is never spoken — it appears because the cursor is resting on him, and
+  // reading a hover card aloud would be startling.
+  if (payload.kind === "speech") {
+    speaker.enabled = behaviour.talking;
+    speaker.speak(payload.text);
+  }
   void emit(BUBBLE_SHOW_EVENT, payload).catch((err) => {
     console.error("could not say that", err);
   });
@@ -1553,6 +1859,15 @@ function wireInteraction(): void {
   let dwell: number | undefined;
   canvas!.addEventListener("mouseenter", () => {
     hovering = true;
+    // Hover-to-talk opens the microphone on the same dwell the preview card
+    // uses, rather than the instant the cursor crosses him: the cursor passes
+    // over the companion on its way to everything else in that corner, and a
+    // microphone that opened each time would be open most of the day.
+    if (behaviour.listenMode === "hover") {
+      window.setTimeout(() => {
+        if (hovering) void listenOnce();
+      }, HOVER_DWELL_MS);
+    }
     clearTimeout(dwell);
     dwell = window.setTimeout(() => {
       // Only if still hovering, and never on top of something being said.
@@ -1633,6 +1948,14 @@ function wireInteraction(): void {
         return;
       }
       makeNoise("greeting");
+      // In click-to-talk the click is the microphone button, and opening the
+      // dashboard on top of it would bury the one thing you wanted to see:
+      // whether he is listening. The dashboard is still on the right-click
+      // menu, the tray, and a double tap.
+      if (behaviour.listenMode === "push") {
+        void listenOnce();
+        return;
+      }
       // Opens IMMEDIATELY. This used to wait 260ms to see whether a second tap
       // was coming, and the first Mac testers reported the click "doesn't work"
       // and rage-clicked. They were right, and the delay caused the very thing
@@ -1895,6 +2218,48 @@ if (hasTauriHost()) {
   void listen(CLOSET_HELLO_EVENT, () => announceCloset()).catch(() => {
     // The closet falls back to reading storage itself.
   });
+  // Everything the always-on session matched. Most of it is ignored: the gate
+  // decides what was addressed to Loaf, and while the microphone is open and
+  // nobody is talking to the cat, "ignored" is the normal outcome.
+  void listen<{ text: string }>("loaf://voice/heard", (e) => {
+    const verdict = wakeGate.heard(e.payload.text);
+    if (verdict.justWoke) {
+      say({ kind: "speech", text: "Mm?", seconds: 4 });
+      return;
+    }
+    if (verdict.command !== null) applySpoken(verdict.command);
+  }).catch(() => {
+    // No host, no listening.
+  });
+
+  // The session can end without being asked — a device change, a sleep. The
+  // habit is turned back off so the indicator cannot claim a microphone that
+  // is not open.
+  void listen<string>("loaf://voice/stopped", (e) => {
+    wakeRunning = false;
+    wakeGate.reset();
+    if (usesWakeWord(behaviour.listenMode)) {
+      behaviour.listenMode = "off";
+      announceCloset();
+      if (e.payload) say({ kind: "speech", text: e.payload, seconds: 10 });
+    }
+  }).catch(() => {
+    // No host, no listening.
+  });
+
+  // The program list first, then listening: starting a wake session before the
+  // names arrive would compile a grammar that cannot hear "open Notepad", and
+  // the grammar is fixed for the life of the session.
+  void invokeSafe<{ name: string }[]>("list_apps").then((apps) => {
+    // Voice still works for everything that is not a program name, so a null
+    // here needs no message.
+    if (apps) programNames = apps.map((a) => a.name);
+    // Restores a mode the user chose in an earlier session. syncListening is
+    // the only thing that opens a microphone, and it does nothing unless the
+    // stored mode is "always".
+    void syncListening();
+  });
+
   void listen(SPOKEN_EVENT, (e) => applySpoken(e.payload)).catch(() => {
     // The command box is one of two ways in; the menu still works.
   });

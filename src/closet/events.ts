@@ -11,6 +11,7 @@
  */
 
 import { isHabit } from "../behaviour/habits";
+import { isListenMode, type ListenMode } from "../voice/mode";
 
 export const CLOSET_PICK_EVENT = "loaf://closet/pick";
 export const CLOSET_CHANGED_EVENT = "loaf://closet/changed";
@@ -30,6 +31,12 @@ export type ClosetPick =
   | { readonly kind: "pixelated"; readonly on: boolean }
   | { readonly kind: "habit"; readonly habit: string; readonly on: boolean }
   | { readonly kind: "muted"; readonly on: boolean }
+  /** How much of the time Loaf may listen. See voice/mode.ts. */
+  | { readonly kind: "listenMode"; readonly mode: ListenMode }
+  /** Which local voice speaks. Null means let Loaf choose. */
+  | { readonly kind: "voice"; readonly name: string | null }
+  /** A wake word of your own. Null restores the built-in ones. */
+  | { readonly kind: "wakeWord"; readonly word: string | null }
   /** An empty or whitespace-only name is how the user resets to the default. */
   | { readonly kind: "rename"; readonly name: string };
 
@@ -77,6 +84,12 @@ export interface ClosetStatePayload {
   readonly names: Readonly<Record<string, string>>;
   readonly habits: Readonly<Record<string, boolean>>;
   readonly muted: boolean;
+  readonly listenMode: ListenMode;
+  /** Local voices only — a remote one is never offered. */
+  readonly voices: readonly string[];
+  readonly voice: string | null;
+  /** The chosen wake word, or null for the built-in ones. */
+  readonly wakeWord: string | null;
 }
 
 export function isClosetPick(v: unknown): v is ClosetPick {
@@ -91,6 +104,14 @@ export function isClosetPick(v: unknown): v is ClosetPick {
       return typeof p.on === "boolean";
     case "habit":
       return isHabit(p.habit) && typeof p.on === "boolean";
+    case "listenMode":
+      // Validated rather than trusted: this one decides whether a
+      // microphone is opened.
+      return isListenMode(p.mode);
+    case "voice":
+      return p.name === null || typeof p.name === "string";
+    case "wakeWord":
+      return p.word === null || typeof p.word === "string";
     case "rename":
       return typeof p.name === "string";
     default:

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseIntent,
   minutesIn,
+  percentIn,
   needsConfirmation,
   acknowledge,
   isAffirmative,
@@ -271,5 +272,85 @@ describe("the title is cleaned of the command's own words", () => {
     expect(parseIntent("add a task: review the 3 pull requests")).toMatchObject({
       title: "review the 3 pull requests",
     });
+  });
+});
+
+describe("driving the machine", () => {
+  it("reads a level out of a sentence", () => {
+    expect(percentIn("set volume to 50")).toBe(50);
+    expect(percentIn("set volume to fifty")).toBe(50);
+    expect(percentIn("seventy percent")).toBe(70);
+    expect(percentIn("twenty five")).toBe(25);
+    expect(percentIn("half")).toBe(50);
+    expect(percentIn("max")).toBe(100);
+    expect(percentIn("zero")).toBe(0);
+    expect(percentIn("no number here")).toBeNull();
+  });
+
+  it("refuses a level outside 0 to 100", () => {
+    expect(percentIn("set volume to 400")).toBeNull();
+  });
+
+  it.each([
+    ["set volume to 40", 40],
+    ["turn the volume to eighty", 80],
+    ["set the sound to 100", 100],
+  ])("understands %s", (text, percent) => {
+    expect(parseIntent(text)).toEqual({ kind: "volume.set", percent });
+  });
+
+  it("understands muting both ways", () => {
+    expect(parseIntent("mute")).toEqual({ kind: "volume.mute", on: true });
+    expect(parseIntent("unmute")).toEqual({ kind: "volume.mute", on: false });
+  });
+
+  it("understands relative volume", () => {
+    expect(parseIntent("volume up")).toEqual({ kind: "media", key: "volumeup" });
+    expect(parseIntent("volume down")).toEqual({ kind: "media", key: "volumedown" });
+  });
+
+  it("understands brightness", () => {
+    expect(parseIntent("set brightness to 70")).toEqual({
+      kind: "brightness.set",
+      percent: 70,
+    });
+  });
+
+  // "play" inside a longer sentence is far more often a word than a command.
+  it("only takes media keys as whole phrases", () => {
+    expect(parseIntent("play")).toEqual({ kind: "media", key: "playpause" });
+    expect(parseIntent("next track")).toEqual({ kind: "media", key: "nexttrack" });
+    expect(parseIntent("play some music")).toBeNull();
+  });
+
+  it("understands clicking something by name", () => {
+    expect(parseIntent("click save")).toEqual({ kind: "click", target: "save" });
+    expect(parseIntent("press the send button")).toEqual({
+      kind: "click",
+      target: "send button",
+    });
+  });
+
+  // The machine commands come first, so a program called "Volume" cannot
+  // shadow the volume control.
+  it("is not shadowed by the generic open matcher", () => {
+    expect(parseIntent("set volume to 30")).toMatchObject({ kind: "volume.set" });
+    expect(parseIntent("open notepad")).toMatchObject({ kind: "app.open" });
+  });
+
+  it("names what it understood, for every new intent", () => {
+    for (const text of [
+      "set volume to 40",
+      "mute",
+      "unmute",
+      "set brightness to 70",
+      "play",
+      "click save",
+    ]) {
+      const intent = parseIntent(text);
+      expect(intent, text).not.toBeNull();
+      expect(acknowledge(intent!).length).toBeGreaterThan(0);
+      expect(needsConfirmation(intent!)).toBe(false);
+    }
   });
 });

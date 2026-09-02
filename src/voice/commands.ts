@@ -36,6 +36,16 @@ export type Intent =
   | { readonly kind: "open"; readonly what: "dashboard" | "closet" | "timer" }
   | { readonly kind: "recap" }
   | { readonly kind: "report.today" }
+  | { readonly kind: "volume.set"; readonly percent: number }
+  | { readonly kind: "volume.mute"; readonly on: boolean }
+  | { readonly kind: "brightness.set"; readonly percent: number }
+  | { readonly kind: "media"; readonly key: string }
+  | { readonly kind: "click"; readonly target: string }
+  | { readonly kind: "level.ask"; readonly what: "volume" | "brightness" }
+  /** Typed only — see the note in the parser. */
+  | { readonly kind: "type"; readonly text: string }
+  | { readonly kind: "app.open"; readonly app: string }
+  | { readonly kind: "app.close"; readonly app: string }
   | { readonly kind: "reset.today"; readonly confirm: true }
   | { readonly kind: "forget.sites"; readonly confirm: true };
 
@@ -62,7 +72,7 @@ const WORD_NUMBERS: Readonly<Record<string, number>> = {
   eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
   fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
   nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
-  ninety: 90,
+  seventy: 70, eighty: 80, ninety: 90,
 };
 
 /**
@@ -97,6 +107,44 @@ export function minutesIn(text: string): number | null {
   const single = t.match(/\b(\w+)\s*(?:minutes?|mins?)\b/);
   if (single && WORD_NUMBERS[single[1]!] !== undefined) return WORD_NUMBERS[single[1]!]!;
 
+  return null;
+}
+
+/**
+ * A percentage out of a sentence, or null.
+ *
+ * Separate from `minutesIn` because the two disagree about bare numbers: in
+ * "focus for 25" the number is minutes, and in "set volume to 25" it is a
+ * percent. Sharing one parser would make each of them slightly wrong.
+ */
+export function percentIn(text: string): number | null {
+  const t = normalise(text);
+  if (/\bhalf\b/.test(t)) return 50;
+  if (/\b(max|maximum|full|all the way)\b/.test(t)) return 100;
+  if (/\b(min|minimum|zero|silent)\b/.test(t)) return 0;
+
+  const digits = t.match(/(\d{1,3})\s*(?:percent|%)?\b/);
+  if (digits) {
+    const value = Number(digits[1]);
+    return value >= 0 && value <= 100 ? value : null;
+  }
+  const compound = t.match(
+    /\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-](one|two|three|four|five|six|seven|eight|nine)\b/,
+  );
+  if (compound) {
+    const tens = WORD_NUMBERS[compound[1]!];
+    const ones = WORD_NUMBERS[compound[2]!];
+    if (tens !== undefined && ones !== undefined) return tens + ones;
+  }
+  const single = t.match(
+    /\b(ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|one hundred|hundred)\b/,
+  );
+  if (single) {
+    const word = single[1]!;
+    if (word === "hundred" || word === "one hundred") return 100;
+    const value = WORD_NUMBERS[word];
+    if (value !== undefined) return value;
+  }
   return null;
 }
 
@@ -201,6 +249,90 @@ export function parseIntent(raw: string): Intent | null {
     return { kind: "open", what: "dashboard" };
   }
 
+  // --- The machine itself.
+  //
+  // Before programs, so a machine with something called "Volume" installed
+  // cannot shadow the volume control.
+  if (/\b(volume|sound)\b/.test(t) && /\b(set|change|turn|make|put)\b/.test(t)) {
+    const percent = percentIn(t.replace(/\b(volume|sound)\b/g, " "));
+    if (percent !== null) return { kind: "volume.set", percent };
+  }
+  if (/\b(mute|silence)\b/.test(t) && !/\bun ?mute\b/.test(t)) {
+    return { kind: "volume.mute", on: true };
+  }
+  if (/\bun ?mute\b/.test(t)) return { kind: "volume.mute", on: false };
+  if (/\b(volume|sound)\b/.test(t) && /\b(up|louder|higher)\b/.test(t)) {
+    return { kind: "media", key: "volumeup" };
+  }
+  if (/\b(volume|sound)\b/.test(t) && /\b(down|quieter|lower)\b/.test(t)) {
+    return { kind: "media", key: "volumedown" };
+  }
+  if (/\b(brightness|screen|display)\b/.test(t) && /\b(set|change|turn|make|put|dim)\b/.test(t)) {
+    const percent = percentIn(t.replace(/\b(brightness|screen|display)\b/g, " "));
+    if (percent !== null) return { kind: "brightness.set", percent };
+  }
+
+  if (/\b(how (?:loud|high)|what.*volume)\b/.test(t)) {
+    return { kind: "level.ask", what: "volume" };
+  }
+  if (/\b(how bright|what.*brightness)\b/.test(t)) {
+    return { kind: "level.ask", what: "brightness" };
+  }
+
+  // --- Typing text out.
+  //
+  // Reachable from the command box and NOT from the microphone, and that is
+  // not an oversight: knowing what to type means free-form speech, and
+  // free-form speech on Windows is the online recogniser. It is deliberately
+  // absent from phrases.ts. See speech.rs.
+  const typing = raw.match(/^\s*type\s+(.+)$/i);
+  if (typing && typing[1]) {
+    const text = typing[1].trim();
+    if (text.length > 0) return { kind: "type", text };
+  }
+
+  // --- Media keys. Whole-phrase matches, because "play" inside a longer
+  // --- sentence is far more often a word than a command.
+  const MEDIA: Readonly<Record<string, string>> = {
+    play: "playpause",
+    pause: "playpause",
+    "play pause": "playpause",
+    "next track": "nexttrack",
+    "next song": "nexttrack",
+    skip: "nexttrack",
+    "previous track": "previoustrack",
+    "previous song": "previoustrack",
+  };
+  const media = MEDIA[t];
+  if (media !== undefined) return { kind: "media", key: media };
+
+  // --- Clicking something on screen by its name.
+  const clicking = t.match(/^(?:please\s+)?(?:click|press|tap)\s+(?:on\s+)?(?:the\s+)?(.+)$/);
+  if (clicking && clicking[1]) {
+    const target = clicking[1].trim();
+    if (target.length > 0) return { kind: "click", target };
+  }
+
+  // --- Programs on the machine.
+  //
+  // Deliberately after Loaf's own windows, so "open the closet" stays the
+  // closet even on a machine with a program called Closet. The name is passed
+  // through as heard; matching it against what is actually installed happens
+  // in Rust, where the list lives and the matching is tested.
+  const opening = t.match(/^(?:please\s+)?(?:open|launch|run)\s+(?:up\s+)?(?:my|the|a)?\s*(.+)$/);
+  if (opening && opening[1]) {
+    const app = opening[1].trim();
+    return app.length > 0 ? { kind: "app.open", app } : null;
+  }
+  // "stop" is deliberately not a closing word: it means the focus session,
+  // handled above, and a misheard "stop" shutting a program would be a
+  // genuinely bad surprise.
+  const closing = t.match(/^(?:please\s+)?(?:close|quit|exit)\s+(?:my|the|a)?\s*(.+)$/);
+  if (closing && closing[1]) {
+    const app = closing[1].trim();
+    return app.length > 0 ? { kind: "app.close", app } : null;
+  }
+
   // --- Reports
   if (/\b(recap|wrapped|my week|week card|share card)\b/.test(t)) return { kind: "recap" };
   if (/\b(how (?:long|much)|what did i do|how am i doing|summar(?:y|ise|ize))\b/.test(t)) {
@@ -238,6 +370,27 @@ export function acknowledge(intent: Intent): string {
       return "I'm up.";
     case "open":
       return `Opening the ${intent.what}.`;
+    case "volume.set":
+      return `Volume ${intent.percent}.`;
+    case "volume.mute":
+      return intent.on ? "Muted." : "Unmuted.";
+    case "brightness.set":
+      return `Brightness ${intent.percent}.`;
+    case "media":
+      return "Done.";
+    case "level.ask":
+      return `Checking the ${intent.what}.`;
+    case "type":
+      return `Typing: ${intent.text}`;
+    case "click":
+      return `Clicking ${intent.target}.`;
+    case "app.open":
+      return `Opening ${intent.app}.`;
+    case "app.close":
+      // Named rather than silent. This is what the X button does, so
+      // it is not destructive, but a mishearing should still be
+      // visible before the window goes.
+      return `Closing ${intent.app}.`;
     case "recap":
       return "Drawing your week.";
     case "report.today":
@@ -260,6 +413,11 @@ export const EXAMPLE_COMMANDS: readonly string[] = [
   "remind me to call the bank in 20 minutes",
   "add a task: write the spec, urgent",
   "open the closet",
+  "open notepad",
+  "close chrome",
+  "set volume to fifty",
+  "mute",
+  "set brightness to seventy",
   "how long have I been at it",
   "go quiet",
 ];
