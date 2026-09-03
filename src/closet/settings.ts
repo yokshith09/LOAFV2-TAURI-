@@ -91,6 +91,7 @@ export interface ClosetState {
   readonly hoverListenMs: number;
   readonly engine: EngineId;
   readonly engineAvailability: EngineAvailability;
+  readonly whisperDownload: { downloaded: number; total: number } | null;
 }
 
 /**
@@ -120,6 +121,7 @@ export class ClosetSettings {
   wakeWord: string | null = null;
   hoverListenMs = 5000;
   engine: EngineId = DEFAULT_ENGINE;
+  whisperDownload: { downloaded: number; total: number } | null = null;
   engineAvailability: EngineAvailability = {
     whisperModel: false,
     hostedConnected: false,
@@ -143,6 +145,7 @@ export class ClosetSettings {
       hoverListenMs: this.hoverListenMs,
       engine: this.engine,
       engineAvailability: this.engineAvailability,
+      whisperDownload: this.whisperDownload,
     };
   }
 

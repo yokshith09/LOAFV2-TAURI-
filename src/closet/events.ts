@@ -42,6 +42,8 @@ export type ClosetPick =
   | { readonly kind: "hoverListenMs"; readonly ms: number }
   /** Which recogniser to use. See voice/engine.ts. */
   | { readonly kind: "engine"; readonly id: EngineId }
+  /** Fetch and install the Whisper engine. Never triggered by picking it. */
+  | { readonly kind: "engine.download" }
   /** An empty or whitespace-only name is how the user resets to the default. */
   | { readonly kind: "rename"; readonly name: string };
 
@@ -99,6 +101,8 @@ export interface ClosetStatePayload {
   readonly engine: EngineId;
   /** What each engine needs before it can run. */
   readonly engineAvailability: EngineAvailability;
+  /** Progress of an in-flight Whisper download, or null when none is running. */
+  readonly whisperDownload: { downloaded: number; total: number } | null;
 }
 
 export function isClosetPick(v: unknown): v is ClosetPick {
@@ -127,6 +131,8 @@ export function isClosetPick(v: unknown): v is ClosetPick {
       // Checked rather than trusted: one of these sends audio off the
       // machine.
       return isEngineId(p.id);
+    case "engine.download":
+      return true;
     case "rename":
       return typeof p.name === "string";
     default:

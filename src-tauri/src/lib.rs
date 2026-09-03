@@ -32,6 +32,7 @@ pub mod speech;
 pub mod storage;
 pub mod transcribe;
 pub mod wake;
+pub mod whisper_setup;
 
 use platform::{ForegroundApp, PlatformProbe};
 use serde::Serialize;
@@ -1119,7 +1120,7 @@ fn recording_seconds() -> Option<u64> {
 /// different and much heavier thing to hold than a transcript, and nothing in
 /// the product needs it after this point.
 #[tauri::command(async)]
-fn stop_recording(binary: String, model: String) -> Result<String, String> {
+fn stop_recording(app: tauri::AppHandle, binary: String, model: String) -> Result<String, String> {
     let recording = RECORDING
         .lock()
         .map_err(|_| "recording lock poisoned")?
@@ -1128,7 +1129,7 @@ fn stop_recording(binary: String, model: String) -> Result<String, String> {
 
     let wav = transcribe::scratch_wav();
     let seconds = audio::stop(recording, &wav)?;
-    let setup = transcribe::WhisperSetup { binary, model };
+    let setup = resolved_whisper_setup(&app, binary, model)?;
     let result = if seconds < 0.5 {
         Ok(String::new())
     } else {
@@ -1140,9 +1141,76 @@ fn stop_recording(binary: String, model: String) -> Result<String, String> {
 
 /// Whether Whisper is ready, and what is missing when it is not.
 #[tauri::command(async)]
-fn whisper_status(binary: String, model: String) -> Option<String> {
-    let setup = transcribe::WhisperSetup { binary, model };
+fn whisper_status(app: tauri::AppHandle, binary: String, model: String) -> Option<String> {
+    let Ok(setup) = resolved_whisper_setup(&app, binary, model) else {
+        return Some(
+            "Whisper is not set up yet. It needs a whisper.cpp build and a model file.".into(),
+        );
+    };
     transcribe::missing(&setup).map(|m| transcribe::missing_reason(&m))
+}
+
+/// An explicit path if the user gave one; otherwise the location the
+/// in-app downloader installs to. This is what lets a customer who never
+/// typed a path still have Whisper work once they have downloaded it —
+/// `whisper_status`/`stop_recording` do not need to know which case they
+/// are in.
+fn resolved_whisper_setup(
+    app: &tauri::AppHandle,
+    binary: String,
+    model: String,
+) -> Result<transcribe::WhisperSetup, String> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let binary = if binary.trim().is_empty() {
+        whisper_setup::binary_path(&dir)
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        binary
+    };
+    let model = if model.trim().is_empty() {
+        whisper_setup::model_path(&dir)
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        model
+    };
+    Ok(transcribe::WhisperSetup { binary, model })
+}
+
+/// Total bytes the Whisper engine download will transfer, so the UI can show
+/// the size before the download starts — the same rule every engine in
+/// section 18 follows.
+#[tauri::command]
+fn whisper_download_size() -> u64 {
+    whisper_setup::total_bytes()
+}
+
+/// Whether the in-app download already completed.
+#[tauri::command(async)]
+fn whisper_installed(app: tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    let Ok(dir) = app.path().app_data_dir() else {
+        return false;
+    };
+    whisper_setup::is_installed(&dir)
+}
+
+/// Fetch and install the Whisper engine. Emits `loaf://whisper/progress`
+/// events as bytes arrive, so the closet can show a real progress bar rather
+/// than a spinner across a 190 MB download.
+///
+/// Nothing here runs until this command is called — picking the engine in
+/// the closet does not download it, only pressing the download button does.
+#[tauri::command(async)]
+fn download_whisper_engine(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let sink = app.clone();
+    whisper_setup::install(&dir, move |progress| {
+        let _ = sink.emit("loaf://whisper/progress", progress);
+    })
 }
 
 /// The titles of the tabs open in the front browser window.
@@ -1428,6 +1496,9 @@ pub fn run() {
             recording_seconds,
             stop_recording,
             whisper_status,
+            whisper_download_size,
+            whisper_installed,
+            download_whisper_engine,
             start_wake,
             stop_wake,
             wake_listening,

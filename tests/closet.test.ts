@@ -398,3 +398,36 @@ describe("habits and settings cannot drift apart", () => {
     expect(Object.values(habits).every((v) => typeof v === "boolean")).toBe(true);
   });
 });
+
+describe("the Whisper download row", () => {
+  it("offers a download button when Whisper is not ready", () => {
+    const s = fresh();
+    s.engine = "whisper";
+    const html = closetBody(s.read());
+    expect(html).toContain("data-whisper-download");
+    expect(html).toContain("190 MB");
+  });
+
+  it("shows a progress bar instead of the button while downloading", () => {
+    const s = fresh();
+    s.engine = "whisper";
+    s.whisperDownload = { downloaded: 95_000_000, total: 190_000_000 };
+    const html = closetBody(s.read());
+    expect(html).not.toContain("data-whisper-download");
+    expect(html).toContain("whisper-fill");
+    expect(html).toContain("50%");
+  });
+
+  it("shows neither once Whisper is ready", () => {
+    const s = fresh();
+    s.engine = "whisper";
+    s.engineAvailability = {
+      builtinReady: true,
+      whisperModel: true,
+      hostedConnected: false,
+    };
+    const html = closetBody(s.read());
+    expect(html).not.toContain("data-whisper-download");
+    expect(html).not.toContain("whisper-fill");
+  });
+});

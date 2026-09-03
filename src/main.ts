@@ -326,6 +326,9 @@ function applyClosetPick(raw: unknown): void {
       saveHabits(browserStore(), behaviour);
       announceCloset();
       return;
+    case "engine.download":
+      void downloadWhisperEngine();
+      return;
     case "engine":
       // Only ever set to something that can actually run. resolveEngine falls
       // back to the local recogniser, never to the hosted one.
@@ -782,6 +785,7 @@ function announceCloset(): void {
   closet.hoverListenMs = behaviour.hoverListenMs;
   closet.engine = behaviour.engine;
   closet.engineAvailability = engineAvailability();
+  closet.whisperDownload = whisperDownload;
   closetState = closet.read();
   void emit(CLOSET_CHANGED_EVENT, closetState).catch(() => {
     // The closet will still be right the next time it is opened.
@@ -1590,13 +1594,54 @@ let programNames: readonly string[] = [];
 function engineAvailability(): EngineAvailability {
   return {
     builtinReady: speechAvailable,
-    whisperModel: false,
+    whisperModel: whisperReady,
     hostedConnected: false,
   };
 }
 
 /** Set once the Windows recogniser has proved it can compile a constraint. */
 let speechAvailable = false;
+/** Set once the in-app downloader has installed a working Whisper engine. */
+let whisperReady = false;
+
+/**
+ * Ask Rust whether Whisper is already installed, and update the closet if
+ * that answer changed — called at startup and again after a download
+ * finishes, since a download is the only thing that can make this true.
+ */
+async function refreshWhisperReady(): Promise<void> {
+  if (!hasTauriHost()) return;
+  const ready = (await invokeSafe<boolean>("whisper_installed")) ?? false;
+  if (ready !== whisperReady) {
+    whisperReady = ready;
+    announceCloset();
+  }
+}
+
+/**
+ * Fetch and install the Whisper engine, reporting progress into the closet.
+ *
+ * Nothing here runs until the user presses the download button — selecting
+ * the engine in the picker does not trigger this.
+ */
+async function downloadWhisperEngine(): Promise<void> {
+  if (!hasTauriHost()) return;
+  whisperDownload = { downloaded: 0, total: await invokeSafe<number>("whisper_download_size") ?? 0 };
+  announceCloset();
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("download_whisper_engine");
+    await refreshWhisperReady();
+  } catch (e) {
+    say({ kind: "speech", text: String(e), seconds: 12 });
+  } finally {
+    whisperDownload = null;
+    announceCloset();
+  }
+}
+
+/** Progress of an in-flight Whisper download, or null when none is running. */
+let whisperDownload: { downloaded: number; total: number } | null = null;
 
 /**
  * Noticing meetings, without listening to them.
@@ -2422,6 +2467,17 @@ if (hasTauriHost()) {
   void invokeSafe<boolean>("speech_available").then((ok) => {
     speechAvailable = ok === true;
     announceCloset();
+  });
+  void refreshWhisperReady();
+
+  void listen<{ stage: "binary" | "model"; downloaded: number; total: number }>(
+    "loaf://whisper/progress",
+    (e) => {
+      whisperDownload = { downloaded: e.payload.downloaded, total: e.payload.total };
+      announceCloset();
+    },
+  ).catch(() => {
+    // No host, no progress to show.
   });
 
   void invokeSafe<{ name: string }[]>("list_apps").then((apps) => {

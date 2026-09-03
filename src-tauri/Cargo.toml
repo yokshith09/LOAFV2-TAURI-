@@ -35,6 +35,13 @@ thiserror = "2"
 # and is deliberately not used. See audio.rs.
 cpal = "0.15"
 hound = "3"
+# Fetching the optional whisper.cpp binary and model on request. Blocking
+# rather than async: these are Tauri (async) commands already running on the
+# thread pool, and a blocking read loop is what makes byte-by-byte progress
+# reporting straightforward.
+ureq = "2"
+# Only the release zip needs unzipping; the model is a plain file download.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Windows: foreground-window and idle detection come straight from Win32.
 [target.'cfg(windows)'.dependencies.windows]

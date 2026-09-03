@@ -74,6 +74,13 @@ export const CLOSET_CSS = `
   .habit input { accent-color:var(--site); margin:0; }
   .listen { display:flex; flex-direction:column; gap:6px; }
   .listen .why { font-size:11.5px; line-height:1.45; opacity:.78; margin:2px 0 0; }
+  .whisper-dl-btn { width:100%; margin-top:6px; padding:8px; border-radius:8px;
+    border:1px solid var(--edge); background:var(--card); color:var(--ink);
+    font:inherit; font-size:12.5px; cursor:pointer; }
+  .whisper-dl-btn:hover { border-color:var(--site); }
+  .whisper-bar { height:6px; border-radius:4px; background:var(--edge); overflow:hidden;
+    margin-top:8px; }
+  .whisper-fill { height:100%; background:var(--site); transition:width .2s; }
   .listen input { width:100%; padding:7px 8px; border-radius:8px; margin-top:2px;
     border:1px solid var(--edge); background:var(--card); color:var(--ink);
     font:inherit; font-size:12.5px; }
@@ -188,7 +195,34 @@ function engineRow(state: ClosetState): string {
     `<div class="listen${leavesMachine(state.engine) ? " hot" : ""}">` +
     `<select data-engine>${options}</select>` +
     `<p class="why">${escapeHTML(info.summary)}</p>` +
+    `${whisperDownloadRow(state)}` +
     "</div>"
+  );
+}
+
+/**
+ * The Whisper download: a button before it starts, a progress bar during, and
+ * nothing once it is installed.
+ *
+ * Shown only when Whisper is not already ready — the size is stated on the
+ * button itself, so nothing downloads as a surprise.
+ */
+function whisperDownloadRow(state: ClosetState): string {
+  if (state.whisperDownload) {
+    const { downloaded, total } = state.whisperDownload;
+    const pct = total > 0 ? Math.round((downloaded / total) * 100) : 0;
+    const mb = (n: number) => (n / 1_000_000).toFixed(0);
+    return (
+      `<div class="whisper-dl">` +
+      `<div class="whisper-bar"><div class="whisper-fill" style="width:${pct}%"></div></div>` +
+      `<p class="why">Downloading Whisper… ${mb(downloaded)} / ${mb(total)} MB</p>` +
+      "</div>"
+    );
+  }
+  if (!unavailableReason("whisper", state.engineAvailability)) return "";
+  return (
+    `<button type="button" class="whisper-dl-btn" data-whisper-download>` +
+    "Download Whisper (about 190 MB)</button>"
   );
 }
 

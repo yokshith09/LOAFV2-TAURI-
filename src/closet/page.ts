@@ -111,6 +111,9 @@ function render(state: ClosetState): void {
     send({ kind: "listenMode", mode: listen.value as ListenMode });
   });
 
+  const whisperBtn = root.querySelector<HTMLButtonElement>("[data-whisper-download]");
+  whisperBtn?.addEventListener("click", () => send({ kind: "engine.download" }));
+
   const engine = root.querySelector<HTMLSelectElement>("[data-engine]");
   engine?.addEventListener("change", () =>
     send({ kind: "engine", id: engine.value as EngineId }),
