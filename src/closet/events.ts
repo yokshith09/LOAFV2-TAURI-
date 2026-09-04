@@ -30,6 +30,8 @@ export type ClosetPick =
   | { readonly kind: "companion"; readonly id: string }
   | { readonly kind: "outfit"; readonly id: string }
   | { readonly kind: "pixelated"; readonly on: boolean }
+  /** How see-through the window is. See ClosetState’s own doc comment. */
+  | { readonly kind: "opacity"; readonly percent: number }
   | { readonly kind: "habit"; readonly habit: string; readonly on: boolean }
   | { readonly kind: "muted"; readonly on: boolean }
   /** How much of the time Loaf may listen. See voice/mode.ts. */
@@ -66,6 +68,7 @@ export function isClosetState(v: unknown): v is ClosetStatePayload {
   if (typeof s.companionId !== "string" || s.companionId.length === 0) return false;
   if (typeof s.outfitId !== "string" || s.outfitId.length === 0) return false;
   if (typeof s.pixelated !== "boolean") return false;
+  if (typeof s.opacity !== "number" || !Number.isFinite(s.opacity)) return false;
   if (typeof s.names !== "object" || s.names === null || Array.isArray(s.names)) {
     return false;
   }
@@ -88,6 +91,8 @@ export interface ClosetStatePayload {
   readonly companionId: string;
   readonly outfitId: string;
   readonly pixelated: boolean;
+  /** How see-through the window is, 40 to 100. See ClosetState's own doc. */
+  readonly opacity: number;
   readonly names: Readonly<Record<string, string>>;
   readonly habits: Readonly<Record<string, boolean>>;
   readonly muted: boolean;
@@ -115,6 +120,8 @@ export function isClosetPick(v: unknown): v is ClosetPick {
     case "pixelated":
     case "muted":
       return typeof p.on === "boolean";
+    case "opacity":
+      return typeof p.percent === "number" && Number.isFinite(p.percent);
     case "habit":
       return isHabit(p.habit) && typeof p.on === "boolean";
     case "listenMode":

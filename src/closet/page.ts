@@ -148,6 +148,13 @@ function render(state: ClosetState): void {
     send({ kind: "pixelated", on: pixel.checked }),
   );
 
+  const opacity = root.querySelector<HTMLInputElement>("#opacity");
+  // On "input", not "change": a slider should show what it is doing as you
+  // drag it, not only once you let go.
+  opacity?.addEventListener("input", () =>
+    send({ kind: "opacity", percent: Number(opacity.value) }),
+  );
+
   const name = root.querySelector<HTMLInputElement>("#petname");
   // On `change`, not on every keystroke: a rename per character would rewrite
   // storage eighteen times for one word and re-render the whole closet under

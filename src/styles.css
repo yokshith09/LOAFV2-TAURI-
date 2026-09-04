@@ -70,3 +70,66 @@ body {
     --reduced-motion: 1;
   }
 }
+
+/**
+ * The status badge: what the microphone is doing, or a download in progress.
+ * One small pill in a screen corner, updated by main.ts, hidden by default.
+ * Never blocks a click — this is information, not a control.
+ */
+.status-badge {
+  position: fixed;
+  left: 4px;
+  bottom: 4px;
+  font: 600 9px/1 ui-monospace, "JetBrains Mono", Consolas, monospace;
+  color: #fff;
+  padding: 3px 6px;
+  border-radius: 8px;
+  pointer-events: none;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity 0.2s;
+}
+
+.status-badge[hidden] {
+  display: none;
+}
+
+.status-badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+/* Waiting for a wake word: dim, steady. The microphone is open but nothing
+   said so far was addressed to Loaf, which is the common state and should
+   not look alarming. */
+.status-badge.armed {
+  background: rgba(20, 18, 14, 0.72);
+  color: #9ad1ff;
+}
+
+/* Awake and expecting a command, or a one-shot recognition in flight: this
+   is the state that should actually catch your eye. */
+.status-badge.hot {
+  background: rgba(178, 58, 58, 0.85);
+  color: #fff;
+}
+.status-badge.hot .dot {
+  animation: status-pulse 1s ease-in-out infinite;
+}
+
+/* A download running. Distinct colour so it is never mistaken for the
+   microphone being on. */
+.status-badge.downloading {
+  background: rgba(20, 18, 14, 0.82);
+  color: #ffd479;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

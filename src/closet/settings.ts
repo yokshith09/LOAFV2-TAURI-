@@ -55,6 +55,7 @@ export function browserStore(): SettingsStore {
 const K_COMPANION = "closet.companion";
 const K_OUTFIT = "closet.outfit";
 const K_PIXELATED = "closet.pixelated";
+const K_OPACITY = "closet.opacity";
 const K_NAMES = "closet.names";
 
 /** The sentinel for "no outfit", so the stored value is never an empty string. */
@@ -68,6 +69,13 @@ export interface ClosetState {
   /** `"none"`, the seasonal sentinel, or a garment id. Never null. */
   readonly outfitId: string;
   readonly pixelated: boolean;
+  /**
+   * How see-through the companion window is, 40 to 100. 100 is fully opaque
+   * — today's look — and the floor is 40 rather than 0 so the character can
+   * always still be found and clicked; a pet that could be dialled to
+   * invisible is a pet that gets lost.
+   */
+  readonly opacity: number;
   /** Custom names by companion id. Absent means "call it what it ships as". */
   readonly names: Readonly<Record<string, string>>;
   /**
@@ -101,6 +109,23 @@ export interface ClosetState {
  * clears a name — the reference treats an empty field as the reset, and a name
  * of three spaces is an empty field with extra steps.
  */
+/** Floor and ceiling for the opacity slider. See the ClosetState doc comment. */
+export const MIN_OPACITY = 40;
+export const MAX_OPACITY = 100;
+
+export function clampOpacity(percent: number): number {
+  if (!Number.isFinite(percent)) return MAX_OPACITY;
+  return Math.round(Math.min(MAX_OPACITY, Math.max(MIN_OPACITY, percent)));
+}
+
+/** A stored value that is missing or unusable falls back to fully opaque —
+ * never to something a hand-edited or corrupt file could make invisible. */
+function readOpacity(raw: string | null): number {
+  if (raw === null) return MAX_OPACITY;
+  const n = Number(raw);
+  return Number.isFinite(n) ? clampOpacity(n) : MAX_OPACITY;
+}
+
 export function normaliseName(raw: string): string | null {
   const trimmed = raw.trim().slice(0, MAX_NAME_LENGTH);
   return trimmed.length === 0 ? null : trimmed;
@@ -135,6 +160,7 @@ export class ClosetSettings {
       companionId: this.store.getItem(K_COMPANION) ?? DEFAULT_COMPANION_ID,
       outfitId: this.store.getItem(K_OUTFIT) ?? NO_OUTFIT,
       pixelated: this.store.getItem(K_PIXELATED) === "1",
+      opacity: readOpacity(this.store.getItem(K_OPACITY)),
       names: this.readNames(),
       habits: this.habits,
       muted: this.muted,
@@ -182,6 +208,10 @@ export class ClosetSettings {
 
   setPixelated(on: boolean): void {
     this.store.setItem(K_PIXELATED, on ? "1" : "0");
+  }
+
+  setOpacity(percent: number): void {
+    this.store.setItem(K_OPACITY, String(clampOpacity(percent)));
   }
 
   /**

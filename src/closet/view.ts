@@ -1,7 +1,14 @@
 import { escapeHTML } from "../dashboard/html";
 import { grouped, GROUP_NOTES } from "../companions/registry";
 import { OUTFITS, SEASONAL_ID, seasonalLabel } from "../outfits/registry";
-import { displayName, NO_OUTFIT, MAX_NAME_LENGTH, type ClosetState } from "./settings";
+import {
+  displayName,
+  NO_OUTFIT,
+  MAX_NAME_LENGTH,
+  MIN_OPACITY,
+  MAX_OPACITY,
+  type ClosetState,
+} from "./settings";
 import { habitsFor, HABIT_LABELS } from "../behaviour/habits";
 import { findCompanion } from "../companions/registry";
 import { LISTEN_MODES, LABELS, DESCRIPTIONS } from "../voice/mode";
@@ -79,6 +86,10 @@ export const CLOSET_CSS = `
     font:inherit; font-size:12.5px; cursor:pointer; }
   .whisper-dl-btn:hover { border-color:var(--site); }
   .whisper-ready { color:var(--site); font-weight:600; }
+  .disclosure { list-style:none; margin:0; padding:0; display:flex;
+    flex-direction:column; gap:7px; }
+  .disclosure li { font-size:12.5px; line-height:1.5; padding:8px 10px;
+    border:1px solid var(--edge); border-radius:8px; background:var(--card); }
   .whisper-bar { height:6px; border-radius:4px; background:var(--edge); overflow:hidden;
     margin-top:8px; }
   .whisper-fill { height:100%; background:var(--site); transition:width .2s; }
@@ -199,6 +210,44 @@ function engineRow(state: ClosetState): string {
     `${whisperDownloadRow(state)}` +
     "</div>"
   );
+}
+
+/**
+ * One consolidated answer to "what can this thing actually do", pulled from
+ * state the closet already tracks rather than a separate source of truth.
+ *
+ * Deliberately plain sentences rather than a settings grid: the granular
+ * controls for each of these already exist above, each with its own
+ * description. This is the summary a person reads once to know what is true
+ * right now, not another place to change anything.
+ */
+function disclosurePanel(state: ClosetState): string {
+  const engineInfo = ENGINE_INFO[state.engine];
+  const rows: string[] = [
+    `<b>Speech recognition:</b> ${escapeHTML(engineInfo.label)}. ` +
+      `${leavesMachine(state.engine) ? "Audio leaves this device." : "Audio never leaves this device."}`,
+    `<b>Always listening:</b> ${
+      state.listenMode === "always"
+        ? `On — answers to “${escapeHTML(state.wakeWord ?? "hey loaf")}”.`
+        : state.listenMode === "off"
+          ? "Off."
+          : `Not continuous — ${escapeHTML(LABELS[state.listenMode])}.`
+    }`,
+    `<b>Meeting recording:</b> ${
+      unavailableReason("whisper", state.engineAvailability)
+        ? "Not available — needs Whisper downloaded above."
+        : "Ready. Your microphone only, and only when you say yes."
+    }`,
+    `<b>Talking back:</b> ${
+      state.habits.talking === true
+        ? state.voices.length > 0
+          ? "On, with a local voice — never a remote one."
+          : "On, but no local voice is installed, so it stays silent."
+        : "Off."
+    }`,
+    `<b>External connections (MCP):</b> None configured. This will get its own screen — not built yet.`,
+  ];
+  return `<ul class="disclosure">${rows.map((r) => `<li>${r}</li>`).join("")}</ul>`;
 }
 
 /**
@@ -343,6 +392,11 @@ export function closetBody(state: ClosetState): string {
       <span>Pixel art</span>
     </label>
   </div>
+  <label class="field">
+    <span class="flabel">See-through (${state.opacity}%)</span>
+    <input id="opacity" type="range" min="${MIN_OPACITY}" max="${MAX_OPACITY}"
+           value="${state.opacity}">
+  </label>
   <p class="fine">Leave the name empty to go back to ${escapeHTML(defaultName)}.
   Names are kept per character, so renaming this one won't rename the rest.</p>
 
@@ -353,6 +407,11 @@ export function closetBody(state: ClosetState): string {
   <p class="fine">Wandering is off until you say otherwise — you put the window
   where it is, and a pet that starts crossing a screen you're working on, unasked,
   is a bug report.</p>
+
+  <h2>What Loaf can do right now</h2>
+  <p class="fine">One place for everything above, in plain sentences — what
+  hears you, where anything it hears would go, and what does not exist yet.</p>
+  ${disclosurePanel(state)}
 
   <h2>What they wear</h2>
   <div class="chips">${chips}</div>

@@ -277,6 +277,13 @@ function applyClosetPick(raw: unknown): void {
       closet.setPixelated(raw.on);
       say({ kind: "speech", text: raw.on ? LINES.pixelOn : LINES.pixelOff, seconds: 6 });
       break;
+    case "opacity":
+      // No spoken confirmation: dragging a slider already shows what it is
+      // doing, and a line said on every tick of a drag would talk over
+      // itself.
+      closet.setOpacity(raw.percent);
+      applyOpacity(closet.read().opacity);
+      break;
     case "rename": {
       // Names are per character: renaming the cat must not rename the dog.
       const chosen = normaliseName(raw.name);
@@ -818,6 +825,17 @@ function adoptClosetState(): void {
     curlDirector.canLoaf = canCurl(companion);
   }
   pixelated = closetState.pixelated;
+  applyOpacity(closetState.opacity);
+}
+
+/**
+ * How see-through the companion window is, applied as plain CSS opacity on
+ * the whole page. Set once per change rather than every render frame — a
+ * style property does not need to be reapplied sixty times a second to stay
+ * in effect.
+ */
+function applyOpacity(percent: number): void {
+  document.body.style.opacity = String(percent / 100);
 }
 
 // --- The ambient layer -------------------------------------------------------
@@ -1496,6 +1514,7 @@ async function listenOnce(): Promise<void> {
   if (usesWakeWord(behaviour.listenMode)) return; // the session already has it
   listeningOnce = true;
   micOpen = true;
+  updateStatusBadge();
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     // What is clickable in the front window RIGHT NOW. Only the one-shot
@@ -1518,6 +1537,7 @@ async function listenOnce(): Promise<void> {
   } finally {
     listeningOnce = false;
     micOpen = false;
+    updateStatusBadge();
   }
 }
 
@@ -1530,6 +1550,46 @@ export function isMicOpen(): boolean {
 
 /** True while the wake session is up, so we do not start it twice. */
 let wakeRunning = false;
+
+/**
+ * The always-visible answer to "is it actually listening right now" and
+ * "how is that download going" — the two questions that kept coming up
+ * without one. A DOM badge in a screen corner, updated here rather than
+ * inferred by the reader from four different pieces of state.
+ *
+ * Priority order when more than one thing is true: a download is the most
+ * temporary and the most likely to be actively watched, so it wins over the
+ * listening state while it runs.
+ */
+function updateStatusBadge(): void {
+  const el = document.getElementById("status-badge");
+  if (!el) return;
+
+  if (whisperDownload && whisperDownload.total > 0) {
+    const pct = Math.round((whisperDownload.downloaded / whisperDownload.total) * 100);
+    el.className = "status-badge downloading";
+    el.innerHTML = `<span class="dot"></span>Whisper ${pct}%`;
+    el.hidden = false;
+    return;
+  }
+
+  if (wakeRunning) {
+    const hot = wakeGate.isAwake;
+    el.className = `status-badge ${hot ? "hot" : "armed"}`;
+    el.innerHTML = `<span class="dot"></span>${hot ? "Listening…" : "Hey Loaf"}`;
+    el.hidden = false;
+    return;
+  }
+
+  if (micOpen) {
+    el.className = "status-badge hot";
+    el.innerHTML = `<span class="dot"></span>Listening…`;
+    el.hidden = false;
+    return;
+  }
+
+  el.hidden = true;
+}
 
 /**
  * Bring always-on listening into line with the habit.
@@ -1567,12 +1627,14 @@ async function syncListening(): Promise<void> {
     try {
       await invoke("start_wake", { phrases });
       wakeRunning = true;
+      updateStatusBadge();
       const word = wakeGate.words[0] ?? "hey loaf";
       say({ kind: "speech", text: `Listening. Say \u201c${word}\u201d.`, seconds: 6 });
     } catch (e) {
       wakeRunning = false;
       behaviour.listenMode = "off";
       announceCloset();
+      updateStatusBadge();
       say({ kind: "speech", text: String(e), seconds: 10 });
     }
   } else {
@@ -1583,6 +1645,7 @@ async function syncListening(): Promise<void> {
     }
     wakeRunning = false;
     wakeGate.reset();
+    updateStatusBadge();
   }
 }
 
@@ -1639,6 +1702,7 @@ async function downloadWhisperEngine(): Promise<void> {
   if (!hasTauriHost()) return;
   whisperDownload = { downloaded: 0, total: await invokeSafe<number>("whisper_download_size") ?? 0 };
   announceCloset();
+  updateStatusBadge();
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("download_whisper_engine");
@@ -1648,6 +1712,7 @@ async function downloadWhisperEngine(): Promise<void> {
   } finally {
     whisperDownload = null;
     announceCloset();
+    updateStatusBadge();
   }
 }
 
@@ -2493,6 +2558,7 @@ if (hasTauriHost()) {
   // nobody is talking to the cat, "ignored" is the normal outcome.
   void listen<{ text: string }>("loaf://voice/heard", (e) => {
     const verdict = wakeGate.heard(e.payload.text);
+    updateStatusBadge();
     if (verdict.justWoke) {
       say({ kind: "speech", text: "Mm?", seconds: 4 });
       return;
@@ -2508,6 +2574,7 @@ if (hasTauriHost()) {
   void listen<string>("loaf://voice/stopped", (e) => {
     wakeRunning = false;
     wakeGate.reset();
+    updateStatusBadge();
     if (usesWakeWord(behaviour.listenMode)) {
       behaviour.listenMode = "off";
       announceCloset();
@@ -2531,6 +2598,7 @@ if (hasTauriHost()) {
     (e) => {
       whisperDownload = { downloaded: e.payload.downloaded, total: e.payload.total };
       announceCloset();
+      updateStatusBadge();
     },
   ).catch(() => {
     // No host, no progress to show.

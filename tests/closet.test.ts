@@ -339,6 +339,7 @@ describe("state arriving from the companion", () => {
         companionId: "dog-husky",
         outfitId: "scarf",
         pixelated: true,
+        opacity: 100,
         names: { "dog-husky": "Wolfgang" },
         habits: { loafing: true, playing: true, wandering: false },
         muted: false,
@@ -452,5 +453,70 @@ describe("the Whisper-is-ready confirmation", () => {
     const html = closetBody(s.read());
     expect(html.toLowerCase()).toContain("meeting");
     expect(html).toContain("data-whisper-download");
+  });
+});
+
+describe("window opacity", () => {
+  it("defaults to fully opaque", () => {
+    expect(fresh().read().opacity).toBe(100);
+  });
+
+  it("keeps a chosen value across a restart", () => {
+    const store = new MemorySettingsStore();
+    new ClosetSettings(store).setOpacity(65);
+    expect(new ClosetSettings(store).read().opacity).toBe(65);
+  });
+
+  it("clamps to a floor so the character can never be dialled invisible", () => {
+    const store = new MemorySettingsStore();
+    const s = new ClosetSettings(store);
+    s.setOpacity(5);
+    expect(s.read().opacity).toBe(40);
+    s.setOpacity(500);
+    expect(s.read().opacity).toBe(100);
+  });
+
+  it("falls back to opaque for a corrupt or hand-edited value", () => {
+    const store = new MemorySettingsStore();
+    store.setItem("closet.opacity", "not-a-number");
+    expect(new ClosetSettings(store).read().opacity).toBe(100);
+  });
+
+  it("rounds to a whole percent", () => {
+    const store = new MemorySettingsStore();
+    const s = new ClosetSettings(store);
+    s.setOpacity(72.6);
+    expect(s.read().opacity).toBe(73);
+  });
+});
+
+describe("the disclosure panel", () => {
+  it("names the active speech engine and where its audio goes", () => {
+    const s = fresh();
+    s.engine = "builtin";
+    let html = closetBody(s.read());
+    expect(html).toContain("never leaves this device");
+
+    s.engine = "hosted";
+    html = closetBody(s.read());
+    expect(html).toContain("Audio leaves this device");
+  });
+
+  it("names the wake word when always-listening is on", () => {
+    const s = fresh();
+    s.listenMode = "always";
+    s.wakeWord = "biscuit";
+    const html = closetBody(s.read());
+    expect(html).toContain("biscuit");
+  });
+
+  it("says meeting recording is not available until Whisper is ready", () => {
+    const s = fresh();
+    s.engineAvailability = { builtinReady: true, whisperModel: false, hostedConnected: false };
+    expect(closetBody(s.read())).toContain("Not available");
+  });
+
+  it("is honest that MCP connections do not have a UI yet", () => {
+    expect(closetBody(fresh().read())).toContain("not built yet");
   });
 });

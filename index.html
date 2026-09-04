@@ -9,6 +9,12 @@
   <body>
     <!-- The window itself is transparent; only the canvas paints. -->
     <canvas id="stage"></canvas>
+    <!-- What the microphone is doing right now, or a download in progress.
+         A DOM badge rather than drawn on the canvas: the canvas is authored
+         in a fixed 170x190 y-up space with y 166..190 reserved for the tab
+         badge strip, and fighting that coordinate system for a status dot
+         that only needs to sit in a screen corner was not worth it. -->
+    <div id="status-badge" class="status-badge" hidden></div>
     <!-- Diagnostics. Hidden by default; press D, or add ?debug=1 in dev. -->
     <div id="probe" hidden></div>
     <script type="module" src="/src/main.ts"></script>
