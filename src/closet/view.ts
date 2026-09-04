@@ -78,6 +78,7 @@ export const CLOSET_CSS = `
     border:1px solid var(--edge); background:var(--card); color:var(--ink);
     font:inherit; font-size:12.5px; cursor:pointer; }
   .whisper-dl-btn:hover { border-color:var(--site); }
+  .whisper-ready { color:var(--site); font-weight:600; }
   .whisper-bar { height:6px; border-radius:4px; background:var(--edge); overflow:hidden;
     margin-top:8px; }
   .whisper-fill { height:100%; background:var(--site); transition:width .2s; }
@@ -219,10 +220,16 @@ function whisperDownloadRow(state: ClosetState): string {
       "</div>"
     );
   }
-  if (!unavailableReason("whisper", state.engineAvailability)) return "";
+  if (!unavailableReason("whisper", state.engineAvailability)) {
+    // Named explicitly rather than left implicit: the download lives under a
+    // "voice engine" picker, and its main practical use right now is
+    // meetings, which is not obvious from that label alone. This is the
+    // confirmation that the connection actually worked.
+    return `<p class="why whisper-ready">Whisper is ready — dictation and meeting recording both use it.</p>`;
+  }
   return (
     `<button type="button" class="whisper-dl-btn" data-whisper-download>` +
-    "Download Whisper (about 190 MB)</button>"
+    "Download Whisper — for dictation and meeting transcription (about 190 MB)</button>"
   );
 }
 

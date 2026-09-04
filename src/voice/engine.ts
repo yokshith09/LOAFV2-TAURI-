@@ -71,7 +71,8 @@ export const ENGINE_INFO: Readonly<Record<EngineId, EngineInfo>> = {
     freeText: true,
     audio: "this-device",
     summary:
-      "Understands anything you say, including dictation. Audio is processed on " +
+      "Understands anything you say, including dictation. Also what records and " +
+      "transcribes meetings — the same download does both. Audio is processed on " +
       "this device.",
     requires: "A one-time model download, around 190 MB.",
   },

@@ -431,3 +431,26 @@ describe("the Whisper download row", () => {
     expect(html).not.toContain("whisper-fill");
   });
 });
+
+describe("the Whisper-is-ready confirmation", () => {
+  it("names meetings once Whisper is installed, not just dictation", () => {
+    const s = fresh();
+    s.engine = "whisper";
+    s.engineAvailability = {
+      builtinReady: true,
+      whisperModel: true,
+      hostedConnected: false,
+    };
+    const html = closetBody(s.read());
+    expect(html).toContain("whisper-ready");
+    expect(html.toLowerCase()).toContain("meeting");
+  });
+
+  it("names meetings on the download button too, before anyone clicks it", () => {
+    const s = fresh();
+    s.engine = "whisper";
+    const html = closetBody(s.read());
+    expect(html.toLowerCase()).toContain("meeting");
+    expect(html).toContain("data-whisper-download");
+  });
+});

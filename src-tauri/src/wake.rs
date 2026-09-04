@@ -24,6 +24,19 @@
 //! and easy to change. This file starts a session, forwards what it heard, and
 //! stops. Putting the timing rules in Rust would have made the one part with
 //! real edge cases the one part that cannot be tested.
+//!
+//! THE BUG THIS FILE USED TO HAVE, RECORDED SO IT IS NOT REINTRODUCED. WinRT's
+//! `SpeechContinuousRecognitionSession` stops ITSELF after a period of
+//! silence, by default. That is not an edge case for an always-on wake word —
+//! it is the normal state, since most of the time nobody is talking to Loaf.
+//! The first version of this file never set `AutoStopSilenceTimeout` and never
+//! listened for the session's own `Completed` event, so once the OS silently
+//! stopped the session, `LISTENING` stayed `true`, the closet still said
+//! "Always", and nothing was actually listening — forever, with no error and
+//! no way for the user to know short of trying the wake word and getting
+//! nothing back. Fixed two ways: the silence timeout is set to effectively
+//! never, and `Completed` is handled by restarting the same session rather
+//! than leaving it dead.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -69,16 +82,29 @@ pub fn stop() {}
 mod imp {
     use super::{HeardPhrase, HEARD_EVENT, LISTENING, NO_PHRASES, STOPPED_EVENT};
     use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex};
     use tauri::Emitter;
     use windows::core::HSTRING;
     use windows::Foundation::Collections::IIterable;
+    use windows::Foundation::TimeSpan;
     use windows::Foundation::TypedEventHandler;
     use windows::Media::SpeechRecognition::{
+        SpeechContinuousRecognitionCompletedEventArgs,
         SpeechContinuousRecognitionResultGeneratedEventArgs, SpeechContinuousRecognitionSession,
         SpeechRecognitionConfidence, SpeechRecognitionListConstraint,
         SpeechRecognitionResultStatus, SpeechRecognizer,
     };
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+
+    /// WinRT's own silence auto-stop, set as close to "never" as the type
+    /// allows: 24 hours, in the 100-nanosecond ticks `TimeSpan` counts in.
+    /// Always-on listening is meant to run for as long as the setting is on,
+    /// not for as long as someone happens to keep talking.
+    fn effectively_never() -> TimeSpan {
+        TimeSpan {
+            Duration: 24 * 60 * 60 * 10_000_000,
+        }
+    }
 
     /// Set to ask the listening thread to wind the session up.
     static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -190,6 +216,12 @@ mod imp {
         let session: SpeechContinuousRecognitionSession = recognizer
             .ContinuousRecognitionSession()
             .map_err(|e| e.to_string())?;
+        // See the module doc comment: without this, ordinary silence — the
+        // normal state of an always-on wake word — stops the session on its
+        // own.
+        session
+            .SetAutoStopSilenceTimeout(effectively_never())
+            .map_err(|e| e.to_string())?;
 
         let sink = app.clone();
         session
@@ -223,6 +255,31 @@ mod imp {
             }))
             .map_err(|e| e.to_string())?;
 
+        // `Completed` fires whenever the session stops running — deliberately
+        // (StopAsync, below) or not (silence, an audio device change, another
+        // app taking the microphone). Recording that it fired, and why, is
+        // what turns "silently dead forever" into "restarted" or, after
+        // repeated failures, an actual reported reason instead of a mystery.
+        let died = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let last_status: Arc<Mutex<Option<SpeechRecognitionResultStatus>>> =
+            Arc::new(Mutex::new(None));
+        let died_for_handler = Arc::clone(&died);
+        let status_for_handler = Arc::clone(&last_status);
+        session
+            .Completed(&TypedEventHandler::<
+                SpeechContinuousRecognitionSession,
+                SpeechContinuousRecognitionCompletedEventArgs,
+            >::new(move |_, args| {
+                if let Some(args) = args.as_ref() {
+                    if let Ok(status) = args.Status() {
+                        *status_for_handler.lock().unwrap() = Some(status);
+                    }
+                }
+                died_for_handler.store(true, Ordering::SeqCst);
+                Ok(())
+            }))
+            .map_err(|e| e.to_string())?;
+
         session
             .StartAsync()
             .and_then(|op| op.get())
@@ -230,10 +287,39 @@ mod imp {
 
         let _ = ready.send(Ok(()));
 
-        // Nothing to do but stay alive: the session runs on its own and calls
-        // back into the handler above. Polling a flag rather than blocking so
-        // that stopping is prompt and does not need the thread to be killed.
+        // A restart budget rather than an unconditional retry loop: five
+        // restarts within a rolling minute is almost certainly a transient
+        // hiccup (another app briefly took the microphone); more than that is
+        // more likely something actually wrong — no microphone, a driver
+        // problem — and restarting forever would hide that behind a mode
+        // that LOOKS on but never hears anything, the exact failure this
+        // rewrite exists to fix.
+        let mut restarts_in_window = 0u32;
+        let mut window_started = std::time::Instant::now();
+
         while !STOP.load(Ordering::SeqCst) {
+            if died.swap(false, Ordering::SeqCst) {
+                if window_started.elapsed() > std::time::Duration::from_secs(60) {
+                    restarts_in_window = 0;
+                    window_started = std::time::Instant::now();
+                }
+                restarts_in_window += 1;
+                if restarts_in_window > 5 {
+                    let status = last_status.lock().ok().and_then(|mut s| s.take());
+                    return Err(format!(
+                        "Speech kept stopping on its own ({status:?} last time) even after \
+                         several restarts, so Loaf gave up rather than loop forever."
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                // The SAME session object, not a new one: `ResultGenerated` and
+                // `Completed` are attached to the session for its whole
+                // lifetime, so calling `StartAsync` again resumes it without
+                // re-registering either handler.
+                if let Err(e) = session.StartAsync().and_then(|op| op.get()) {
+                    return Err(format!("Could not restart listening: {e}"));
+                }
+            }
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
 

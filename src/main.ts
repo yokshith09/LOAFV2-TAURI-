@@ -474,6 +474,15 @@ function usualDaySeconds(): number | null {
  * would let an unrelated "yes" ten minutes later delete somebody's history, and
  * a confirmation nobody remembers giving is not a confirmation.
  */
+/**
+ * Which meeting (by its `where`) has already been asked about, so the
+ * prompt fires once per meeting rather than once per tick for as long as
+ * the call runs.
+ */
+let meetingPrompted: string | null = null;
+/** True while a meeting recording is actually running — do not ask again. */
+let recordingNow = false;
+
 let pendingIntent: { intent: Intent; until: number } | null = null;
 const CONFIRM_WINDOW_MS = 30_000;
 
@@ -664,6 +673,7 @@ async function startRecording(): Promise<void> {
     }
     const device = await invoke<string | null>("microphone_name");
     await invoke("start_recording");
+    recordingNow = true;
     say({
       kind: "speech",
       text: `Recording ${device ?? "your microphone"}. Say "stop recording" when you are done.`,
@@ -683,6 +693,7 @@ async function startRecording(): Promise<void> {
 async function stopRecording(): Promise<void> {
   if (!hasTauriHost()) return;
   const { invoke } = await import("@tauri-apps/api/core");
+  recordingNow = false;
   say({ kind: "speech", text: "Transcribing… this can take a minute.", seconds: 8 });
   try {
     const text = await invoke<string>("stop_recording", {
@@ -2284,6 +2295,35 @@ async function pollPlatform(): Promise<void> {
       // webview.
       void invokeSafe("save_meetings", { json: JSON.stringify(meetings) });
       say({ kind: "speech", text: `That was ${describeMeeting(finished)}.`, seconds: 8 });
+      meetingPrompted = null;
+    } else if (meetingWatch.current === null) {
+      // Nothing running — e.g. the call was too short to count (section
+      // 20's minimum) and never reached `finished`. Cleared here too, or the
+      // next real meeting under the same app name would never be asked about.
+      meetingPrompted = null;
+    }
+
+    // Ask once, right when a call is first noticed — not after the meeting
+    // has been running a while, and not on every tick of an ongoing one. This
+    // reuses the SAME confirmation pipeline "record this meeting" already
+    // goes through: arming `pendingIntent` here means a spoken or TYPED "yes"
+    // answers it, because the dashboard's command box and the microphone both
+    // already feed into `applySpoken`. No separate UI had to be built for
+    // this to be answerable both ways.
+    if (
+      meetingWatch.current !== null &&
+      meetingWatch.current !== meetingPrompted &&
+      !recordingNow &&
+      pendingIntent === null
+    ) {
+      meetingPrompted = meetingWatch.current;
+      const intent: Intent = { kind: "record.start", confirm: true };
+      pendingIntent = { intent, until: Date.now() + CONFIRM_WINDOW_MS };
+      say({
+        kind: "speech",
+        text: `In ${meetingWatch.current}. ${acknowledge(intent)}`,
+        seconds: 12,
+      });
     }
     sleeping = lastTickResult === "idle";
     if (lastTickResult === "breakDue") nudge();
