@@ -2024,6 +2024,13 @@ function wireInteraction(): void {
     // it out from under them, and treat where they drop it as the new home.
     draggingWindow = true;
     wander.abort();
+    // A drag never fires mouseleave — the window moves WITH the cursor, so
+    // the DOM never sees it leave. Without this, a drag lasting longer than
+    // the hover-listen dwell opened the microphone mid-drag: the cursor
+    // "hovering" was really a drag the whole time, and the timer had no way
+    // to know the difference. Same reasoning applies to the preview dwell.
+    clearTimeout(dwell);
+    clearTimeout(listenDwell);
     // Hand the window to the OS. From here the webview stops seeing the
     // gesture, so there is no mouseup to wait for — reset on the way out.
     void invokeSafe("start_drag");
@@ -2058,7 +2065,10 @@ function wireInteraction(): void {
     clearTimeout(listenDwell);
     if (behaviour.listenMode === "hover") {
       listenDwell = window.setTimeout(() => {
-        if (hovering) void listenOnce();
+        // Defence in depth: dragging clears this timer at the moment a drag
+        // starts, but a drag beginning in the instant between the timer
+        // firing and this check would otherwise still slip through.
+        if (hovering && !dragging) void listenOnce();
       }, behaviour.hoverListenMs);
     }
     clearTimeout(dwell);
