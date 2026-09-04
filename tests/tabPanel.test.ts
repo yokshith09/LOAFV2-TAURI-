@@ -47,3 +47,19 @@ describe("the tab panel", () => {
     expect(html).toContain("&lt;img");
   });
 });
+
+describe("the tab count", () => {
+  it("shows how many are open, not just the rows", () => {
+    const html = tabPanel(["One", "Two", "Three"], true);
+    expect(html).toContain("Browser tabs (3)");
+  });
+
+  it("shows zero honestly rather than omitting the count", () => {
+    expect(tabPanel([], true)).toContain("Browser tabs (0)");
+  });
+
+  it("does not claim a count when it could not read them at all", () => {
+    const html = tabPanel([], false);
+    expect(html).not.toMatch(/\(\d+\)/);
+  });
+});

@@ -388,10 +388,17 @@ function taskBlock(tasks: readonly TaskView[]): string {
  */
 export function tabPanel(tabs: readonly string[], read: boolean): string {
   if (!read) {
-    return '<div class="tp"><p class="empty">Loaf could not read the browser tabs.</p></div>';
+    return (
+      `<h2>Browser tabs</h2>` +
+      `<div class="tp"><p class="empty">Loaf could not read the browser tabs.</p></div>`
+    );
   }
+  // The count is the answer to the question this panel exists to solve —
+  // "how many do I actually have open" — and it was previously nowhere on
+  // this panel at all, only the rows themselves.
+  const heading = `Browser tabs (${tabs.length})`;
   if (tabs.length === 0) {
-    return '<div class="tp"><p class="empty">No browser tabs open.</p></div>';
+    return `<h2>${heading}</h2><div class="tp"><p class="empty">No browser tabs open.</p></div>`;
   }
   const rows = tabs
     .map(
@@ -402,7 +409,7 @@ export function tabPanel(tabs: readonly string[], read: boolean): string {
         `</div>`,
     )
     .join("");
-  return `<div class="tp">${rows}</div>`;
+  return `<h2>${heading}</h2><div class="tp">${rows}</div>`;
 }
 
 /**

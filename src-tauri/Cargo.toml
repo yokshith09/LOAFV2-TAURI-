@@ -42,6 +42,10 @@ hound = "3"
 ureq = "2"
 # Only the release zip needs unzipping; the model is a plain file download.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# A native OS notification when a meeting is detected, so the ask-to-record
+# prompt is not missed just because nobody happened to be looking at the
+# character at that moment.
+tauri-plugin-notification = "2"
 
 # Windows: foreground-window and idle detection come straight from Win32.
 [target.'cfg(windows)'.dependencies.windows]

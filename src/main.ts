@@ -2319,10 +2319,16 @@ async function pollPlatform(): Promise<void> {
       meetingPrompted = meetingWatch.current;
       const intent: Intent = { kind: "record.start", confirm: true };
       pendingIntent = { intent, until: Date.now() + CONFIRM_WINDOW_MS };
-      say({
-        kind: "speech",
-        text: `In ${meetingWatch.current}. ${acknowledge(intent)}`,
-        seconds: 12,
+      const askText = `In ${meetingWatch.current}. ${acknowledge(intent)}`;
+      say({ kind: "speech", text: askText, seconds: 12 });
+      // A native OS notification alongside the bubble, in case nobody is
+      // looking at the character right when the call starts — which is the
+      // likely moment, since joining a meeting usually means looking at the
+      // meeting window instead. Best effort: see notify()'s own comment for
+      // why a failure here is not worth surfacing separately.
+      void invokeSafe("notify", {
+        title: `Record ${meetingWatch.current}?`,
+        body: "Your microphone only, never the other people. Answer in Loaf.",
       });
     }
     sleeping = lastTickResult === "idle";

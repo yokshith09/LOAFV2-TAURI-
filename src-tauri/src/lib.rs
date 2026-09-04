@@ -1243,6 +1243,18 @@ fn close_tab(title: String) -> Result<bool, String> {
     }
 }
 
+/// A native OS notification — the meeting-detected prompt uses this so it is
+/// not missed just because nobody happened to be looking at the character
+/// right then. Best effort: a denied or unavailable notification permission
+/// is not an error worth surfacing, since the bubble and spoken prompt (built
+/// separately, in TypeScript) already carry the same ask.
+#[tauri::command(async)]
+fn notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title(title).body(body).show();
+    Ok(())
+}
+
 /// Whether to offer a microphone button at all.
 ///
 /// Async because answering now means compiling a real constraint, which is the
@@ -1439,6 +1451,7 @@ fn open_feedback_page() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // A desktop pet is an accessory, not an application: no Dock icon,
             // no app switcher entry, and it never steals focus. This is the
@@ -1489,6 +1502,7 @@ pub fn run() {
             clickables,
             click_element,
             save_meetings,
+            notify,
             list_tabs,
             close_tab,
             microphone_name,
