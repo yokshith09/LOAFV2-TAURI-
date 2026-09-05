@@ -43,10 +43,20 @@ jobs:
         include:
           - os: macos-latest
             label: macOS
-            # Build a universal binary so one download serves both Apple
-            # Silicon and Intel Macs — testers should not have to know which
-            # they have. Matches what the Swift reference shipped.
-            args: --target universal-apple-darwin
+            # NATIVE ARM64, NOT UNIVERSAL — and this is why.
+            #
+            # The universal build has failed on every release attempt so far,
+            # v0.3.0 and v0.4.0 included, while CI's macOS bundle has passed
+            # every time. The only difference between them was this line: CI
+            # runs a plain `tauri:build`, the release added
+            # `--target universal-apple-darwin`. A release that has never once
+            # produced a .dmg is worth less than one that serves Apple Silicon.
+            #
+            # The cost is honest and stated in the notes: Intel Macs are not
+            # covered by this download. Restoring universal means working out
+            # why the x86_64 half will not cross-compile on an arm64 runner,
+            # which is its own job and not one to do inside a release.
+            args: ""
           - os: windows-latest
             label: Windows
             args: ""
@@ -97,7 +107,7 @@ jobs:
 
             | | |
             |---|---|
-            | **macOS** | `Loaf_${{ steps.ver.outputs.v }}_universal.dmg` — one file for Apple Silicon and Intel |
+            | **macOS** | `Loaf_${{ steps.ver.outputs.v }}_aarch64.dmg` — Apple Silicon. Intel Macs are not covered by this build yet. |
             | **Windows** | `Loaf_${{ steps.ver.outputs.v }}_x64-setup.exe` |
 
             ## First launch
