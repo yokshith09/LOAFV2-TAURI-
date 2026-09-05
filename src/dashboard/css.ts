@@ -479,3 +479,18 @@ export const MEETINGS_DELETE_CSS = `
     border:1px solid var(--edge); background:none; }
   .mt-forget-all:hover { border-color:#B03030; }
 `;
+
+/** The memory panel: what keeps coming up, and what with. */
+export const MEMORY_CSS = `
+  .mem-h { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--ink-soft); margin:16px 0 8px; }
+  .mem { list-style:none; margin:0; padding:0; display:flex;
+    flex-direction:column; gap:6px; }
+  .mem li { font-size:13px; display:flex; align-items:baseline; gap:8px;
+    flex-wrap:wrap; padding:7px 10px; border:1px solid var(--edge);
+    border-radius:9px; background:var(--card,#FFFDF9); }
+  .mem-n { font-size:11px; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+  /* The connections are the whole reason this is a graph, so they get the
+     accent rather than being greyed out as secondary detail. */
+  .mem-with { font-size:11.5px; color:var(--site); }
+`;

@@ -33,6 +33,10 @@ import {
   MEETINGS_STATE_EVENT,
   MEETINGS_HELLO_EVENT,
   MEETING_FORGET_EVENT,
+  MEMORY_STATE_EVENT,
+  MEMORY_HELLO_EVENT,
+  isMemorySnapshot,
+  type MemorySnapshot,
   isRadarSnapshot,
   isMeetingsSnapshot,
   type MeetingsSnapshot,
@@ -114,6 +118,9 @@ let settings: ClosetState | undefined;
  */
 let meetings: MeetingsSnapshot | undefined;
 
+/** What Loaf remembers, as the companion last said. See graph/graph.ts. */
+let memory: MemorySnapshot | undefined;
+
 /** Whether a microphone button is worth showing at all. See the note below. */
 let micUsable = false;
 
@@ -145,6 +152,7 @@ async function render(): Promise<void> {
       view: activeView,
       settings,
       meetings,
+      memory,
     });
     // The button is recreated on every render, so the decision to show it has
     // to be made again — otherwise it appears once and vanishes at the next
@@ -268,6 +276,7 @@ void detectPlatform()
   // until something unrelated happens to change and trigger a broadcast.
   .then(() => emit(CLOSET_HELLO_EVENT))
   .then(() => emit(MEETINGS_HELLO_EVENT))
+  .then(() => emit(MEMORY_HELLO_EVENT))
   .then(() => refreshTabs())
   .catch(() => {
     // No companion listening; the unavailable state above stands.
@@ -494,6 +503,15 @@ root.addEventListener("change", (ev) => {
     const typed = el.value.trim();
     sendPick({ kind: "wakeWord", word: typed.length === 0 ? null : typed });
   }
+});
+
+void listen(MEMORY_STATE_EVENT, (e) => {
+  if (!isMemorySnapshot(e.payload)) return;
+  memory = e.payload;
+  void render();
+}).catch(() => {
+  // No companion, so the panel stays absent rather than claiming an empty
+  // memory this window has not confirmed.
 });
 
 void listen(MEETINGS_STATE_EVENT, (e) => {

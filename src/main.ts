@@ -24,6 +24,8 @@ import {
   normaliseWakeWord,
   isWakeWord,
 } from "./voice/wake";
+import { KnowledgeGraph, type EntityKind } from "./graph/graph";
+import { observationsIn } from "./graph/extract";
 import {
   MeetingWatch,
   loadMeetings,
@@ -150,6 +152,8 @@ import {
   MEETINGS_STATE_EVENT,
   MEETINGS_HELLO_EVENT,
   MEETING_FORGET_EVENT,
+  MEMORY_STATE_EVENT,
+  MEMORY_HELLO_EVENT,
 } from "./dashboard/events";
 import {
   WaterGuide,
@@ -708,6 +712,10 @@ function runIntent(intent: Intent): void {
       break;
     case "meetings.forget":
       meetings = [];
+      // Every transcript gone means every connection drawn from one is gone.
+      memory.prune(Number.MAX_SAFE_INTEGER);
+      saveGraph();
+      announceMemory();
       saveMeetings(browserStore(), meetings);
       void invokeSafe("save_meetings", { json: JSON.stringify(meetings) });
       announceMeetings();
@@ -857,6 +865,10 @@ async function stopRecording(): Promise<void> {
     // find a transcript was to go looking for it. A minute of talking that
     // vanishes into an unnamed destination is indistinguishable from one that
     // was lost.
+    // Remembered against the meeting it came from, so the connections can be
+    // traced back to a source rather than floating free.
+    const fromMeeting = meetingWatch.current;
+    remember(text, fromMeeting === null ? null : { kind: "meeting", name: fromMeeting });
     const onMeeting = meetingWatch.note(text);
     if (!onMeeting) {
       tasks.add(text.slice(0, 200), "soon");
@@ -1402,6 +1414,42 @@ let radarReadsInsideBrowser = true;
  * window can never be a minute stale — which for this particular pill would
  * mean telling someone their microphone is off while it is on.
  */
+/**
+ * Tell the dashboard what Loaf remembers.
+ *
+ * Sent like every other piece of companion-owned state: this window is the
+ * only writer, and a second reader of the same storage would show a graph one
+ * transcript out of date.
+ */
+function announceMemory(): void {
+  if (!hasTauriHost()) return;
+  void emit(MEMORY_STATE_EVENT, {
+    people: memory.top("person", 8).map(entitySummary),
+    topics: memory.top("topic", 8).map(entitySummary),
+    total: memory.all().length,
+  }).catch(() => {
+    // The dashboard shows what it last heard.
+  });
+}
+
+function entitySummary(e: { id: string; name: string; mentions: number; lastSeen: number }): {
+  id: string;
+  name: string;
+  mentions: number;
+  lastSeen: number;
+  linked: readonly string[];
+} {
+  return {
+    id: e.id,
+    name: e.name,
+    mentions: e.mentions,
+    lastSeen: e.lastSeen,
+    // What each one connects to, which is the whole reason this is a graph
+    // and not two more lists.
+    linked: memory.neighbours(e.id, 4).map((n) => n.entity.name),
+  };
+}
+
 function announceMeetings(): void {
   if (!hasTauriHost()) return;
   const blocked = whisperReady
@@ -1650,6 +1698,8 @@ function applyTaskCommand(raw: unknown): void {
       const minutes =
         typeof raw.minutes === "number" && raw.minutes > 0 ? raw.minutes : undefined;
       const added = tasks.add(raw.title ?? "", priority, minutes);
+      // A note somebody typed is as much a memory as one Loaf transcribed.
+      if (added) remember(raw.title ?? "", null);
       if (added === null) return;
       break;
     }
@@ -2155,6 +2205,58 @@ let whisperDownload: { downloaded: number; total: number } | null = null;
  * See meetings/meetings.ts.
  */
 const meetingWatch = new MeetingWatch();
+
+/**
+ * What Loaf remembers about how things connect. See graph/graph.ts.
+ *
+ * Fed from transcripts and notes — text the user typed or a transcript of
+ * their own voice — and from nothing else. It is pruned on the same schedule
+ * the transcripts are, because a graph that outlived the notes it was built
+ * from would make "delete it" a promise only half kept.
+ */
+const memory = KnowledgeGraph.fromJSON(readGraph(browserStore()));
+
+const K_GRAPH = "memory.graph";
+
+function readGraph(store: ReturnType<typeof browserStore>): unknown {
+  const raw = store.getItem(K_GRAPH);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // A corrupt graph costs the connections, not the launch.
+    return null;
+  }
+}
+
+function saveGraph(): void {
+  browserStore().setItem(K_GRAPH, JSON.stringify(memory.toJSON()));
+}
+
+/**
+ * Fold a piece of text into the memory, tied to where it came from.
+ *
+ * Everything named in it is linked to the source AND to everything else named
+ * alongside it, which is what turns "Priya" and "pricing" appearing in the
+ * same meeting into an answer to "what do I keep discussing with Priya".
+ */
+function remember(text: string, source: { kind: EntityKind; name: string } | null): void {
+  const now = Date.now();
+  const found = observationsIn(text);
+  if (found.length === 0) return;
+
+  const ids = found.map((o) => memory.observe(o, now));
+  const sourceId = source === null ? null : memory.observe(source, now);
+
+  for (let i = 0; i < ids.length; i++) {
+    if (sourceId !== null) memory.link(ids[i]!, sourceId, "mentioned-in", now);
+    for (let j = i + 1; j < ids.length; j++) {
+      memory.link(ids[i]!, ids[j]!, "co-occurred", now);
+    }
+  }
+  saveGraph();
+  announceMemory();
+}
 let meetings: Meeting[] = loadMeetings(browserStore());
 
 /**
@@ -2171,6 +2273,10 @@ function applyRetention(): void {
   const dropped = meetings.length - kept.length;
   meetings = [...kept];
   saveMeetings(browserStore(), meetings);
+  // The graph is derived from those transcripts, so it goes with them.
+  // Otherwise deleting a transcript would leave its people and topics behind.
+  memory.prune(Date.now() - behaviour.transcriptRetentionDays * 24 * 60 * 60 * 1000);
+  saveGraph();
   void invokeSafe("save_meetings", { json: JSON.stringify(meetings) });
   announceMeetings();
   // Said out loud. Notes disappearing with no explanation is indistinguishable
@@ -3041,6 +3147,10 @@ if (hasTauriHost()) {
   }).catch(() => {
     // Without this the delete buttons are decoration, which is worth knowing.
     console.error("meeting deletes unavailable");
+  });
+
+  void listen(MEMORY_HELLO_EVENT, () => announceMemory()).catch(() => {
+    // The dashboard falls back to showing nothing remembered.
   });
 
   void listen(MEETINGS_HELLO_EVENT, () => announceMeetings()).catch(() => {

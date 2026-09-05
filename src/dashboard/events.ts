@@ -35,6 +35,34 @@ export const MEETINGS_STATE_EVENT = "loaf://meetings/state";
 /** Dashboard -> companion: "I have just opened, what is recording?" */
 export const MEETINGS_HELLO_EVENT = "loaf://meetings/hello";
 
+/** Companion -> dashboard: what Loaf remembers, and how it connects. */
+export const MEMORY_STATE_EVENT = "loaf://memory/state";
+/** Dashboard -> companion: "I have just opened, what do you remember?" */
+export const MEMORY_HELLO_EVENT = "loaf://memory/hello";
+
+/** One remembered thing, with what it is connected to. */
+export interface MemoryEntity {
+  readonly id: string;
+  readonly name: string;
+  readonly mentions: number;
+  readonly lastSeen: number;
+  readonly linked: readonly string[];
+}
+
+export interface MemorySnapshot {
+  readonly people: readonly MemoryEntity[];
+  readonly topics: readonly MemoryEntity[];
+  readonly total: number;
+}
+
+export function isMemorySnapshot(v: unknown): v is MemorySnapshot {
+  if (typeof v !== "object" || v === null) return false;
+  const m = v as Record<string, unknown>;
+  return (
+    Array.isArray(m.people) && Array.isArray(m.topics) && typeof m.total === "number"
+  );
+}
+
 /** One finished meeting, as the dashboard needs to list it. */
 export interface MeetingRow {
   readonly id: string;

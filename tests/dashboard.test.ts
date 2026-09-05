@@ -1011,3 +1011,53 @@ describe("the wake-word badge", () => {
     expect(wakeWordsFor(null)[0]).toBe("hey loaf");
   });
 });
+
+describe("the memory panel", () => {
+  const t = () => trackerWith({ Code: 40 }).tracker;
+  const mem = (over: Record<string, unknown> = {}) => ({
+    people: [{ id: "person:priya", name: "Priya", mentions: 4, lastSeen: 1, linked: ["pricing"] }],
+    topics: [{ id: "topic:pricing", name: "pricing", mentions: 6, lastSeen: 1, linked: ["Priya"] }],
+    total: 2,
+    ...over,
+  });
+
+  // Undefined means the companion has not answered. Rendering "no memories"
+  // would be a claim this window has not earned.
+  it("renders nothing at all before the companion has said anything", () => {
+    expect(dashboardHTML(t(), { view: "notes" })).not.toContain("What keeps coming up");
+  });
+
+  it("renders nothing when there is genuinely nothing remembered", () => {
+    const html = dashboardHTML(t(), {
+      view: "notes",
+      memory: mem({ people: [], topics: [], total: 0 }) as never,
+    });
+    expect(html).not.toContain("What keeps coming up");
+  });
+
+  // A list can already say what you wrote down. Only the connections justify
+  // a graph, so they have to be on screen.
+  it("shows what each thing connects to, not just a count", () => {
+    const html = dashboardHTML(t(), { view: "notes", memory: mem() as never });
+    expect(html).toContain("Priya");
+    expect(html).toContain("with pricing");
+    expect(html).toContain("6×");
+  });
+
+  // A memory you cannot audit is one that confidently misremembers.
+  it("states how it was built, and what it misses", () => {
+    const html = dashboardHTML(t(), { view: "notes", memory: mem() as never });
+    expect(html).toContain("no model");
+    expect(html).toContain("lower case");
+  });
+
+  it("escapes a remembered name, which came from user text", () => {
+    const html = dashboardHTML(t(), {
+      view: "notes",
+      memory: mem({
+        people: [{ id: "p", name: "<script>x</script>", mentions: 1, lastSeen: 1, linked: [] }],
+      }) as never,
+    });
+    expect(html).not.toContain("<script>x</script>");
+  });
+});

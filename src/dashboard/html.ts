@@ -7,8 +7,13 @@ import {
   MEETINGS_CSS,
   NOTES_CSS,
   MEETINGS_DELETE_CSS,
+  MEMORY_CSS,
 } from "./css";
-import { TANTRUM_OPTIONS, type MeetingsSnapshot } from "./events";
+import {
+  TANTRUM_OPTIONS,
+  type MeetingsSnapshot,
+  type MemorySnapshot,
+} from "./events";
 import {
   listenRow,
   holdRow,
@@ -161,6 +166,13 @@ export interface DashboardOptions {
    * which would be a claim this window has not earned yet.
    */
   readonly meetings?: MeetingsSnapshot;
+  /**
+   * What Loaf remembers, or undefined before the companion has said.
+   *
+   * Undefined renders nothing rather than "you have no memories", which would
+   * be a claim this window has not earned.
+   */
+  readonly memory?: MemorySnapshot;
   /** Browser tab titles, for the panel that lets you close them. */
   readonly tabs?: readonly string[];
   /** False when Loaf could not read them — different from none open. */
@@ -734,7 +746,13 @@ export function isDashboardView(v: unknown): v is DashboardView {
 
 /** The complete stylesheet for the full view. */
 export const DASHBOARD_STYLES =
-  BASE_CSS + PLUS_CSS + SETTINGS_CSS + MEETINGS_CSS + NOTES_CSS + MEETINGS_DELETE_CSS;
+  BASE_CSS +
+  PLUS_CSS +
+  SETTINGS_CSS +
+  MEETINGS_CSS +
+  NOTES_CSS +
+  MEETINGS_DELETE_CSS +
+  MEMORY_CSS;
 /** The complete stylesheet for the hover card. */
 export const MINI_STYLES = BASE_CSS + PLUS_CSS + MINI_CSS;
 
@@ -869,7 +887,7 @@ export function dashboardBody(
 
     ${panel("voice", voicePanel(opts))}
 
-    ${panel("notes", notesPanel(opts.tasks ?? []))}
+    ${panel("notes", notesPanel(opts.tasks ?? [], opts.memory))}
 
     ${panel("meetings", meetingsPanel(opts))}
 
@@ -1013,7 +1031,7 @@ function retentionRow(settings: ClosetState | undefined): string {
  * sentences, and a one-line box that scrolls sideways is how you end up with
  * notes nobody finishes typing.
  */
-function notesPanel(tasks: readonly TaskView[]): string {
+function notesPanel(tasks: readonly TaskView[], memory?: MemorySnapshot): string {
   const compose = `<div class="nt-compose">
     <textarea id="nt-title" class="nt-input" rows="3" maxlength="2000"
               placeholder="Write something down…" aria-label="New note"></textarea>
@@ -1031,9 +1049,13 @@ function notesPanel(tasks: readonly TaskView[]): string {
   </div>`;
 
   if (tasks.length === 0) {
+    // The memory panel goes on BOTH branches: what Loaf remembers is built
+    // from transcripts as much as from typed notes, so an empty board does
+    // not mean an empty memory.
     return `<h2>Notes</h2>${compose}
       <p class="empty">Nothing written down yet. Notes you add here, and anything
-      Loaf transcribes for you, show up as cards.</p>`;
+      Loaf transcribes for you, show up as cards.</p>
+      ${memoryPanel(memory)}`;
   }
 
   const cards = tasks
@@ -1057,7 +1079,49 @@ function notesPanel(tasks: readonly TaskView[]): string {
     .join("");
 
   return `<h2>Notes</h2>${compose}
-    <div class="nt-board">${cards}</div>`;
+    <div class="nt-board">${cards}</div>
+    ${memoryPanel(memory)}`;
+}
+
+/**
+ * What Loaf has noticed keeps coming up, and what it comes up with.
+ *
+ * THIS IS THE POINT OF THE GRAPH, and it is deliberately small. A list can
+ * already tell you what you wrote down; only a graph can tell you that Priya
+ * and pricing keep appearing together. So each row is a name, how often it has
+ * been seen, and what it is connected to — nothing else.
+ *
+ * EVERY ROW IS DERIVED FROM SOMETHING YOU WROTE OR SAID. There is no model
+ * here and no inference: names come from capitalisation, topics from repeated
+ * words. That is stated on the panel rather than left for someone to discover
+ * when it gets one wrong, because a memory you cannot audit is a memory that
+ * confidently misremembers.
+ */
+function memoryPanel(memory?: MemorySnapshot): string {
+  if (!memory || memory.total === 0) return "";
+
+  const rows = (list: readonly MemorySnapshot["people"][number][]): string =>
+    list
+      .map(
+        (e) =>
+          `<li><b>${escapeHTML(e.name)}</b> <span class="mem-n">${e.mentions}×</span>` +
+          (e.linked.length > 0
+            ? `<span class="mem-with">with ${escapeHTML(e.linked.join(", "))}</span>`
+            : "") +
+          `</li>`,
+      )
+      .join("");
+
+  const section = (title: string, list: readonly MemorySnapshot["people"][number][]): string =>
+    list.length === 0 ? "" : `<h3 class="mem-h">${title}</h3><ul class="mem">${rows(list)}</ul>`;
+
+  return `<h2>What keeps coming up</h2>
+    ${section("People", memory.people)}
+    ${section("Topics", memory.topics)}
+    <p class="note">Built only from your own notes and transcripts, by looking at
+    capitalisation and repeated words — no model, no guessing at meaning. It
+    will miss a name you wrote in lower case, and it forgets whatever your
+    retention window forgets.</p>`;
 }
 
 /**
