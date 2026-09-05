@@ -58,7 +58,16 @@ export type Intent =
   | { readonly kind: "record.start"; readonly confirm: true }
   | { readonly kind: "record.stop" }
   | { readonly kind: "reset.today"; readonly confirm: true }
-  | { readonly kind: "forget.sites"; readonly confirm: true };
+  | { readonly kind: "forget.sites"; readonly confirm: true }
+  /**
+   * Throw away every kept transcript.
+   *
+   * Confirmed like the other two destructive ones. Reached from a button
+   * rather than a sentence today — there is deliberately no spoken phrase for
+   * it, because "delete all my notes" is not something to be one mishearing
+   * away from.
+   */
+  | { readonly kind: "meetings.forget"; readonly confirm: true };
 
 /** Sessions Loaf will start from a sentence. Matches the timer's own presets. */
 export const MIN_SESSION_MINUTES = 1;
@@ -67,8 +76,86 @@ export const MAX_SESSION_MINUTES = 180;
 /** Used when a focus request names no length. The reference's default. */
 export const DEFAULT_SESSION_MINUTES = 25;
 
+/**
+ * Flatten a sentence to something the patterns below can match.
+ *
+ * WIDER THAN IT USED TO BE, BECAUSE WHISPER WRITES LIKE A PERSON. The closed
+ * Windows grammar could only ever return one of the phrases it was given —
+ * bare words, no punctuation — so stripping `.,!?` was enough. Whisper returns
+ * real prose: em dashes, semicolons, quotation marks, and hyphenated numbers.
+ * "Twenty-five minutes" is the one that actually bites: the spoken-number table
+ * has "twenty" and "five" as separate words, so a hyphen turned a working
+ * command into an unrecognised one.
+ *
+ * The apostrophe is deliberately KEPT. Stripping it turns "don't" into "don t",
+ * which breaks more than it fixes.
+ */
 function normalise(raw: string): string {
-  return raw.toLowerCase().replace(/[.,!?]+/g, " ").replace(/\s+/g, " ").trim();
+  return raw
+    .toLowerCase()
+    .replace(/[.,!?;:"“”]+/g, " ")
+    // Dashes become spaces rather than vanishing, or "twenty-five" would
+    // collapse to the single unknown word "twentyfive".
+    .replace(/[-–—]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Minutes from now until a clock time somebody named, or null.
+ *
+ * "Remind me about the meeting at 10" is how people actually say this, and the
+ * parser understood only "in ninety minutes" -- which means doing the
+ * subtraction in your head, at the exact moment you are trying to write
+ * something down so you do not have to think about it.
+ *
+ * `now` is injected so the rules that matter -- rolling to tomorrow, choosing
+ * between 10am and 10pm -- can be tested at a fixed time rather than whenever
+ * the suite happens to run.
+ *
+ * THE AMBIGUOUS CASE, decided deliberately: a bare "at 10" with no am or pm
+ * means the NEXT ten o'clock, morning or evening, whichever comes first.
+ * Someone saying it at nine in the morning means an hour away, and someone
+ * saying it at nine at night means an hour away too. Reading it as 24-hour
+ * would turn the second into a thirteen-hour wait.
+ */
+export function minutesUntilClockTime(text: string, now: Date): number | null {
+  const t = normalise(text);
+  // "at" is required. Without it, "focus for 10" would become ten o'clock --
+  // exactly the guess rule 1 at the top of this file forbids.
+  // The separator allows a SPACE as well as ":" and ".", because
+  // `normalise` above strips colons — it has to, so that Whisper's prose
+  // punctuation does not defeat the command patterns. That turns "10:15"
+  // into "10 15" long before it reaches here, and a pattern that only knew
+  // about colons quietly read it as ten o'clock.
+  const m = t.match(/\bat\s+(\d{1,2})(?:[:. ](\d{2}))?\s*(am|pm|o clock|oclock)?/);
+  if (!m) return null;
+
+  let hour = Number(m[1]);
+  const minute = m[2] === undefined ? 0 : Number(m[2]);
+  const suffix = m[3];
+  if (hour < 1 || hour > 24 || minute > 59) return null;
+
+  if (suffix === "pm" && hour < 12) hour += 12;
+  else if (suffix === "am" && hour === 12) hour = 0;
+  else if (hour === 24) hour = 0;
+
+  const target = new Date(now);
+  target.setHours(hour, minute, 0, 0);
+
+  if (suffix === undefined && hour < 12) {
+    const evening = new Date(target);
+    evening.setHours(hour + 12);
+    if (target.getTime() <= now.getTime() && evening.getTime() > now.getTime()) {
+      return Math.round((evening.getTime() - now.getTime()) / 60_000);
+    }
+  }
+  // A time that has already gone means tomorrow. A reminder set for a moment
+  // in the past is the one answer that is certainly wrong.
+  if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1);
+
+  const minutes = Math.round((target.getTime() - now.getTime()) / 60_000);
+  return minutes > 0 ? minutes : null;
 }
 
 /**
@@ -203,7 +290,7 @@ function titleAfter(raw: string, marker: RegExp): string | null {
  * Null is a real and common answer. See rule 1 at the top of this file: the
  * caller should say it did not understand, never do the closest thing.
  */
-export function parseIntent(raw: string): Intent | null {
+export function parseIntent(raw: string, now: Date = new Date()): Intent | null {
   if (typeof raw !== "string") return null;
   const t = normalise(raw);
   if (t.length === 0) return null;
@@ -239,11 +326,21 @@ export function parseIntent(raw: string): Intent | null {
   }
 
   // --- Tasks
-  const taskMarker = /\b(?:add(?: a)?(?: new)? (?:task|note|reminder)|remind me to|note down|task)\b:?\s*/i;
+  // "remind me ABOUT the meeting at 10" is how people phrase a reminder for
+  // a thing rather than an action, and it used to return null — no note, no
+  // reply that made sense, just nothing. "to" is for things you will do and
+  // "about"/"of" for things that will happen, and both are reminders.
+  const taskMarker =
+    /\b(?:add(?: a)?(?: new)? (?:task|note|reminder)|remind me (?:to|about|of)|note down|task)\b:?\s*/i;
   if (taskMarker.test(raw)) {
     const title = titleAfter(raw, taskMarker);
     if (title === null) return null;
-    const minutes = /\b(?:in|after)\b/.test(t) ? minutesIn(t) : null;
+    // A clock time first, then a relative one. "at 10" and "in 10" are
+    // different requests, and "at" is checked first so that "in ten minutes
+    // at the latest" is not read as ten o'clock.
+    const clock = minutesUntilClockTime(t, now);
+    const minutes =
+      clock !== null ? clock : /\b(?:in|after)\b/.test(t) ? minutesIn(t) : null;
     return {
       kind: "task.add",
       title,
@@ -442,6 +539,8 @@ export function acknowledge(intent: Intent): string {
       return "Clear everything recorded today? Say yes to confirm.";
     case "forget.sites":
       return "Forget all site data? Say yes to confirm.";
+    case "meetings.forget":
+      return "Delete every kept transcript? Say yes to confirm.";
   }
 }
 

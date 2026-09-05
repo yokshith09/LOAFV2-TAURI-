@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseIntent,
+  minutesUntilClockTime,
   minutesIn,
   percentIn,
   needsConfirmation,
@@ -416,5 +417,108 @@ describe("recording a meeting", () => {
   it("is not shadowed by anything else", () => {
     expect(parseIntent("record this meeting")).toMatchObject({ kind: "record.start" });
     expect(parseIntent("stop the focus session")).toMatchObject({ kind: "focus.stop" });
+  });
+});
+
+describe("sentences the way Whisper writes them", () => {
+  // The closed Windows grammar could only ever hand back one of the phrases it
+  // was given. Whisper hands back prose, and it reaches this parser now, so
+  // punctuation is no longer a thing that cannot happen.
+  it("understands a command that ends in a full stop", () => {
+    expect(parseIntent("Open Notepad.")).toEqual({ kind: "app.open", app: "notepad" });
+  });
+
+  it("understands a hyphenated spoken number", () => {
+    // The word-number table has "twenty" and "five" separately, so a hyphen
+    // used to turn a working command into an unrecognised one.
+    expect(parseIntent("start a twenty-five minute focus session")).toEqual({
+      kind: "focus.start",
+      minutes: 25,
+    });
+  });
+
+  it("survives an em dash and quotation marks", () => {
+    expect(parseIntent("Loaf — “go quiet”")).not.toBeNull();
+  });
+
+  it("still keeps apostrophes, which are part of the word", () => {
+    // Stripping these would turn "don't" into "don t", and an app called
+    // "Bob's Editor" into two words that match nothing.
+    expect(parseIntent("open Bob's Editor")).toEqual({
+      kind: "app.open",
+      app: "bob's editor",
+    });
+  });
+});
+
+describe("reminders at a clock time", () => {
+  // "Remind me about the meeting at 10" is how people say this. The parser
+  // understood only "in ninety minutes", which means doing the subtraction in
+  // your head at the moment you are writing something down to avoid thinking.
+  const at = (iso: string): Date => new Date(iso);
+
+  it("counts the minutes to a time later today", () => {
+    expect(minutesUntilClockTime("at 10", at("2026-09-05T08:30:00"))).toBe(90);
+    expect(minutesUntilClockTime("meeting at 10:15", at("2026-09-05T09:00:00"))).toBe(75);
+  });
+
+  it("rolls to tomorrow when the time has already gone", () => {
+    // A reminder set for a moment in the past is the one answer that is
+    // certainly wrong.
+    expect(minutesUntilClockTime("at 9am", at("2026-09-05T10:00:00"))).toBe(23 * 60);
+  });
+
+  it("reads a bare hour as whichever comes next, morning or evening", () => {
+    // Said at nine in the morning, "at 10" is an hour away.
+    expect(minutesUntilClockTime("at 10", at("2026-09-05T09:00:00"))).toBe(60);
+    // Said at nine at night it is also an hour away, not thirteen.
+    expect(minutesUntilClockTime("at 10", at("2026-09-05T21:00:00"))).toBe(60);
+  });
+
+  it("honours am and pm when they are given", () => {
+    expect(minutesUntilClockTime("at 4pm", at("2026-09-05T15:00:00"))).toBe(60);
+    expect(minutesUntilClockTime("at 12am", at("2026-09-05T23:00:00"))).toBe(60);
+    expect(minutesUntilClockTime("at 12pm", at("2026-09-05T11:00:00"))).toBe(60);
+  });
+
+  it("requires the word at, so a bare number is never a clock time", () => {
+    // Otherwise "focus for 10" becomes ten o'clock, which is exactly the guess
+    // rule 1 forbids.
+    expect(minutesUntilClockTime("focus for 10", at("2026-09-05T08:00:00"))).toBeNull();
+    expect(minutesUntilClockTime("in 10 minutes", at("2026-09-05T08:00:00"))).toBeNull();
+  });
+
+  it("refuses a time that is not one", () => {
+    expect(minutesUntilClockTime("at 99", at("2026-09-05T08:00:00"))).toBeNull();
+    expect(minutesUntilClockTime("at 10:99", at("2026-09-05T08:00:00"))).toBeNull();
+  });
+
+  it("sets a task timer from a clock time", () => {
+    const intent = parseIntent("remind me to join the meeting at 10", at("2026-09-05T08:30:00"));
+    expect(intent).toEqual({
+      kind: "task.add",
+      title: "join the meeting at 10",
+      priority: "soon",
+      minutes: 90,
+    });
+  });
+
+  // "remind me ABOUT the meeting" is a reminder for a thing rather than an
+  // action, and it used to return null: no note, and no reply that made sense.
+  it("understands remind me about, not only remind me to", () => {
+    for (const phrasing of [
+      "remind me about the meeting at 10",
+      "remind me of the meeting at 10",
+    ]) {
+      const intent = parseIntent(phrasing, at("2026-09-05T08:30:00"));
+      expect(intent?.kind).toBe("task.add");
+      expect(intent && "minutes" in intent ? intent.minutes : null).toBe(90);
+    }
+  });
+
+  it("still understands the relative form it always did", () => {
+    const intent = parseIntent("remind me to call the bank in 20 minutes", at("2026-09-05T08:00:00"));
+    expect(intent?.kind).toBe("task.add");
+    expect(intent && "minutes" in intent ? intent.minutes : null).toBe(20);
   });
 });

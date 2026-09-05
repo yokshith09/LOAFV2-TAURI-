@@ -9,6 +9,11 @@ import {
   meetingsOn,
   loadMeetings,
   saveMeetings,
+  pruneMeetings,
+  readRetentionDays,
+  retentionLabel,
+  isRetentionDays,
+  KEEP_FOREVER,
   MIN_MEETING_MS,
   AWAY_GRACE_MS,
   KEEP_MEETINGS,
@@ -248,4 +253,75 @@ describe("reporting", () => {
     seconds: 1800,
     notes: [],
   };
+});
+
+describe("how long transcripts are kept", () => {
+  const at = (iso: string) => new Date(iso).getTime();
+  const meeting = (id: string, endedAt: number): Meeting => ({
+    id,
+    where: "Zoom",
+    startedAt: endedAt - 600_000,
+    endedAt,
+    seconds: 600,
+    notes: [],
+  });
+
+  // Deleting someone's notes on a schedule they did not ask for is the worse
+  // of the two failures, so nothing is dropped until a window is chosen.
+  it("keeps everything forever by default", () => {
+    const old = [meeting("a", at("2020-01-01T10:00:00"))];
+    expect(pruneMeetings(old, KEEP_FOREVER, at("2026-09-05T10:00:00"))).toBe(old);
+  });
+
+  it("drops what is past the window and keeps the rest", () => {
+    const now = at("2026-09-05T10:00:00");
+    const kept = meeting("recent", now - 3 * 24 * 3600_000);
+    const gone = meeting("ancient", now - 40 * 24 * 3600_000);
+    const out = pruneMeetings([gone, kept], 30, now);
+    expect(out.map((m) => m.id)).toEqual(["recent"]);
+  });
+
+  // A three-hour call that began just outside the window is not older than the
+  // window, and deleting it would be the surprising answer.
+  it("judges on when a meeting ended, not when it started", () => {
+    const now = at("2026-09-05T10:00:00");
+    const long: Meeting = {
+      id: "long",
+      where: "Meet",
+      startedAt: now - 8 * 24 * 3600_000,
+      endedAt: now - 6 * 24 * 3600_000,
+      seconds: 7200,
+      notes: [],
+    };
+    expect(pruneMeetings([long], 7, now).map((m) => m.id)).toEqual(["long"]);
+  });
+
+  it("returns the same array when nothing is dropped, so nothing is rewritten", () => {
+    const now = at("2026-09-05T10:00:00");
+    const all = [meeting("a", now - 1000)];
+    expect(pruneMeetings(all, 30, now)).toBe(all);
+  });
+
+  it("refuses a retention window nobody was offered", () => {
+    const now = at("2026-09-05T10:00:00");
+    const old = [meeting("a", now - 400 * 24 * 3600_000)];
+    // A stray value must not delete more than anybody chose.
+    expect(pruneMeetings(old, 1, now)).toBe(old);
+    expect(isRetentionDays(1)).toBe(false);
+    expect(isRetentionDays(30)).toBe(true);
+  });
+
+  it("falls back to forever for anything unreadable in storage", () => {
+    for (const junk of [undefined, null, "banana", -5, 999, NaN]) {
+      expect(readRetentionDays(junk)).toBe(KEEP_FOREVER);
+    }
+    expect(readRetentionDays("30")).toBe(30);
+  });
+
+  // The audio is deleted the moment it is transcribed, so a label promising to
+  // delete recordings later would imply Loaf had been holding them all along.
+  it("labels the choice in terms of keeping, not deleting", () => {
+    expect(retentionLabel(KEEP_FOREVER)).toContain("until you delete");
+    expect(retentionLabel(30)).toBe("Kept for 30 days");
+  });
 });

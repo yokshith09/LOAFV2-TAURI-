@@ -24,6 +24,53 @@ export const RADAR_STATE_EVENT = "loaf://radar/state";
 /** Dashboard -> companion: "I have just opened, what does the radar know?" */
 export const RADAR_HELLO_EVENT = "loaf://radar/hello";
 
+/**
+ * Companion -> dashboard: what is being recorded, and what already was.
+ *
+ * Sent rather than read for the same reason as the radar: the companion owns
+ * the meeting watch, and a second window reading the file would show a meeting
+ * that ended a second ago as still running.
+ */
+export const MEETINGS_STATE_EVENT = "loaf://meetings/state";
+/** Dashboard -> companion: "I have just opened, what is recording?" */
+export const MEETINGS_HELLO_EVENT = "loaf://meetings/hello";
+
+/** One finished meeting, as the dashboard needs to list it. */
+export interface MeetingRow {
+  readonly id: string;
+  readonly where: string;
+  readonly startedAt: number;
+  readonly seconds: number;
+  readonly notes: readonly string[];
+}
+
+export interface MeetingsSnapshot {
+  /** True while the microphone is actually capturing. */
+  readonly recording: boolean;
+  /** The call in progress, or null. Not the same as `recording`. */
+  readonly current: string | null;
+  /** How long the call in progress has run. */
+  readonly currentSeconds: number;
+  /** Whether recording is possible at all — Whisper installed, a microphone. */
+  readonly canRecord: boolean;
+  /** Why it is not possible, when it is not. */
+  readonly blockedReason: string | null;
+  readonly meetings: readonly MeetingRow[];
+}
+
+export function isMeetingsSnapshot(v: unknown): v is MeetingsSnapshot {
+  if (typeof v !== "object" || v === null) return false;
+  const m = v as Record<string, unknown>;
+  return (
+    typeof m.recording === "boolean" &&
+    (m.current === null || typeof m.current === "string") &&
+    typeof m.currentSeconds === "number" &&
+    typeof m.canRecord === "boolean" &&
+    (m.blockedReason === null || typeof m.blockedReason === "string") &&
+    Array.isArray(m.meetings)
+  );
+}
+
 /** Commands the dashboard can send. Anything else is ignored by the companion. */
 export const COMMANDS = [
   "reset",
@@ -49,6 +96,15 @@ export const COMMANDS = [
   "wake",
   /** Draw the week as a picture and save it. Nothing is uploaded or posted. */
   "recap",
+  // Recording a meeting by hand, rather than by answering a bubble. The offer
+  // arrives at the moment you join a call, which is the moment you are least
+  // able to deal with it; this is the way to start one afterwards, and the way
+  // to stop one without saying anything out loud in a room full of people.
+  "record:start",
+  "record:stop",
+  // Throwing away every transcript at once. The per-meeting delete carries an
+  // id and so lives in TaskCommand's shape, not this fixed list.
+  "meetings:forget-all",
 ] as const;
 
 /**
@@ -93,6 +149,15 @@ export function isTaskCommand(v: unknown): v is TaskCommand {
   }
   return true;
 }
+
+/**
+ * Dashboard -> companion: forget one kept meeting.
+ *
+ * Its own event rather than a `Command`, because it carries an id — the same
+ * reason task commands are separate. Deleting somebody's notes is not
+ * something to reach by string-matching a fixed list.
+ */
+export const MEETING_FORGET_EVENT = "loaf://meetings/forget";
 
 /** Dashboard -> companion: a task was added or changed. */
 export const TASK_COMMAND_EVENT = "loaf://task";

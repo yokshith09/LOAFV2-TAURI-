@@ -2,6 +2,7 @@ import { defaultBehaviourSettings, type BehaviourSettings } from "./settings";
 import type { SettingsStore } from "../closet/settings";
 import { readListenMode } from "../voice/mode";
 import { readEngineId } from "../voice/engine";
+import { readRetentionDays } from "../meetings/meetings";
 
 /**
  * The four habits a user can switch on and off, and remembering their answer.
@@ -95,6 +96,7 @@ export function loadHabits(store: SettingsStore): BehaviourSettings {
     // readEngineId falls back to the local engine, never the hosted one, so
     // a hand-edited file cannot start uploading audio.
     settings.engine = readEngineId(saved["engine"]);
+    settings.transcriptRetentionDays = readRetentionDays(saved["transcriptRetentionDays"]);
     const binary = saved["whisperBinary"];
     if (typeof binary === "string") settings.whisperBinary = binary;
     const model = saved["whisperModel"];
@@ -112,6 +114,7 @@ export function saveHabits(store: SettingsStore, settings: BehaviourSettings): v
   if (settings.wakeWord !== null) out["wakeWord"] = settings.wakeWord;
   out["hoverListenMs"] = settings.hoverListenMs;
   out["engine"] = settings.engine;
+  out["transcriptRetentionDays"] = settings.transcriptRetentionDays;
   out["whisperBinary"] = settings.whisperBinary;
   out["whisperModel"] = settings.whisperModel;
   store.setItem(KEY, JSON.stringify(out));

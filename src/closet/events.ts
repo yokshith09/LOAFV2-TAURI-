@@ -13,6 +13,7 @@
 import { isHabit } from "../behaviour/habits";
 import { isListenMode, type ListenMode } from "../voice/mode";
 import { isEngineId, type EngineId, type EngineAvailability } from "../voice/engine";
+import { isRetentionDays } from "../meetings/meetings";
 
 export const CLOSET_PICK_EVENT = "loaf://closet/pick";
 export const CLOSET_CHANGED_EVENT = "loaf://closet/changed";
@@ -46,6 +47,8 @@ export type ClosetPick =
   | { readonly kind: "engine"; readonly id: EngineId }
   /** Fetch and install the Whisper engine. Never triggered by picking it. */
   | { readonly kind: "engine.download" }
+  /** How long transcripts are kept, in days. 0 means until deleted. */
+  | { readonly kind: "retention"; readonly days: number }
   /** An empty or whitespace-only name is how the user resets to the default. */
   | { readonly kind: "rename"; readonly name: string };
 
@@ -73,6 +76,11 @@ export function isClosetState(v: unknown): v is ClosetStatePayload {
     return false;
   }
   if (typeof s.muted !== "boolean") return false;
+  if (s.microphone !== null && typeof s.microphone !== "string") return false;
+  // Checked as strictly as the pick that sets it. This number decides how much
+  // of someone's writing gets deleted, and a malformed broadcast must not be
+  // the thing that answers that.
+  if (!isRetentionDays(s.transcriptRetentionDays)) return false;
   if (
     typeof s.habits !== "object" ||
     s.habits === null ||
@@ -108,6 +116,10 @@ export interface ClosetStatePayload {
   readonly engineAvailability: EngineAvailability;
   /** Progress of an in-flight Whisper download, or null when none is running. */
   readonly whisperDownload: { downloaded: number; total: number } | null;
+  /** The microphone Loaf would use, or null when it can see none. */
+  readonly microphone: string | null;
+  /** How long transcripts are kept, in days. 0 means until deleted. */
+  readonly transcriptRetentionDays: number;
 }
 
 export function isClosetPick(v: unknown): v is ClosetPick {
@@ -140,6 +152,11 @@ export function isClosetPick(v: unknown): v is ClosetPick {
       return isEngineId(p.id);
     case "engine.download":
       return true;
+    case "retention":
+      // Checked against the offered list rather than any number: this one
+      // deletes the user's notes, and a stray value here would delete more of
+      // them than anybody chose.
+      return isRetentionDays(p.days);
     case "rename":
       return typeof p.name === "string";
     default:

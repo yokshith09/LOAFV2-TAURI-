@@ -72,6 +72,45 @@ export const BASE_CSS = `
   .reset { font-size:11px; color:var(--ink-soft); background:none; border:1px solid var(--edge); font-family:inherit;
            border-radius:999px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
   .reset:hover { border-color:var(--accent-dark); color:var(--ink); }
+
+  /* --- Sections -------------------------------------------------------------
+     The page used to be one column of nine headings. These turn it into six
+     places, one click apart. Every panel is rendered and all but one hidden,
+     so switching costs nothing and a stats update that lands while you are
+     reading one section cannot yank you back to the first. */
+  .head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+  .head .date { margin:0; }
+  .headline { margin:14px 0 16px; }
+  .headline .total { margin:2px 0 0; }
+  .views {
+    display:flex; gap:4px; flex-wrap:wrap;
+    border-bottom:1px solid var(--edge); padding-bottom:10px; margin-bottom:20px;
+  }
+  .view-tab {
+    font-family:inherit; font-size:12px; font-weight:600;
+    border:1px solid transparent; background:none; color:var(--ink-soft);
+    border-radius:8px; padding:6px 11px; cursor:pointer;
+    transition:background .12s ease, color .12s ease;
+  }
+  .view-tab:hover { background:rgba(107,86,74,0.07); color:var(--ink); }
+  .view-tab.active { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+  .view-tab:focus-visible { outline:2px solid var(--accent-dark); outline-offset:1px; }
+  /* Switched off explicitly: several children of a panel set their own
+     display, and those would otherwise win over the [hidden] attribute. */
+  .view[hidden] { display:none; }
+  .view > *:first-child { margin-top:0; }
+  .view h2 { margin-top:24px; }
+  /* The closet has a panel like this one and its own copy of these rules. Not
+     shared, because the two windows are separate self-contained documents by
+     design and a shared stylesheet would be a file for one of them to fetch. */
+  .disclosure { list-style:none; margin:0 0 4px; padding:0; }
+  .disclosure li {
+    font-size:12px; color:var(--ink-soft); line-height:1.55;
+    padding:7px 0; border-bottom:1px solid var(--edge);
+  }
+  .disclosure li:last-child { border-bottom:0; }
+  .disclosure b { color:var(--ink); font-weight:600; }
+  .vstat { margin-bottom:4px; }
 `;
 
 /** Everything the paid tier adds: nested site rows, the radar block, permissions. */
@@ -349,4 +388,94 @@ export const MINI_CSS = `
   @media (prefers-reduced-motion: reduce) {
     body.mini .wrap { animation: none; }
   }
+`;
+
+/** The meetings screen: recording state, the button, and what was kept. */
+export const MEETINGS_CSS = `
+  /* The one line on this screen that must be readable from across a room:
+     whether a microphone is capturing right now. Stated in words, not implied
+     by which button happens to be showing. */
+  .rec-state { display:flex; flex-direction:column; gap:3px; padding:12px 14px;
+    border-radius:10px; border:1px solid var(--edge); margin-bottom:12px; }
+  .rec-state b { font-size:14px; }
+  .rec-state .rec-sub { font-size:11.5px; color:var(--ink-soft); }
+  .rec-state.on { background:rgba(200,40,40,.09); border-color:rgba(200,40,40,.5); }
+  .rec-state.on b { color:#B03030; }
+  .rec-state.on .rec-dot { position:absolute; }
+  .rec-btn { font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;
+    border-radius:9px; padding:10px 16px; border:1px solid var(--edge);
+    background:var(--card,#FFFDF9); color:var(--ink); }
+  .rec-btn.start { background:var(--accent); border-color:var(--accent-dark); color:var(--accent-ink); }
+  .rec-btn.stop { background:#B03030; border-color:#8E2626; color:#fff; }
+  .mt-list { display:flex; flex-direction:column; gap:10px; }
+  .mt-row { border:1px solid var(--edge); border-radius:10px; padding:10px 12px;
+    background:var(--card,#FFFDF9); }
+  .mt-head { display:flex; justify-content:space-between; align-items:baseline;
+    gap:8px; font-size:13px; margin-bottom:5px; }
+  .mt-notes { margin:0; padding-left:16px; }
+  .mt-notes li { font-size:12px; line-height:1.5; color:var(--ink-soft); }
+`;
+
+/** The notes board: a Keep-style wall of cards, plus its composer. */
+export const NOTES_CSS = `
+  .nt-compose { border:1px solid var(--edge); border-radius:12px; padding:12px;
+    background:var(--card,#FFFDF9); margin-bottom:16px; }
+  /* A textarea, not an input: what lands here is often several sentences, and
+     a one-line box that scrolls sideways is how you get notes nobody finishes
+     typing. */
+  .nt-input { width:100%; resize:vertical; font-family:inherit; font-size:13.5px;
+    line-height:1.5; color:var(--ink); background:var(--paper);
+    border:1px solid var(--edge); border-radius:9px; padding:9px 11px;
+    outline:none; -webkit-user-select:text; user-select:text; }
+  .nt-input:focus { border-color:var(--accent-dark); }
+  .nt-tools { display:flex; gap:8px; align-items:center; margin-top:9px; }
+  .nt-select, .nt-mins { font-family:inherit; font-size:12px; color:var(--ink);
+    background:var(--paper); border:1px solid var(--edge); border-radius:8px;
+    padding:6px 8px; }
+  .nt-mins { width:74px; }
+  .nt-add { margin-left:auto; font-family:inherit; font-size:12.5px; font-weight:600;
+    cursor:pointer; border-radius:8px; padding:7px 15px;
+    background:var(--accent); border:1px solid var(--accent-dark); color:var(--accent-ink); }
+  .nt-add:hover { filter:brightness(0.97); }
+
+  /* Masonry by CSS columns rather than a grid: cards here are wildly different
+     heights — a three-word reminder next to a paragraph of transcript — and a
+     grid row would stretch every card in it to match the tallest. */
+  .nt-board { column-count:2; column-gap:12px; }
+  @media (max-width: 520px) { .nt-board { column-count:1; } }
+  .nt-card { break-inside:avoid; display:inline-block; width:100%;
+    margin:0 0 12px; border:1px solid var(--edge); border-radius:12px;
+    padding:11px 13px; background:var(--card,#FFFDF9); }
+  .nt-body { font-size:13px; line-height:1.55; white-space:pre-wrap;
+    -webkit-user-select:text; user-select:text; }
+  /* A transcript is given room to breathe instead of being clipped to the
+     height of "buy milk". */
+  .nt-card.long .nt-body { max-height:260px; overflow-y:auto; }
+  .nt-foot { display:flex; align-items:center; gap:8px; margin-top:9px;
+    padding-top:8px; border-top:1px solid var(--edge); }
+  .nt-pri { font-size:9.5px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--ink-soft); font-weight:700; }
+  .nt-timer { font-size:11px; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+  .nt-acts { margin-left:auto; display:flex; gap:5px; }
+  .nt-btn { font-family:inherit; font-size:13px; line-height:1; cursor:pointer;
+    width:24px; height:24px; border-radius:6px; color:var(--ink-soft);
+    border:1px solid var(--edge); background:var(--paper); }
+  .nt-btn:hover { border-color:var(--accent-dark); color:var(--ink); }
+  /* Priority as a stripe down the edge, so the wall is scannable without
+     reading a word of it. */
+  .nt-card.p-now { border-left:4px solid #C2410C; }
+  .nt-card.p-soon { border-left:4px solid var(--accent-dark); }
+  .nt-card.p-whenever { border-left:4px solid var(--edge); }
+`;
+
+/** The delete controls on kept meetings. */
+export const MEETINGS_DELETE_CSS = `
+  .mt-x { font-family:inherit; font-size:14px; line-height:1; cursor:pointer;
+    width:24px; height:24px; border-radius:6px; margin-left:8px;
+    color:var(--ink-soft); border:1px solid var(--edge); background:var(--paper); }
+  .mt-x:hover { border-color:#B03030; color:#B03030; }
+  .mt-forget-all { font-family:inherit; font-size:11px; cursor:pointer;
+    border-radius:999px; padding:5px 12px; color:#B03030;
+    border:1px solid var(--edge); background:none; }
+  .mt-forget-all:hover { border-color:#B03030; }
 `;

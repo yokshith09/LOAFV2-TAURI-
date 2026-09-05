@@ -15,8 +15,6 @@ import {
   type ClosetPick,
 } from "./events";
 import { asCtx2D, type Outfit } from "../core/types";
-import type { ListenMode } from "../voice/mode";
-import type { EngineId } from "../voice/engine";
 
 
 /**
@@ -103,45 +101,6 @@ function render(state: ClosetState): void {
       send({ kind: "habit", habit: el.dataset.habit!, on: el.checked }),
     );
   });
-
-  const listen = root.querySelector<HTMLSelectElement>("[data-listen-mode]");
-  listen?.addEventListener("change", () => {
-    // Sent as-is; the companion validates it before opening anything, because
-    // this is the one pick that decides whether a microphone is used.
-    send({ kind: "listenMode", mode: listen.value as ListenMode });
-  });
-
-  const whisperBtn = root.querySelector<HTMLButtonElement>("[data-whisper-download]");
-  whisperBtn?.addEventListener("click", () => send({ kind: "engine.download" }));
-
-  const engine = root.querySelector<HTMLSelectElement>("[data-engine]");
-  engine?.addEventListener("change", () =>
-    send({ kind: "engine", id: engine.value as EngineId }),
-  );
-
-  const hold = root.querySelector<HTMLSelectElement>("[data-hold]");
-  hold?.addEventListener("change", () =>
-    send({ kind: "hoverListenMs", ms: Number(hold.value) }),
-  );
-
-  const wake = root.querySelector<HTMLInputElement>("[data-wake-word]");
-  // On change rather than on every keystroke: each send restarts the speech
-  // session to recompile the grammar, and doing that per letter would be a
-  // microphone opening and closing while you type.
-  wake?.addEventListener("change", () => {
-    const typed = wake.value.trim();
-    send({ kind: "wakeWord", word: typed.length === 0 ? null : typed });
-  });
-
-  const voice = root.querySelector<HTMLSelectElement>("[data-voice]");
-  voice?.addEventListener("change", () => {
-    // Empty means "let Loaf choose", which is not the same as a voice named "".
-    send({ kind: "voice", name: voice.value === "" ? null : voice.value });
-  });
-
-  const mute = root.querySelector<HTMLInputElement>("[data-sound]");
-  // Checked means "make a noise", so the stored value is the opposite.
-  mute?.addEventListener("change", () => send({ kind: "muted", on: !mute.checked }));
 
   const pixel = root.querySelector<HTMLInputElement>("#pixel");
   pixel?.addEventListener("change", () =>

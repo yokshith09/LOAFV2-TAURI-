@@ -133,3 +133,16 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* Recording a meeting. The loudest state on the badge, and the only one whose
+   cost outlasts the moment you stop looking at it: everything else here is
+   about a microphone that is open for seconds, this one runs for an hour. Red
+   with a steady pulse, so it reads as "still going" rather than "was going". */
+.status-badge.recording {
+  background: rgba(200, 40, 40, 0.92);
+  color: #fff;
+  font-weight: 600;
+}
+.status-badge.recording .dot {
+  animation: status-pulse 1.4s ease-in-out infinite;
+}

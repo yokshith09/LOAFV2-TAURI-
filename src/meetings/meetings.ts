@@ -137,6 +137,58 @@ const KEY = "meetings.log";
 /** Kept so the list stays useful rather than becoming an archive. */
 export const KEEP_MEETINGS = 60;
 
+/**
+ * How long transcripts are kept, in days.
+ *
+ * `KEEP_FOREVER` is offered and is the default, because deleting someone's
+ * notes on a schedule they did not ask for is the worse failure of the two:
+ * a note you no longer want costs you a line on a screen, and a note that
+ * vanished before you read it is gone.
+ *
+ * THE AUDIO IS NOT WHAT THIS GOVERNS. Recordings are deleted the moment they
+ * have been transcribed, on every path including failure — there is no audio
+ * left to age out. What this ages out is the WORDS: meeting transcripts and
+ * the notes attached to them.
+ */
+export const KEEP_FOREVER = 0;
+export const RETENTION_CHOICES: readonly number[] = [KEEP_FOREVER, 7, 30, 90, 365];
+
+export function isRetentionDays(v: unknown): v is number {
+  return typeof v === "number" && RETENTION_CHOICES.includes(v);
+}
+
+export function readRetentionDays(raw: unknown): number {
+  const n = typeof raw === "string" ? Number(raw) : raw;
+  return isRetentionDays(n) ? n : KEEP_FOREVER;
+}
+
+/** How the choice reads in a sentence. */
+export function retentionLabel(days: number): string {
+  return days === KEEP_FOREVER ? "Kept until you delete them" : `Kept for ${days} days`;
+}
+
+/**
+ * Drop transcripts older than the retention window.
+ *
+ * Pure, and given `now`, so the rule about a boundary can actually be tested
+ * rather than asserted. Judged on when a meeting ENDED, not when it started: a
+ * three-hour call that began just outside the window is not older than the
+ * window, and deleting it would be the surprising answer.
+ *
+ * Returns the same array instance when nothing is dropped, so a caller can
+ * cheaply tell whether anything changed and avoid a pointless write.
+ */
+export function pruneMeetings(
+  meetings: readonly Meeting[],
+  retentionDays: number,
+  now: number,
+): readonly Meeting[] {
+  if (!isRetentionDays(retentionDays) || retentionDays === KEEP_FOREVER) return meetings;
+  const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
+  const kept = meetings.filter((m) => m.endedAt >= cutoff);
+  return kept.length === meetings.length ? meetings : kept;
+}
+
 export function loadMeetings(store: MeetingStore): Meeting[] {
   const raw = store.getItem(KEY);
   if (!raw) return [];

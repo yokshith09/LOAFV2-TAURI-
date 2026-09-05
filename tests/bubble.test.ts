@@ -249,3 +249,55 @@ describe("the rest of what he says", () => {
     expect(line).not.toContain("Mac only");
   });
 });
+
+describe("a bubble that asks something", () => {
+  // A question with no way to answer it is not a question. This shipped as a
+  // plain bubble on the grounds that a spoken or typed "yes" would reach the
+  // same pipeline — true, and no use at all to someone doing neither.
+  it("renders no buttons for ordinary speech", () => {
+    const html = speechBubbleHTML("Time for a break.", "above", 50);
+    expect(html).not.toContain("data-answer");
+    expect(html).not.toContain("id=\"answers\"");
+  });
+
+  it("renders a button per choice, carrying the answer it stands for", () => {
+    const html = speechBubbleHTML("Record this meeting?", "above", 50, [
+      { label: "Yes", value: "yes", primary: true },
+      { label: "No", value: "no" },
+    ]);
+    expect(html).toContain('data-answer="yes"');
+    expect(html).toContain('data-answer="no"');
+    expect(html).toContain(">Yes<");
+    expect(html).toContain(">No<");
+  });
+
+  it("marks only the affirmative one as primary", () => {
+    const html = speechBubbleHTML("Record?", "above", 50, [
+      { label: "Yes", value: "yes", primary: true },
+      { label: "No", value: "no" },
+    ]);
+    expect(html.match(/class="answer yes"/g)).toHaveLength(1);
+  });
+
+  // The label and the value both reach the DOM, so both are escaped like every
+  // other value Loaf renders.
+  it("escapes both halves of a choice", () => {
+    const html = speechBubbleHTML("?", "above", 50, [
+      { label: "<script>x</script>", value: '"><script>y</script>' },
+    ]);
+    expect(html).not.toContain("<script>x</script>");
+    expect(html).not.toContain("<script>y</script>");
+  });
+
+  it("still says what it was asked to say", () => {
+    const html = speechBubbleHTML("Record this meeting?", "above", 50, [
+      { label: "Yes", value: "yes", primary: true },
+    ]);
+    expect(html).toContain("Record this meeting?");
+  });
+
+  it("styles the buttons, or they are invisible text on a card", () => {
+    expect(BUBBLE_CSS).toContain(".answer");
+    expect(BUBBLE_CSS).toContain("#answers");
+  });
+});

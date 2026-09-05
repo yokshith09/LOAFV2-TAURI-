@@ -9,11 +9,6 @@ import {
   MAX_OPACITY,
   type ClosetState,
 } from "./settings";
-import { habitsFor, HABIT_LABELS } from "../behaviour/habits";
-import { findCompanion } from "../companions/registry";
-import { LISTEN_MODES, LABELS, DESCRIPTIONS } from "../voice/mode";
-import { MAX_WAKE_LENGTH } from "../voice/wake";
-import { ENGINES, ENGINE_INFO, unavailableReason, leavesMachine } from "../voice/engine";
 
 /**
  * The closet's markup. Ported from `ClosetWindow.html`.
@@ -73,34 +68,6 @@ export const CLOSET_CSS = `
   .chip.on { background:var(--site); border-color:var(--site); color:#fff; }
   .chip .glyph { font-size:14px; line-height:1; }
 
-  .habits { display:flex; flex-direction:column; gap:8px; }
-  .habit { display:flex; align-items:center; gap:9px; cursor:pointer; font-size:13px;
-           border:1px solid var(--edge); border-radius:11px; padding:10px 13px;
-           background:var(--card); color:var(--ink-soft); }
-  .habit.on { border-color:var(--site); background:rgba(138,80,128,.055); color:var(--ink); font-weight:600; }
-  .habit input { accent-color:var(--site); margin:0; }
-  .listen { display:flex; flex-direction:column; gap:6px; }
-  .listen .why { font-size:11.5px; line-height:1.45; opacity:.78; margin:2px 0 0; }
-  .whisper-dl-btn { width:100%; margin-top:6px; padding:8px; border-radius:8px;
-    border:1px solid var(--edge); background:var(--card); color:var(--ink);
-    font:inherit; font-size:12.5px; cursor:pointer; }
-  .whisper-dl-btn:hover { border-color:var(--site); }
-  .whisper-ready { color:var(--site); font-weight:600; }
-  .disclosure { list-style:none; margin:0; padding:0; display:flex;
-    flex-direction:column; gap:7px; }
-  .disclosure li { font-size:12.5px; line-height:1.5; padding:8px 10px;
-    border:1px solid var(--edge); border-radius:8px; background:var(--card); }
-  .whisper-bar { height:6px; border-radius:4px; background:var(--edge); overflow:hidden;
-    margin-top:8px; }
-  .whisper-fill { height:100%; background:var(--site); transition:width .2s; }
-  .listen input { width:100%; padding:7px 8px; border-radius:8px; margin-top:2px;
-    border:1px solid var(--edge); background:var(--card); color:var(--ink);
-    font:inherit; font-size:12.5px; }
-  .listen select, .voice select { width:100%; padding:7px 8px; border-radius:8px;
-    border:1px solid var(--edge); background:var(--card); color:var(--ink);
-    font:inherit; font-size:12.5px; }
-  .listen.hot .why { color:var(--site); font-weight:600; opacity:1; }
-
   .fine { font-size:10.5px; color:var(--ink-soft); line-height:1.5; margin:11px 0 0; }
   .foot { font-size:11px; color:var(--ink-soft); line-height:1.55;
           margin:18px 0 0; padding-top:13px; border-top:1px solid var(--edge); }
@@ -126,208 +93,6 @@ export const CLOSET_CSS = `
   .toggle.on { background:var(--site); border-color:var(--site); color:#fff; font-weight:600; }
   .toggle input { accent-color:var(--site); margin:0; }
 `;
-
-/**
- * The habit toggles.
- *
- * Drifting is only offered to characters that drift. On anything else it would
- * be a switch wired to nothing, and its default is the opposite of wandering's,
- * which would be baffling sitting right next to it on a cat.
- */
-/**
- * The listening mode, with what it costs written next to it.
- *
- * A dropdown rather than a switch because "whether" is not the question the
- * user needs to answer — "when" is — and the description under it changes with
- * the choice so that nobody picks always-on without reading what it means.
- */
-function listenRow(state: ClosetState): string {
-  const mode = state.listenMode;
-  const options = LISTEN_MODES.map(
-    (m) =>
-      `<option value="${escapeHTML(m)}"${m === mode ? " selected" : ""}>` +
-      `${escapeHTML(LABELS[m])}</option>`,
-  ).join("");
-  return (
-    `<div class="listen${mode === "always" ? " hot" : ""}">` +
-    `<select data-listen-mode>${options}</select>` +
-    `<p class="why">${escapeHTML(DESCRIPTIONS[mode])}</p>` +
-    // Only where it does something. A wake-word box next to "when I click"
-    // is a field wired to nothing.
-    (mode === "always"
-      ? `<input type="text" data-wake-word maxlength="${MAX_WAKE_LENGTH}" ` +
-        `placeholder="hey loaf" value="${escapeHTML(state.wakeWord ?? "")}">` +
-        `<p class="why">What Loaf answers to. Leave empty for “hey loaf”.</p>`
-      : "") +
-    "</div>"
-  );
-}
-
-/**
- * Which voice speaks, when Loaf speaks.
- *
- * Only voices installed on this machine appear. The browser also offers
- * "Online (Natural)" voices which sound better and send the text to a server;
- * they are filtered out before they reach here, so there is nothing to warn
- * about in this list.
- */
-function voiceRow(state: ClosetState): string {
-  if (state.voices.length === 0) {
-    return '<div class="voice"><p class="why">No speech voices are installed on this machine.</p></div>';
-  }
-  const options = [
-    `<option value=""${state.voice === null ? " selected" : ""}>Let Loaf choose</option>`,
-    ...state.voices.map(
-      (v) =>
-        `<option value="${escapeHTML(v)}"${v === state.voice ? " selected" : ""}>` +
-        `${escapeHTML(v)}</option>`,
-    ),
-  ].join("");
-  return `<div class="voice"><select data-voice>${options}</select></div>`;
-}
-
-/**
- * Which recogniser, and what each one costs.
- *
- * All three are always listed, including ones that cannot run yet, with the
- * reason attached. Hiding an engine leaves people wondering whether Loaf can
- * do dictation at all; showing it with "Not downloaded yet" answers that.
- */
-function engineRow(state: ClosetState): string {
-  const options = ENGINES.map((id) => {
-    const why = unavailableReason(id, state.engineAvailability);
-    const label = why === null ? ENGINE_INFO[id].label : `${ENGINE_INFO[id].label} — ${why}`;
-    return (
-      `<option value="${escapeHTML(id)}"${id === state.engine ? " selected" : ""}` +
-      `${why === null ? "" : " disabled"}>${escapeHTML(label)}</option>`
-    );
-  }).join("");
-  const info = ENGINE_INFO[state.engine];
-  return (
-    `<div class="listen${leavesMachine(state.engine) ? " hot" : ""}">` +
-    `<select data-engine>${options}</select>` +
-    `<p class="why">${escapeHTML(info.summary)}</p>` +
-    `${whisperDownloadRow(state)}` +
-    "</div>"
-  );
-}
-
-/**
- * One consolidated answer to "what can this thing actually do", pulled from
- * state the closet already tracks rather than a separate source of truth.
- *
- * Deliberately plain sentences rather than a settings grid: the granular
- * controls for each of these already exist above, each with its own
- * description. This is the summary a person reads once to know what is true
- * right now, not another place to change anything.
- */
-function disclosurePanel(state: ClosetState): string {
-  const engineInfo = ENGINE_INFO[state.engine];
-  const rows: string[] = [
-    `<b>Speech recognition:</b> ${escapeHTML(engineInfo.label)}. ` +
-      `${leavesMachine(state.engine) ? "Audio leaves this device." : "Audio never leaves this device."}`,
-    `<b>Always listening:</b> ${
-      state.listenMode === "always"
-        ? `On — answers to “${escapeHTML(state.wakeWord ?? "hey loaf")}”.`
-        : state.listenMode === "off"
-          ? "Off."
-          : `Not continuous — ${escapeHTML(LABELS[state.listenMode])}.`
-    }`,
-    `<b>Meeting recording:</b> ${
-      unavailableReason("whisper", state.engineAvailability)
-        ? "Not available — needs Whisper downloaded above."
-        : "Ready. Your microphone only, and only when you say yes."
-    }`,
-    `<b>Talking back:</b> ${
-      state.habits.talking === true
-        ? state.voices.length > 0
-          ? "On, with a local voice — never a remote one."
-          : "On, but no local voice is installed, so it stays silent."
-        : "Off."
-    }`,
-    `<b>External connections (MCP):</b> None configured. This will get its own screen — not built yet.`,
-  ];
-  return `<ul class="disclosure">${rows.map((r) => `<li>${r}</li>`).join("")}</ul>`;
-}
-
-/**
- * The Whisper download: a button before it starts, a progress bar during, and
- * nothing once it is installed.
- *
- * Shown only when Whisper is not already ready — the size is stated on the
- * button itself, so nothing downloads as a surprise.
- */
-function whisperDownloadRow(state: ClosetState): string {
-  if (state.whisperDownload) {
-    const { downloaded, total } = state.whisperDownload;
-    const pct = total > 0 ? Math.round((downloaded / total) * 100) : 0;
-    const mb = (n: number) => (n / 1_000_000).toFixed(0);
-    return (
-      `<div class="whisper-dl">` +
-      `<div class="whisper-bar"><div class="whisper-fill" style="width:${pct}%"></div></div>` +
-      `<p class="why">Downloading Whisper… ${mb(downloaded)} / ${mb(total)} MB</p>` +
-      "</div>"
-    );
-  }
-  if (!unavailableReason("whisper", state.engineAvailability)) {
-    // Named explicitly rather than left implicit: the download lives under a
-    // "voice engine" picker, and its main practical use right now is
-    // meetings, which is not obvious from that label alone. This is the
-    // confirmation that the connection actually worked.
-    return `<p class="why whisper-ready">Whisper is ready — dictation and meeting recording both use it.</p>`;
-  }
-  return (
-    `<button type="button" class="whisper-dl-btn" data-whisper-download>` +
-    "Download Whisper — for dictation and meeting transcription (about 190 MB)</button>"
-  );
-}
-
-/** How long the cursor has to rest on Loaf before the microphone opens. */
-function holdRow(state: ClosetState): string {
-  if (state.listenMode !== "hover") return "";
-  const options = HOLD_CHOICES.map(
-    (ms) =>
-      `<option value="${ms}"${ms === state.hoverListenMs ? " selected" : ""}>` +
-      `${ms / 1000} seconds</option>`,
-  ).join("");
-  return (
-    `<div class="listen"><select data-hold>${options}</select>` +
-    `<p class="why">How long to hold the cursor on Loaf before it listens. ` +
-    `The day’s card still appears straight away.</p></div>`
-  );
-}
-
-/** Offered hold times. Short enough to be usable, long enough to be deliberate. */
-const HOLD_CHOICES: readonly number[] = [2000, 3000, 5000, 8000, 12000];
-
-function habitRows(state: ClosetState): string {
-  const companion = findCompanion(state.companionId);
-  return habitsFor(companion.drifts)
-    .map((habit) => {
-      const on = state.habits[habit] === true;
-      return (
-        `<label class="habit${on ? " on" : ""}">` +
-        `<input type="checkbox" data-habit="${escapeHTML(habit)}"${on ? " checked" : ""}>` +
-        `<span>${escapeHTML(HABIT_LABELS[habit])}</span></label>`
-      );
-    })
-    .join("");
-}
-
-/**
- * The mute switch, phrased as the noise rather than the absence of it.
- *
- * A checkbox labelled "Mute" is on when the app is quiet, which reads backwards
- * next to four habits that are on when something happens.
- */
-function soundRow(state: ClosetState): string {
-  const on = !state.muted;
-  return (
-    `<label class="habit${on ? " on" : ""}">` +
-    `<input type="checkbox" data-sound="muted"${on ? " checked" : ""}>` +
-    `<span>Make a noise now and then</span></label>`
-  );
-}
 
 function chip(id: string, glyph: string, label: string, selected: boolean): string {
   return (
@@ -402,17 +167,6 @@ export function closetBody(state: ClosetState): string {
 
   ${shelves}
 
-  <h2>Habits <span class="shelf-note">what they get up to on their own</span></h2>
-  <div class="habits">${habitRows(state)}${listenRow(state)}${holdRow(state)}${engineRow(state)}${voiceRow(state)}${soundRow(state)}</div>
-  <p class="fine">Wandering is off until you say otherwise — you put the window
-  where it is, and a pet that starts crossing a screen you're working on, unasked,
-  is a bug report.</p>
-
-  <h2>What Loaf can do right now</h2>
-  <p class="fine">One place for everything above, in plain sentences — what
-  hears you, where anything it hears would go, and what does not exist yet.</p>
-  ${disclosurePanel(state)}
-
   <h2>What they wear</h2>
   <div class="chips">${chips}</div>
   <p class="fine">Seasonal picks for itself and changes with the month, so you can
@@ -421,5 +175,8 @@ export function closetBody(state: ClosetState): string {
   <p class="foot">Clicks apply immediately — look at the corner of your screen.
   The choice sticks between restarts, costs nothing, and stays on this computer
   like everything else here.</p>
+  <p class="foot">Habits, listening, the voice engine and the sound now live in
+  the dashboard, under Voice and Settings. They were never about how anyone
+  looks, and “does Loaf send my audio anywhere” does not belong in a wardrobe.</p>
 </div>`;
 }

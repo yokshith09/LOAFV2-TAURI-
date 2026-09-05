@@ -1139,6 +1139,108 @@ fn stop_recording(app: tauri::AppHandle, binary: String, model: String) -> Resul
     result
 }
 
+/// How quiet counts as "stopped talking", as an RMS level from 0.0 to 1.0.
+///
+/// A real room is never at zero: fans, a distant road, the microphone's own
+/// noise floor. This sits well above that and well below speech.
+const DICTATION_SILENCE: f32 = 0.012;
+/// How long that quiet has to last before the sentence is considered finished.
+/// Shorter, and an ordinary pause between words ends the recording mid-thought
+/// — the most annoying way for dictation to fail.
+const DICTATION_HUSH_MS: u64 = 1_200;
+/// The longest a single dictation may run, whatever happens. A dictation that
+/// never ends is a hot microphone with a friendly name.
+const DICTATION_MAX_SECONDS: u64 = 30;
+
+/// Take one dictated sentence with Whisper and return the words.
+///
+/// THIS IS THE PATH THAT MAKES CHOOSING WHISPER MEAN ANYTHING. `listen_once`
+/// uses the Windows recogniser with a closed phrase list, which by design can
+/// only hear the commands it was handed — it cannot take dictation at all, and
+/// no setting could make it, because free-form Windows recognition IS the
+/// online one. Whisper is the local engine that can hear anything, so free
+/// text goes through here and nowhere else. Until this existed, picking
+/// Whisper in the closet changed the label and nothing else.
+///
+/// It records until you stop talking rather than for a fixed count: a fixed
+/// window either cuts people off or holds the microphone open after they have
+/// finished, and both are worse than listening for the pause.
+///
+/// The audio is deleted before this returns, on every path including failure —
+/// the same rule `stop_recording` follows. Loaf keeps words, not voices.
+#[tauri::command(async)]
+fn dictate_once(
+    app: tauri::AppHandle,
+    binary: String,
+    model: String,
+    max_seconds: Option<u64>,
+) -> Result<String, String> {
+    // Resolved BEFORE the microphone opens: refusing afterwards would mean
+    // having recorded someone for a transcription that was never going to run.
+    let setup = resolved_whisper_setup(&app, binary, model)?;
+    if let Some(what) = transcribe::missing(&setup) {
+        return Err(transcribe::missing_reason(&what));
+    }
+
+    // One microphone, one user. Dictating during a meeting recording would
+    // take the device out from under it.
+    if RECORDING
+        .lock()
+        .map_err(|_| "recording lock poisoned")?
+        .is_some()
+    {
+        return Err("Loaf is recording a meeting right now.".into());
+    }
+
+    let cap = max_seconds
+        .unwrap_or(DICTATION_MAX_SECONDS)
+        .clamp(2, DICTATION_MAX_SECONDS);
+    let recording = audio::start()?;
+
+    // A fifth of a second of audio is enough to tell speech from a room, and
+    // short enough that the end of a sentence is noticed promptly.
+    let window = (audio::TARGET_HZ / 5) as usize;
+    let started = std::time::Instant::now();
+    let mut spoke = false;
+    let mut quiet_since: Option<std::time::Instant> = None;
+
+    while started.elapsed() < std::time::Duration::from_secs(cap) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if recording.sample_count() < window {
+            continue;
+        }
+        if recording.recent_level(window) > DICTATION_SILENCE {
+            spoke = true;
+            quiet_since = None;
+            continue;
+        }
+        // Silence only ends the recording once there was something to end.
+        // Otherwise a microphone nobody spoke into would return an instant
+        // empty transcript and read as a broken feature.
+        if !spoke {
+            continue;
+        }
+        match quiet_since {
+            Some(since) => {
+                if since.elapsed() >= std::time::Duration::from_millis(DICTATION_HUSH_MS) {
+                    break;
+                }
+            }
+            None => quiet_since = Some(std::time::Instant::now()),
+        }
+    }
+
+    let wav = transcribe::scratch_wav();
+    let seconds = audio::stop(recording, &wav)?;
+    let result = if !spoke || seconds < 0.4 {
+        Ok(String::new())
+    } else {
+        transcribe::transcribe(&setup, &wav)
+    };
+    let _ = std::fs::remove_file(&wav);
+    result
+}
+
 /// Whether Whisper is ready, and what is missing when it is not.
 #[tauri::command(async)]
 fn whisper_status(app: tauri::AppHandle, binary: String, model: String) -> Option<String> {
@@ -1509,6 +1611,7 @@ pub fn run() {
             start_recording,
             recording_seconds,
             stop_recording,
+            dictate_once,
             whisper_status,
             whisper_download_size,
             whisper_installed,

@@ -100,6 +100,22 @@ export interface ClosetState {
   readonly engine: EngineId;
   readonly engineAvailability: EngineAvailability;
   readonly whisperDownload: { downloaded: number; total: number } | null;
+  /**
+   * The microphone Loaf would use, or null when it can see none.
+   *
+   * Shown because "the microphone is not working" and "Loaf cannot see a
+   * microphone at all" are different problems with the same symptom —
+   * nothing happens — and no amount of toggling permissions distinguishes
+   * them. Naming the device turns the first into something the user can act
+   * on and the second into something they can report.
+   */
+  readonly microphone: string | null;
+  /**
+   * How long transcripts are kept, in days. 0 means until you delete them.
+   * Carried here so the dashboard renders the control from one payload rather
+   * than reading a second source that could disagree with it.
+   */
+  readonly transcriptRetentionDays: number;
 }
 
 /**
@@ -152,6 +168,9 @@ export class ClosetSettings {
     hostedConnected: false,
     builtinReady: false,
   };
+  /** Null until the companion has asked the host, and if there is none. */
+  microphone: string | null = null;
+  transcriptRetentionDays = 0;
 
   constructor(private readonly store: SettingsStore) {}
 
@@ -172,6 +191,8 @@ export class ClosetSettings {
       engine: this.engine,
       engineAvailability: this.engineAvailability,
       whisperDownload: this.whisperDownload,
+      microphone: this.microphone,
+      transcriptRetentionDays: this.transcriptRetentionDays,
     };
   }
 

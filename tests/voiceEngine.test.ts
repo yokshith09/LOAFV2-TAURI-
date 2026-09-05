@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   ENGINES,
+  PICKABLE_ENGINES,
   DEFAULT_ENGINE,
   ENGINE_INFO,
   isEngineId,
@@ -107,7 +108,16 @@ describe("availability", () => {
 
 describe("resolving what to actually run", () => {
   it("uses what was asked for when it can", () => {
-    for (const id of ENGINES) expect(resolveEngine(id, ALL)).toBe(id);
+    for (const id of PICKABLE_ENGINES) expect(resolveEngine(id, ALL)).toBe(id);
+  });
+
+  // Whisper stopped being a choice for talking to Loaf: it answers once a
+  // recording has finished, which is right for a meeting and wrong for a
+  // command. A setting saved back when it WAS a choice has to keep working, so
+  // it migrates on the next launch rather than erroring.
+  it("migrates a stored Whisper choice to the built-in recogniser", () => {
+    expect(resolveEngine("whisper", ALL)).toBe("builtin");
+    expect(PICKABLE_ENGINES).not.toContain("whisper");
   });
 
   // A fallback that silently starts uploading audio is the worst thing this

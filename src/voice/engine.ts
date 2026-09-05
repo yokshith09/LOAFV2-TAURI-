@@ -30,6 +30,41 @@ export type EngineId = (typeof ENGINES)[number];
 /** The one that needs nothing installed and nothing connected. */
 export const DEFAULT_ENGINE: EngineId = "builtin";
 
+/**
+ * The engines you can actually pick for talking TO Loaf.
+ *
+ * WHISPER IS NOT ONE OF THEM ANY MORE, and that is a decision rather than an
+ * omission. It is a batch transcriber: it hears a whole recording and returns
+ * the words when it has finished, which is exactly right for a meeting nobody
+ * is waiting on and exactly wrong for a command, where the gap between
+ * speaking and something happening IS the feature. Even at full speed it
+ * cannot answer before the sentence is over.
+ *
+ * So the two jobs are split by what each tool is good at:
+ *
+ *  - TALKING TO LOAF — commands and dictation — uses Windows' own speech,
+ *    which answers immediately.
+ *  - RECORDING A MEETING uses Whisper, which is slower and far more accurate
+ *    and runs entirely on this machine.
+ *
+ * Whisper is still downloaded, still local, still shown — it just lives under
+ * Meetings, where it does its work, instead of in a picker for a job it was
+ * never suited to.
+ */
+export const PICKABLE_ENGINES: readonly EngineId[] = ENGINES.filter(
+  (e) => e !== "whisper",
+);
+
+/**
+ * Whether Whisper is installed and usable, for the meeting recorder.
+ *
+ * Separate from `unavailableReason` because Whisper is no longer one of the
+ * choices that function is about.
+ */
+export function whisperReason(have: EngineAvailability): string | null {
+  return have.whisperModel ? null : "Not downloaded yet.";
+}
+
 export function isEngineId(v: unknown): v is EngineId {
   return typeof v === "string" && (ENGINES as readonly string[]).includes(v);
 }
@@ -158,6 +193,10 @@ export function resolveEngine(
   wanted: EngineId,
   have: EngineAvailability,
 ): EngineId {
+  // A stored "whisper" from before it stopped being a choice for talking to
+  // Loaf lands here on the next launch and quietly becomes the built-in one.
+  // Migrating rather than erroring: the setting was valid when it was saved.
+  if (!PICKABLE_ENGINES.includes(wanted)) return "builtin";
   if (isAvailable(wanted, have)) return wanted;
   return "builtin";
 }

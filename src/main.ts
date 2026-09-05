@@ -17,11 +17,19 @@ import { PlayDirector } from "./behaviour/play";
 import { WanderController } from "./behaviour/wander";
 import { drawBall, drawSwipe } from "./behaviour/furBall";
 import { Speaker, browserSynth, saveVoice, loadVoice } from "./voice/speak";
-import { WakeGate, wakePhrases, wakeWordsFor, normaliseWakeWord } from "./voice/wake";
+import {
+  WakeGate,
+  wakePhrases,
+  wakeWordsFor,
+  normaliseWakeWord,
+  isWakeWord,
+} from "./voice/wake";
 import {
   MeetingWatch,
   loadMeetings,
   saveMeetings,
+  pruneMeetings,
+  retentionLabel,
   describeMeeting,
   type Meeting,
 } from "./meetings/meetings";
@@ -31,7 +39,9 @@ import {
   resolveEngine,
   leavesMachine,
   audioLine,
+  unavailableReason,
   type EngineAvailability,
+  type EngineId,
 } from "./voice/engine";
 import { resolveLicence, licenceInputs } from "./behaviour/licence";
 import { HABITS, loadHabits, saveHabits, habitLine, isHabit } from "./behaviour/habits";
@@ -78,7 +88,12 @@ import {
   isAffirmative,
   type Intent,
 } from "./voice/commands";
-import { BUBBLE_SHOW_EVENT, BUBBLE_HIDE_EVENT, type BubblePayload } from "./bubble/events";
+import {
+  BUBBLE_SHOW_EVENT,
+  BUBBLE_HIDE_EVENT,
+  BUBBLE_ANSWER_EVENT,
+  type BubblePayload,
+} from "./bubble/events";
 import {
   BREAK_PROMPTS,
   BREAK_BUBBLE_SECONDS,
@@ -129,7 +144,13 @@ import {
 import type { OnboardingStep, OnboardingPlatform } from "./onboarding/view";
 import { isOccasion, type Occasion } from "./sound/voice";
 import { unavailableRadar, type RadarSnapshot } from "./dashboard/html";
-import { RADAR_STATE_EVENT, RADAR_HELLO_EVENT } from "./dashboard/events";
+import {
+  RADAR_STATE_EVENT,
+  RADAR_HELLO_EVENT,
+  MEETINGS_STATE_EVENT,
+  MEETINGS_HELLO_EVENT,
+  MEETING_FORGET_EVENT,
+} from "./dashboard/events";
 import {
   WaterGuide,
   WATER_PROMPTS,
@@ -333,16 +354,39 @@ function applyClosetPick(raw: unknown): void {
       saveHabits(browserStore(), behaviour);
       announceCloset();
       return;
+    case "retention":
+      behaviour.transcriptRetentionDays = raw.days;
+      saveHabits(browserStore(), behaviour);
+      announceCloset();
+      // Applied immediately, not at the next launch: someone who has just
+      // shortened the window is asking for the old ones to go now, and a
+      // setting that takes effect invisibly later is one nobody trusts.
+      applyRetention();
+      say({
+        kind: "speech",
+        text: `${retentionLabel(raw.days)}.`,
+        seconds: 7,
+      });
+      return;
     case "engine.download":
       void downloadWhisperEngine();
       return;
     case "engine":
-      // Only ever set to something that can actually run. resolveEngine falls
+      // What was ASKED for is remembered separately from what can run today.
+      // Picking Whisper before downloading it used to resolve straight back to
+      // the built-in recogniser and overwrite the preference, so finishing the
+      // download left the engine still set to the old one and the user with no
+      // sign that their choice had been discarded.
+      wantedEngine = raw.id;
+      // Only ever USED as something that can actually run. resolveEngine falls
       // back to the local recogniser, never to the hosted one.
       behaviour.engine = resolveEngine(raw.id, engineAvailability());
       saveHabits(browserStore(), behaviour);
       announceCloset();
-      if (leavesMachine(behaviour.engine)) {
+      if (behaviour.engine !== raw.id) {
+        const why = unavailableReason(raw.id, engineAvailability());
+        if (why) say({ kind: "speech", text: why, seconds: 10 });
+      } else if (leavesMachine(behaviour.engine)) {
         say({ kind: "speech", text: audioLine(behaviour.engine), seconds: 10 });
       }
       return;
@@ -487,6 +531,16 @@ function usualDaySeconds(): number | null {
  * the call runs.
  */
 let meetingPrompted: string | null = null;
+/**
+ * When Loaf last offered to record the meeting in progress.
+ *
+ * A meeting you decided to record ten minutes in used to have no way to be
+ * recorded: the offer came once, at the moment of joining, and never again.
+ */
+let lastMeetingNudge = 0;
+/** How long to leave it before offering again. Slow on purpose. */
+const MEETING_NUDGE_MS = 10 * 60_000;
+
 /** True while a meeting recording is actually running — do not ask again. */
 let recordingNow = false;
 
@@ -500,6 +554,30 @@ const CONFIRM_WINDOW_MS = 30_000;
  * dashboard call. There is no second path that could drift from the first, and
  * nothing here can do something a button cannot.
  */
+/**
+ * The two buttons every confirmation gets.
+ *
+ * The values are the words a person would have said, so a press and a spoken
+ * answer arrive at `applySpoken` as the same thing and there is still only one
+ * path to the decision.
+ */
+const YES_NO = [
+  { label: "Yes", value: "yes", primary: true },
+  { label: "No", value: "no" },
+] as const;
+
+/**
+ * Ask something, with buttons to answer it.
+ *
+ * Separate from `say` because a question and a remark are different objects:
+ * this one holds longer, because reading a question and deciding takes longer
+ * than reading a remark, and it cannot be answered at all once it is gone.
+ */
+function askWith(text: string): void {
+  say({ kind: "speech", text, seconds: 20, choices: YES_NO });
+  if (hasTauriHost()) void emit(SPOKEN_REPLY_EVENT, text).catch(() => {});
+}
+
 function applySpoken(raw: unknown): void {
   if (typeof raw !== "string") return;
 
@@ -532,7 +610,7 @@ function applySpoken(raw: unknown): void {
   }
   if (needsConfirmation(intent)) {
     pendingIntent = { intent, until: Date.now() + CONFIRM_WINDOW_MS };
-    replyWith(acknowledge(intent));
+    askWith(acknowledge(intent));
     return;
   }
   replyWith(acknowledge(intent));
@@ -593,9 +671,16 @@ function runIntent(intent: Intent): void {
       void reportLevel(intent.what);
       break;
     case "dictate":
-      // Windows types into whatever has focus. Loaf hands over and steps
-      // back; it never receives what was said.
-      void machine("press_keys", { combo: "win+h" });
+      // WHICHEVER RECOGNISER WAS ACTUALLY CHOSEN.
+      //
+      // This used to be unconditionally Win+H — Windows' own voice-typing bar
+      // — which meant asking for dictation opened Microsoft's recogniser even
+      // with Whisper selected and installed. Two dictation features that
+      // ignore the engine setting is one too many.
+      //
+      // The outcome is deliberately the same either way: the words are typed
+      // into whatever has focus. Only the thing that heard them changes.
+      void dictateIntoFocusedApp();
       break;
     case "type":
       void machine("type_text", { text: intent.text });
@@ -620,6 +705,13 @@ function runIntent(intent: Intent): void {
       break;
     case "reset.today":
       applyCommand("reset");
+      break;
+    case "meetings.forget":
+      meetings = [];
+      saveMeetings(browserStore(), meetings);
+      void invokeSafe("save_meetings", { json: JSON.stringify(meetings) });
+      announceMeetings();
+      say({ kind: "speech", text: "Every transcript deleted.", seconds: 6 });
       break;
     case "forget.sites":
       applyCommand("sites:forget");
@@ -660,6 +752,42 @@ async function machine(cmd: string, args: Record<string, unknown>): Promise<void
  */
 /** Say how loud or how bright it currently is. */
 /**
+ * How often to remind someone that the microphone is still on.
+ *
+ * A recording that has been running for forty minutes is easy to forget, and a
+ * forgotten recording is the one thing this feature must never become: the
+ * whole consent argument rests on the person knowing it is happening. Five
+ * minutes is often enough to be impossible to forget and rare enough not to be
+ * the reason someone turns it off.
+ */
+const RECORDING_REMINDER_MS = 5 * 60_000;
+
+let recordingReminder: ReturnType<typeof setInterval> | null = null;
+
+function startRecordingReminders(device: string | null): void {
+  stopRecordingReminders();
+  const startedAt = Date.now();
+  recordingReminder = setInterval(() => {
+    if (!recordingNow) {
+      stopRecordingReminders();
+      return;
+    }
+    const minutes = Math.round((Date.now() - startedAt) / 60_000);
+    void invokeSafe("notify", {
+      title: `Still recording — ${minutes} min`,
+      body: `${device ?? "Your microphone"} only. Say “stop recording” to finish.`,
+    });
+  }, RECORDING_REMINDER_MS);
+}
+
+function stopRecordingReminders(): void {
+  if (recordingReminder !== null) {
+    clearInterval(recordingReminder);
+    recordingReminder = null;
+  }
+}
+
+/**
  * Begin recording the user's own microphone for the meeting in progress.
  *
  * Only reached after the confirmation in `acknowledge`, which names exactly
@@ -681,10 +809,17 @@ async function startRecording(): Promise<void> {
     const device = await invoke<string | null>("microphone_name");
     await invoke("start_recording");
     recordingNow = true;
+    updateStatusBadge();
+    announceMeetings();
+    startRecordingReminders(device);
     say({
       kind: "speech",
       text: `Recording ${device ?? "your microphone"}. Say "stop recording" when you are done.`,
       seconds: 10,
+    });
+    void invokeSafe("notify", {
+      title: "Loaf is recording",
+      body: `${device ?? "Your microphone"} only — never the other people in the room.`,
     });
   } catch (e) {
     say({ kind: "speech", text: String(e), seconds: 10 });
@@ -701,6 +836,9 @@ async function stopRecording(): Promise<void> {
   if (!hasTauriHost()) return;
   const { invoke } = await import("@tauri-apps/api/core");
   recordingNow = false;
+  stopRecordingReminders();
+  updateStatusBadge();
+  announceMeetings();
   say({ kind: "speech", text: "Transcribing… this can take a minute.", seconds: 8 });
   try {
     const text = await invoke<string>("stop_recording", {
@@ -713,11 +851,27 @@ async function stopRecording(): Promise<void> {
     }
     // Onto the meeting if one is running, and onto the task list either way —
     // a transcript with nowhere to go is worse than one in the wrong place.
-    if (!meetingWatch.note(text)) {
+    //
+    // WHERE IT WENT IS SAID OUT LOUD. "Kept what you said" was true and
+    // useless: it named neither the place nor the file, so the only way to
+    // find a transcript was to go looking for it. A minute of talking that
+    // vanishes into an unnamed destination is indistinguishable from one that
+    // was lost.
+    const onMeeting = meetingWatch.note(text);
+    if (!onMeeting) {
       tasks.add(text.slice(0, 200), "soon");
       announceTasks();
     }
-    say({ kind: "speech", text: "Kept what you said.", seconds: 6 });
+    const where = onMeeting
+      ? `the notes for ${meetingWatch.current ?? "this meeting"}`
+      : "your list, under What you meant to do";
+    say({ kind: "speech", text: `Kept in ${where}.`, seconds: 8 });
+    // And a native one, because the transcription took a minute and whoever
+    // started it has almost certainly looked away by now.
+    void invokeSafe("notify", {
+      title: "Loaf kept your transcript",
+      body: `${text.length} characters, in ${where}. It stays on this computer.`,
+    });
   } catch (e) {
     say({ kind: "speech", text: String(e), seconds: 12 });
   }
@@ -804,6 +958,8 @@ function announceCloset(): void {
   closet.engine = behaviour.engine;
   closet.engineAvailability = engineAvailability();
   closet.whisperDownload = whisperDownload;
+  closet.microphone = microphoneName;
+  closet.transcriptRetentionDays = behaviour.transcriptRetentionDays;
   closetState = closet.read();
   void emit(CLOSET_CHANGED_EVENT, closetState).catch(() => {
     // The closet will still be right the next time it is opened.
@@ -1068,6 +1224,31 @@ function saveHistory(): void {
 function applyCommand(cmd: unknown): void {
   if (!tracker || !isCommand(cmd)) return;
 
+  if (cmd === "meetings:forget-all") {
+    // This one DOES confirm. One row is a tidy-up; all of them is the kind of
+    // thing people mean to undo ten seconds later, and there is no undo.
+    pendingIntent = {
+      intent: { kind: "meetings.forget", confirm: true },
+      until: Date.now() + CONFIRM_WINDOW_MS,
+    };
+    askWith(
+      `Delete all ${meetings.length} kept transcript${meetings.length === 1 ? "" : "s"}? This cannot be undone.`,
+    );
+    return;
+  }
+  if (cmd === "record:start") {
+    // Straight through, with no confirmation bubble: a button labelled
+    // "Record this meeting", pressed deliberately, IS the confirmation. The
+    // spoken path still confirms, because a sentence can be misheard and a
+    // button cannot be.
+    void startRecording();
+    return;
+  }
+  if (cmd === "record:stop") {
+    void stopRecording();
+    return;
+  }
+
   // `tantrum:<n>` carries a value, so it is handled before the exact matches.
   if (cmd.startsWith("tantrum:")) {
     const n = Number(cmd.slice("tantrum:".length));
@@ -1213,6 +1394,38 @@ function persistRadar(): void {
 }
 let radarSupported = false;
 let radarReadsInsideBrowser = true;
+
+/**
+ * Tell the dashboard what is recording and what already was.
+ *
+ * Sent on every change rather than polled, so a "Recording" pill in another
+ * window can never be a minute stale — which for this particular pill would
+ * mean telling someone their microphone is off while it is on.
+ */
+function announceMeetings(): void {
+  if (!hasTauriHost()) return;
+  const blocked = whisperReady
+    ? microphoneName === null
+      ? "No microphone is visible to Loaf."
+      : null
+    : "Whisper is not downloaded yet — see the Voice tab.";
+  void emit(MEETINGS_STATE_EVENT, {
+    recording: recordingNow,
+    current: meetingWatch.current,
+    currentSeconds: meetingWatch.runningSeconds(Date.now()),
+    canRecord: blocked === null,
+    blockedReason: blocked,
+    meetings: meetings.map((m) => ({
+      id: m.id,
+      where: m.where,
+      startedAt: m.startedAt,
+      seconds: m.seconds,
+      notes: m.notes,
+    })),
+  }).catch(() => {
+    // The dashboard shows what it last heard.
+  });
+}
 
 function announceRadar(): void {
   if (!hasTauriHost()) return;
@@ -1517,6 +1730,7 @@ async function listenOnce(): Promise<void> {
   updateStatusBadge();
   try {
     const { invoke } = await import("@tauri-apps/api/core");
+
     // What is clickable in the front window RIGHT NOW. Only the one-shot
     // modes can do this: the always-on grammar is compiled once, and by the
     // time you speak the front window will be a different one.
@@ -1541,6 +1755,114 @@ async function listenOnce(): Promise<void> {
   }
 }
 
+/**
+ * Take the sentence after the wake word.
+ *
+ * WINDOWS' OWN RECOGNISER, NOT WHISPER. Whisper is a batch transcriber: it
+ * hears a whole recording and answers once it has finished. That is right for
+ * a meeting nobody is waiting on and wrong for a command, where the gap
+ * between speaking and something happening is the whole feature. Even at full
+ * speed — and it is now fourteen times faster than it was — it cannot answer
+ * before the sentence is over.
+ *
+ * So the wake word opens a one-shot Windows recognition against the closed
+ * command vocabulary, which answers immediately, and Whisper keeps the job it
+ * is actually good at: meetings.
+ *
+ * A COMMAND KEEPS THE CONVERSATION OPEN. Acting on one comes back for a
+ * follow-up, so the wake word is not needed between every step — that is the
+ * thing that makes assistants tiring to use. Silence ends it.
+ */
+async function dictateAfterWake(): Promise<void> {
+  if (!hasTauriHost() || listeningOnce) return;
+  listeningOnce = true;
+  micOpen = true;
+  updateStatusBadge();
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    for (let turn = 0; turn < MAX_TURNS_PER_WAKE; turn++) {
+      const onScreen = (await invoke<string[]>("clickables").catch(() => [])) ?? [];
+      const heard = await invoke<{ kind: string; text?: string; why?: string }>("listen_once", {
+        phrases: spokenPhrases(programNames, onScreen),
+      });
+      if (heard.kind === "unavailable" && heard.why) {
+        say({ kind: "speech", text: heard.why, seconds: 10 });
+        break;
+      }
+      // Nothing said, or nothing in the vocabulary. Either way the
+      // conversation is over; carrying on would hold a microphone open on the
+      // chance that the next thing you say happens to be for Loaf.
+      if (heard.kind !== "text" || !heard.text?.trim()) break;
+      applySpoken(heard.text.trim());
+    }
+  } catch (e) {
+    // Said out loud. Silence here is indistinguishable from a dead microphone,
+    // which is the confusion this whole path exists to end.
+    say({ kind: "speech", text: String(e), seconds: 8 });
+  } finally {
+    listeningOnce = false;
+    micOpen = false;
+    updateStatusBadge();
+  }
+}
+
+/** How many follow-ups one wake word may carry before it must be said again. */
+const MAX_TURNS_PER_WAKE = 8;
+
+/** When the recogniser last rejected something, for the badge. */
+let lastRejectedAt = 0;
+/** How long "Didn't catch that" stays up. */
+const REJECTED_FLASH_MS = 2500;
+
+/**
+ * The badge is written with innerHTML, and the wake word is user text.
+ *
+ * Small, local, and here rather than imported from the dashboard's escaper so
+ * that the one place user input reaches this window's markup carries its own
+ * reason for existing.
+ */
+function escapeForBadge(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Hand over to Windows' own voice typing.
+ *
+ * Windows types what you say into whatever has focus, and Loaf never sees the
+ * text — there is no API to read it back. That is what makes it nearly free:
+ * it is a keystroke, not a recogniser. It is also why it cannot feed Loaf's
+ * parser, which is fine, because dictation is for putting words in a document
+ * rather than for telling Loaf to do something.
+ *
+ * Whether that audio is handled on the machine or by Microsoft is decided by
+ * Windows' own privacy setting rather than by Loaf, so this says so instead of
+ * making a claim it cannot keep.
+ */
+async function dictateIntoFocusedApp(): Promise<void> {
+  if (!hasTauriHost()) return;
+  // Win+H is a WINDOWS shortcut. Sending it on a Mac presses nothing useful
+  // and leaves someone waiting for a dictation bar that is never going to
+  // appear, which is a worse answer than "not here yet".
+  const { invoke } = await import("@tauri-apps/api/core");
+  const os = await invoke<string>("platform_name").catch(() => "");
+  if (os !== "windows") {
+    say({
+      kind: "speech",
+      text: "Dictation uses Windows voice typing, which this machine does not have.",
+      seconds: 9,
+    });
+    return;
+  }
+  say({
+    kind: "speech",
+    text:
+      "Windows voice typing — it types into whatever you are in. " +
+      "Windows decides where that audio goes, not Loaf.",
+    seconds: 10,
+  });
+  void machine("press_keys", { combo: "win+h" });
+}
+
 /** Whether a microphone is open right now, for the indicator. */
 let micOpen = false;
 
@@ -1560,10 +1882,39 @@ let wakeRunning = false;
  * Priority order when more than one thing is true: a download is the most
  * temporary and the most likely to be actively watched, so it wins over the
  * listening state while it runs.
+ *
+ * THE BUG THIS USED TO HAVE, RECORDED SO IT IS NOT REINTRODUCED. "Listening…"
+ * is shown while the wake gate's command window is open, and that window
+ * closes by a DEADLINE PASSING — no event, no callback, nothing to re-render
+ * on. This was only called at state changes, so the badge went red on "hey
+ * Loaf" and then stayed red forever: an indicator that claimed a live
+ * microphone long after the window had shut. A badge that lies about a
+ * microphone is worse than no badge at all, so anything time-dependent now
+ * arms its own re-check for the moment it expires.
  */
+let badgeTimer: ReturnType<typeof setTimeout> | null = null;
+
 function updateStatusBadge(): void {
   const el = document.getElementById("status-badge");
   if (!el) return;
+
+  if (badgeTimer !== null) {
+    clearTimeout(badgeTimer);
+    badgeTimer = null;
+  }
+
+  // Recording outranks everything. A microphone that is capturing a meeting
+  // is the single most important thing this badge can say, and the one state
+  // where not knowing has a cost that lasts longer than the moment.
+  if (recordingNow) {
+    el.className = "status-badge recording";
+    el.innerHTML = `<span class="dot"></span>Recording`;
+    el.hidden = false;
+    // Re-drawn on a timer so the elapsed count keeps moving; nothing else
+    // announces the passing of a minute.
+    badgeTimer = setTimeout(updateStatusBadge, 1000);
+    return;
+  }
 
   if (whisperDownload && whisperDownload.total > 0) {
     const pct = Math.round((whisperDownload.downloaded / whisperDownload.total) * 100);
@@ -1574,10 +1925,38 @@ function updateStatusBadge(): void {
   }
 
   if (wakeRunning) {
+    // Shown for a moment after the recogniser rejected something. Brief on
+    // purpose: it is feedback, not a status, and a permanent "?" would be one
+    // more thing on screen that never changes.
+    const sinceRejected = Date.now() - lastRejectedAt;
+    if (sinceRejected < REJECTED_FLASH_MS) {
+      el.className = "status-badge armed";
+      el.innerHTML = `<span class="dot"></span>Didn’t catch that`;
+      el.hidden = false;
+      badgeTimer = setTimeout(updateStatusBadge, REJECTED_FLASH_MS - sinceRejected + 50);
+      return;
+    }
     const hot = wakeGate.isAwake;
     el.className = `status-badge ${hot ? "hot" : "armed"}`;
-    el.innerHTML = `<span class="dot"></span>${hot ? "Listening…" : "Hey Loaf"}`;
+    // "Hey Loaf" rather than "Listening…" when the gate is shut is the honest
+    // pair: the microphone is open either way, but only one of those two
+    // states will act on what you say, and the badge is answering "will it
+    // hear me right now".
+    // The name YOU gave it. Showing "Hey Loaf" to someone who renamed the wake
+    // word to "hey mini" is the badge telling them to say the wrong thing.
+    const word = wakeGate.words[0] ?? "hey loaf";
+    const armed = word
+      .split(" ")
+      .map((w) => (w.length > 0 ? w[0]!.toUpperCase() + w.slice(1) : w))
+      .join(" ");
+    el.innerHTML = `<span class="dot"></span>${hot ? "Listening…" : escapeForBadge(armed)}`;
     el.hidden = false;
+    // The window shuts on a deadline with nothing to announce it. Come back
+    // for the moment it does, plus a tick, so the badge drops back to armed
+    // by itself.
+    if (hot) {
+      badgeTimer = setTimeout(updateStatusBadge, wakeGate.remainingMs + 50);
+    }
     return;
   }
 
@@ -1623,7 +2002,29 @@ async function syncListening(): Promise<void> {
     // The gate and the grammar must agree, or Loaf would listen for one word
     // and answer to another.
     wakeGate.words = wakeWordsFor(behaviour.wakeWord);
-    const phrases = [...spokenPhrases(programNames), ...wakePhrases(behaviour.wakeWord)];
+    // THE WAKE WORD AND NOTHING ELSE, AND THIS IS THE WHOLE BUG.
+    //
+    // This used to compile the wake words together with the entire spoken
+    // vocabulary — every command AND the name of every program installed on
+    // the machine. On the machine this was found on that was 425 phrases, and
+    // a list constraint that size cannot hear its own name: measured with a
+    // standalone probe, four phrases matched "hey loaf" reliably and produced
+    // it in the alternates every time, while the live 425-phrase session
+    // produced NO RESULT AT ALL for the same synthesised voice through the
+    // same microphone. Not a rejection — nothing. `voice/wake.ts` already
+    // warned that "a bigger grammar recognises everything slightly worse";
+    // this is how much worse.
+    //
+    // It costs nothing to shrink, because the always-on session is a wake-word
+    // DETECTOR and never needed the rest: the sentence after the wake word is
+    // taken by Whisper, which understands free speech and does not need
+    // program names compiled into a grammar to hear "open Notepad".
+    //
+    // It is also strictly better for the promise this file makes. A two-phrase
+    // grammar is even less able to transcribe a conversation than a 425-phrase
+    // one, and the closed-vocabulary argument at the top of wake.rs gets
+    // stronger rather than weaker.
+    const phrases = [...wakePhrases(behaviour.wakeWord)];
     try {
       await invoke("start_wake", { phrases });
       wakeRunning = true;
@@ -1673,6 +2074,17 @@ function engineAvailability(): EngineAvailability {
   };
 }
 
+/**
+ * The microphone Loaf would record from, or null when it can see none.
+ *
+ * Asked for once at startup and shown in the closet, because "no microphone
+ * is visible to Loaf" and "the microphone is visible but something else is
+ * wrong" look identical from the outside — in both cases you talk and nothing
+ * happens — and that ambiguity is what sends people round the permission
+ * screens twice.
+ */
+let microphoneName: string | null = null;
+
 /** Set once the Windows recogniser has proved it can compile a constraint. */
 let speechAvailable = false;
 /** Set once the in-app downloader has installed a working Whisper engine. */
@@ -1683,13 +2095,28 @@ let whisperReady = false;
  * that answer changed — called at startup and again after a download
  * finishes, since a download is the only thing that can make this true.
  */
+/**
+ * The engine the user actually asked for, which is not always the one running.
+ *
+ * Seeded from the stored choice so it survives a restart, and only widened by
+ * a deliberate pick. It exists so that an engine chosen before it was
+ * installed is honoured the moment it becomes installable, rather than
+ * silently discarded at the point of picking.
+ */
+let wantedEngine: EngineId = behaviour.engine;
+
 async function refreshWhisperReady(): Promise<void> {
   if (!hasTauriHost()) return;
   const ready = (await invokeSafe<boolean>("whisper_installed")) ?? false;
-  if (ready !== whisperReady) {
-    whisperReady = ready;
-    announceCloset();
+  if (ready === whisperReady) return;
+  whisperReady = ready;
+  // Now that it can run, honour the choice that was made when it could not.
+  const resolved = resolveEngine(wantedEngine, engineAvailability());
+  if (resolved !== behaviour.engine) {
+    behaviour.engine = resolved;
+    saveHabits(browserStore(), behaviour);
   }
+  announceCloset();
 }
 
 /**
@@ -1729,6 +2156,34 @@ let whisperDownload: { downloaded: number; total: number } | null = null;
  */
 const meetingWatch = new MeetingWatch();
 let meetings: Meeting[] = loadMeetings(browserStore());
+
+/**
+ * Drop anything past its keep-by date, and write back only if that changed
+ * something.
+ *
+ * Run at launch and whenever the window is changed, rather than on a timer:
+ * these are notes, not a queue, and the only moments the answer can differ are
+ * the moment Loaf starts and the moment someone shortens the window.
+ */
+function applyRetention(): void {
+  const kept = pruneMeetings(meetings, behaviour.transcriptRetentionDays, Date.now());
+  if (kept === meetings) return;
+  const dropped = meetings.length - kept.length;
+  meetings = [...kept];
+  saveMeetings(browserStore(), meetings);
+  void invokeSafe("save_meetings", { json: JSON.stringify(meetings) });
+  announceMeetings();
+  // Said out loud. Notes disappearing with no explanation is indistinguishable
+  // from notes being lost, and the second is the thing people fear about
+  // trusting an app with them.
+  say({
+    kind: "speech",
+    text: `Deleted ${dropped} transcript${dropped === 1 ? "" : "s"} past your ${
+      behaviour.transcriptRetentionDays
+    }-day limit.`,
+    seconds: 8,
+  });
+}
 
 const speaker = new Speaker(browserSynth());
 // Restored before anything can speak, so a chosen voice survives a restart.
@@ -2355,6 +2810,7 @@ async function pollPlatform(): Promise<void> {
     if (finished !== null) {
       meetings = [...meetings, finished];
       saveMeetings(browserStore(), meetings);
+      announceMeetings();
       // Also beside stats.json, so the MCP server can answer "when were my
       // meetings". Browser storage is invisible to anything outside the
       // webview.
@@ -2366,6 +2822,33 @@ async function pollPlatform(): Promise<void> {
       // 20's minimum) and never reached `finished`. Cleared here too, or the
       // next real meeting under the same app name would never be asked about.
       meetingPrompted = null;
+    }
+
+    // A meeting already running, still not being recorded.
+    //
+    // The prompt above fires ONCE, when the call is first noticed — which is
+    // exactly the moment someone is joining, saying hello, and not looking at
+    // a desktop pet. Asking once and never again meant that a call you decided
+    // to record ten minutes in had no way to be recorded at all short of
+    // finding the command. This asks again, on a slow drumbeat, and only while
+    // the answer would still be useful.
+    if (
+      meetingWatch.current !== null &&
+      !recordingNow &&
+      pendingIntent === null &&
+      Date.now() - lastMeetingNudge > MEETING_NUDGE_MS
+    ) {
+      lastMeetingNudge = Date.now();
+      const mins = Math.round(meetingWatch.runningSeconds(Date.now()) / 60);
+      pendingIntent = {
+        intent: { kind: "record.start", confirm: true },
+        until: Date.now() + CONFIRM_WINDOW_MS,
+      };
+      askWith(`${mins} minutes into ${meetingWatch.current}, not recording. Start now?`);
+      void invokeSafe("notify", {
+        title: `Not recording ${meetingWatch.current}`,
+        body: `${mins} minutes in. Answer in Loaf to start.`,
+      });
     }
 
     // Ask once, right when a call is first noticed — not after the meeting
@@ -2382,10 +2865,14 @@ async function pollPlatform(): Promise<void> {
       pendingIntent === null
     ) {
       meetingPrompted = meetingWatch.current;
+      lastMeetingNudge = Date.now();
       const intent: Intent = { kind: "record.start", confirm: true };
       pendingIntent = { intent, until: Date.now() + CONFIRM_WINDOW_MS };
       const askText = `In ${meetingWatch.current}. ${acknowledge(intent)}`;
-      say({ kind: "speech", text: askText, seconds: 12 });
+      // With buttons. This used to be a plain bubble on the grounds that the
+      // spoken and typed paths could both answer it — which was true, and
+      // useless to anyone who was doing neither at the moment a call started.
+      askWith(askText);
       // A native OS notification alongside the bubble, in case nobody is
       // looking at the character right when the call starts — which is the
       // likely moment, since joining a meeting usually means looking at the
@@ -2536,6 +3023,30 @@ if (hasTauriHost()) {
   // "Nothing on the list" however many notes were outstanding: the list only
   // arrived on the next CHANGE, so the window that had never seen a change
   // showed an empty panel and there was no way to tick anything off.
+  // A freshly opened dashboard asks what is recording, rather than waiting for
+  // the next change — which for a meeting could be an hour away.
+  // Deleting one kept transcript. Confirmed by the press itself: a button
+  // marked with a cross, on the row it belongs to, is not something anybody
+  // hits by accident, and a confirmation dialogue for every single row is how
+  // people stop tidying up at all.
+  void listen<string>(MEETING_FORGET_EVENT, (e) => {
+    const id = e.payload;
+    if (typeof id !== "string" || id.length === 0) return;
+    const before = meetings.length;
+    meetings = meetings.filter((m) => m.id !== id);
+    if (meetings.length === before) return;
+    saveMeetings(browserStore(), meetings);
+    void invokeSafe("save_meetings", { json: JSON.stringify(meetings) });
+    announceMeetings();
+  }).catch(() => {
+    // Without this the delete buttons are decoration, which is worth knowing.
+    console.error("meeting deletes unavailable");
+  });
+
+  void listen(MEETINGS_HELLO_EVENT, () => announceMeetings()).catch(() => {
+    // The dashboard falls back to showing nothing recorded.
+  });
+
   void listen(RADAR_HELLO_EVENT, () => {
     announceRadar();
     announceTasks();
@@ -2556,16 +3067,42 @@ if (hasTauriHost()) {
   // Everything the always-on session matched. Most of it is ignored: the gate
   // decides what was addressed to Loaf, and while the microphone is open and
   // nobody is talking to the cat, "ignored" is the normal outcome.
-  void listen<{ text: string }>("loaf://voice/heard", (e) => {
+  void listen<{ text: string; confidence: string }>("loaf://voice/heard", (e) => {
+    // A WEAK MATCH IS A WAKE WORD OR IT IS NOTHING.
+    //
+    // These come from a result the recogniser itself rejected, recovered from
+    // its alternates — see the note in wake.rs. Being wrong about a wake word
+    // costs a bubble saying "Mm?"; being wrong about a command costs whatever
+    // the command does. So a weak match is allowed to wake Loaf and nothing
+    // else, and anything that is not one of the wake words is treated exactly
+    // as the rejection it was.
+    if (e.payload.confidence === "weak" && !isWakeWord(e.payload.text, wakeGate.words)) {
+      lastRejectedAt = Date.now();
+      updateStatusBadge();
+      return;
+    }
     const verdict = wakeGate.heard(e.payload.text);
     updateStatusBadge();
     if (verdict.justWoke) {
       say({ kind: "speech", text: "Mm?", seconds: 4 });
+      // The wake word is the cheap always-on half; Whisper is the half that
+      // can actually hear a sentence. See dictateAfterWake.
+      void dictateAfterWake();
       return;
     }
     if (verdict.command !== null) applySpoken(verdict.command);
   }).catch(() => {
     // No host, no listening.
+  });
+
+  // Heard, and not understood. See REJECTED_EVENT in wake.rs: this carries no
+  // text and never reaches the parser. It exists so that "not listening" and
+  // "listening, and not sure what you said" stop being the same silence.
+  void listen("loaf://voice/rejected", () => {
+    lastRejectedAt = Date.now();
+    updateStatusBadge();
+  }).catch(() => {
+    // Without it the badge is simply less informative.
   });
 
   // The session can end without being asked — a device change, a sleep. The
@@ -2591,7 +3128,14 @@ if (hasTauriHost()) {
     speechAvailable = ok === true;
     announceCloset();
   });
+  void invokeSafe<string | null>("microphone_name").then((name) => {
+    microphoneName = name ?? null;
+    announceCloset();
+  });
   void refreshWhisperReady();
+  // Anything past its keep-by date goes now, at launch, rather than at some
+  // arbitrary later moment.
+  applyRetention();
 
   void listen<{ stage: "binary" | "model"; downloaded: number; total: number }>(
     "loaf://whisper/progress",
@@ -2616,6 +3160,13 @@ if (hasTauriHost()) {
 
   void listen(SPOKEN_EVENT, (e) => applySpoken(e.payload)).catch(() => {
     // The command box is one of two ways in; the menu still works.
+  });
+
+  // A button on a bubble. Fed to the same parser a spoken answer goes through,
+  // so pressing "Yes" and saying "yes" are indistinguishable from here down.
+  void listen(BUBBLE_ANSWER_EVENT, (e) => applySpoken(e.payload)).catch(() => {
+    // Without this the buttons are decoration, so it is worth knowing.
+    console.error("bubble answers unavailable");
   });
 
   void listen(TASK_COMMAND_EVENT, (e) => applyTaskCommand(e.payload)).catch(() => {

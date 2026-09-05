@@ -1,7 +1,27 @@
 import { notesFor } from "../insights/notes";
 import { Tracker, formatDuration, dayKeyFor, type HistoryEntry } from "../tracker/tracker";
-import { BASE_CSS, PLUS_CSS, MINI_CSS } from "./css";
-import { TANTRUM_OPTIONS } from "./events";
+import {
+  BASE_CSS,
+  PLUS_CSS,
+  MINI_CSS,
+  MEETINGS_CSS,
+  NOTES_CSS,
+  MEETINGS_DELETE_CSS,
+} from "./css";
+import { TANTRUM_OPTIONS, type MeetingsSnapshot } from "./events";
+import {
+  listenRow,
+  holdRow,
+  engineRow,
+  voiceRow,
+  habitRows,
+  soundRow,
+  disclosurePanel,
+  whisperDownloadRow,
+  SETTINGS_CSS,
+} from "../settings/panels";
+import type { ClosetState } from "../closet/settings";
+import { RETENTION_CHOICES, KEEP_FOREVER, retentionLabel } from "../meetings/meetings";
 
 /**
  * Both dashboard views, as self-contained HTML. Ported from `DashboardHTML.swift`.
@@ -119,6 +139,28 @@ export interface DashboardOptions {
    * and the list belongs to the companion window like everything else.
    */
   readonly tasks?: readonly TaskView[];
+  /**
+   * Which section is open. Passed in rather than held here because the whole
+   * body is re-rendered on every stats tick, and a view that reset itself to
+   * "Today" every few seconds would be unusable.
+   */
+  readonly view?: DashboardView;
+  /**
+   * Everything the companion owns that is not screen time, or undefined
+   * before it has said anything.
+   *
+   * Undefined renders no controls at all rather than a guess: a dashboard that
+   * claims a microphone it has not confirmed, or shows "off" selected while
+   * something is listening, is the exact failure the Voice section exists to
+   * end.
+   */
+  readonly settings?: ClosetState;
+  /**
+   * What is recording and what already was, or undefined before the companion
+   * has said. Undefined shows a waiting line rather than "nothing recorded",
+   * which would be a claim this window has not earned yet.
+   */
+  readonly meetings?: MeetingsSnapshot;
   /** Browser tab titles, for the panel that lets you close them. */
   readonly tabs?: readonly string[];
   /** False when Loaf could not read them — different from none open. */
@@ -659,8 +701,40 @@ function radarSection(
 
 // --- The two views -----------------------------------------------------------
 
+/**
+ * The dashboard's top-level sections.
+ *
+ * IT USED TO BE ONE SCROLL, and that is the problem this solves. Nine headings
+ * stacked vertically meant the things people open this window for most — what
+ * they have spent today on, and asking Loaf to do something — were separated
+ * by four charts, and the voice controls sat two thirds of the way down a page
+ * most people never reached the bottom of. Grouping costs one click and makes
+ * every section reachable in that one click instead of a scroll and a hunt.
+ *
+ * Order is by how often a section is opened, not by how much of it there is:
+ * "Today" first because it is the reason the window exists, "Help" last
+ * because it is read once.
+ */
+export const DASHBOARD_VIEWS = [
+  { id: "today", label: "Today" },
+  { id: "notes", label: "Notes" },
+  { id: "history", label: "History" },
+  { id: "voice", label: "Voice" },
+  { id: "meetings", label: "Meetings" },
+  { id: "settings", label: "Settings" },
+  { id: "privacy", label: "Privacy" },
+  { id: "help", label: "Help" },
+] as const;
+
+export type DashboardView = (typeof DASHBOARD_VIEWS)[number]["id"];
+
+export function isDashboardView(v: unknown): v is DashboardView {
+  return DASHBOARD_VIEWS.some((s) => s.id === v);
+}
+
 /** The complete stylesheet for the full view. */
-export const DASHBOARD_STYLES = BASE_CSS + PLUS_CSS;
+export const DASHBOARD_STYLES =
+  BASE_CSS + PLUS_CSS + SETTINGS_CSS + MEETINGS_CSS + NOTES_CSS + MEETINGS_DELETE_CSS;
 /** The complete stylesheet for the hover card. */
 export const MINI_STYLES = BASE_CSS + PLUS_CSS + MINI_CSS;
 
@@ -735,77 +809,96 @@ export function dashboardBody(
     ? `<p class="peak-callout">You're sharpest around <strong>${hourRangeLabel(peakHour)}</strong></p>`
     : `<p class="peak-callout note-inline">Still learning your hours — Loaf needs a couple more before it guesses.</p>`;
 
+  const view: DashboardView = isDashboardView(opts.view) ? opts.view : "today";
+  const nav = DASHBOARD_VIEWS.map(
+    (v) =>
+      `<button class="view-tab${v.id === view ? " active" : ""}" role="tab" ` +
+      `aria-selected="${v.id === view}" data-loaf-view="${v.id}">${v.label}</button>`,
+  ).join("");
+
+  // Every panel is rendered and all but one hidden, rather than only the
+  // active one being built. Switching is then a class change with nothing to
+  // re-measure or re-fetch, and a stats update that arrives while you are on
+  // another tab does not silently drop the tab you were reading.
+  const panel = (id: DashboardView, inner: string): string =>
+    `<section class="view${id === view ? " active" : ""}" id="view-${id}" role="tabpanel"${
+      id === view ? "" : " hidden"
+    }>${inner}</section>`;
+
   return `<div class="wrap">
-    <h1>🐾 Loaf<span class="plus">+</span></h1>
-    <div class="date">${escapeHTML(dateLabel)}</div>
-    <div class="total-label">Time with you today</div>
-    <div class="total">${formatDuration(tracker.totalToday)}</div>
-    ${noticedBlock(tracker, opts)}
+    <header class="head">
+      <h1>🐾 Loaf<span class="plus">+</span></h1>
+      <div class="date">${escapeHTML(dateLabel)}</div>
+    </header>
 
-    <h2>By app</h2>
-    ${rows}${emptyState}
+    <div class="headline">
+      <div class="total-label">Time with you today</div>
+      <div class="total">${formatDuration(tracker.totalToday)}</div>
+    </div>
 
-    ${radarSection(tracker, radar, platform)}
+    <nav class="views" role="tablist" aria-label="Dashboard sections">${nav}</nav>
 
-    <div class="section-row">
-      <h2>History</h2>
-      <div class="tabs">
-        <button class="tab active" data-loaf-tab="week">7 days</button>
-        <button class="tab" data-loaf-tab="month">30 days</button>
+    ${panel(
+      "today",
+      `${noticedBlock(tracker, opts)}
+      <h2>By app</h2>
+      ${rows}${emptyState}
+      <h2>What you meant to do</h2>
+      ${taskPanel(opts.tasks ?? [])}
+      ${tabPanel(opts.tabs ?? [], opts.tabsRead ?? false)}`,
+    )}
+
+    ${panel(
+      "history",
+      `<div class="section-row">
+        <h2>History</h2>
+        <div class="tabs">
+          <button class="tab active" data-loaf-tab="week">7 days</button>
+          <button class="tab" data-loaf-tab="month">30 days</button>
+        </div>
       </div>
-    </div>
-    <div id="week" class="strip-panel">${stripHTML(weekBars, false)}</div>
-    <div id="month" class="strip-panel month" style="display:none">${stripHTML(monthBars, true)}</div>
-    ${since}
+      <div id="week" class="strip-panel">${stripHTML(weekBars, false)}</div>
+      <div id="month" class="strip-panel month" style="display:none">${stripHTML(monthBars, true)}</div>
+      ${since}
 
-    <h2>Most productive time</h2>
-    ${peakCallout}
-    <div class="hours">${hourBars}</div>
-    <div class="hours-axis"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>
+      <h2>Most productive time</h2>
+      ${peakCallout}
+      <div class="hours">${hourBars}</div>
+      <div class="hours-axis"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>`,
+    )}
 
-    <h2>Ask Loaf</h2>
-    <div class="ask">
-      <input id="ask-box" class="ask-input" type="text" maxlength="200"
-             placeholder="start a 25 minute focus session" aria-label="Ask Loaf to do something">
-      <button class="ask-mic" id="ask-mic" data-loaf-ask="mic" hidden
-              title="Hold a moment and speak" aria-label="Speak to Loaf">&#127908;</button>
-      <button class="ask-go" data-loaf-ask="go">Go</button>
-    </div>
-    <p class="ask-hint" id="ask-reply">Try: <em>remind me to call the bank in 20 minutes</em> · <em>open the closet</em> · <em>go quiet</em></p>
+    ${panel("voice", voicePanel(opts))}
 
-    <h2>What you meant to do</h2>
-    ${taskPanel(opts.tasks ?? [])}
-    ${tabPanel(opts.tabs ?? [], opts.tabsRead ?? false)}
+    ${panel("notes", notesPanel(opts.tasks ?? []))}
 
-    <h2>Everything else</h2>
-    <div class="shelf">
-      ${cmdButton("shelf-btn", "open:closet", "Closet")}
-      ${cmdButton("shelf-btn", "open:focus", "Focus timer")}
-    </div>
-    <div class="shelf shelf-soon">
-      ${soonCard("Your sounds", "Drop in your own audio for the little noises he makes.")}
-      ${soonCard("Draw a character", "Hand-drawn sprite packs, so he can be anything you like.")}
-    </div>
+    ${panel("meetings", meetingsPanel(opts))}
 
-    <h2>How to use him</h2>
-    <ul class="howto">
-      <li><b>Click</b> him for this window. <b>Click twice</b> to put it away.</li>
-      <li><b>Right-click</b> him for everything: the closet, the timer, and the rest.</li>
-      <li><b>Drag</b> him anywhere. He stays where you drop him.</li>
-      <li><b>Hover</b> for a second and he shows you today at a glance.</li>
-    </ul>
+    ${panel("settings", settingsPanel(opts))}
 
-    <div class="support">
-      <p class="support-line">Loaf is free, and made by one person.</p>
-      <div class="support-actions">
-        ${cmdButton("support-btn star", "open:star", "Star it on GitHub ★")}
-        ${cmdButton("support-btn", "open:feedback", "Tell me what to build next")}
-      </div>
-      <p class="support-fine">
-        Both open in your browser. Nothing is sent from Loaf, and starring is
-        never checked &mdash; every feature works exactly the same either way.
-      </p>
-    </div>
+    ${panel("privacy", radarSection(tracker, radar, platform))}
+
+    ${panel(
+      "help",
+      `<h2>How to use him</h2>
+      <ul class="howto">
+        <li><b>Click</b> him for this window. <b>Click twice</b> to put it away.</li>
+        <li><b>Right-click</b> him for everything: the closet, the timer, and the rest.</li>
+        <li><b>Drag</b> him anywhere. He stays where you drop him.</li>
+        <li><b>Hover</b> for a second and he shows you today at a glance.</li>
+      </ul>
+
+      <div class="support">
+        <p class="support-line">Loaf is free, and made by one person.</p>
+        <div class="support-actions">
+          ${cmdButton("support-btn star", "open:star", "Star it on GitHub ★")}
+          ${cmdButton("support-btn", "open:feedback", "Tell me what to build next")}
+        </div>
+        <p class="support-fine">
+          Both open in your browser. Nothing is sent from Loaf, and starring is
+          never checked &mdash; every feature works exactly the same either way.
+        </p>
+      </div>`,
+    )}
 
     <div class="footer">
       <p>Lives only on this computer.<br>No account, no network, no upload.</p>
@@ -816,6 +909,264 @@ export function dashboardBody(
       </div>
     </div>
   </div>`;
+}
+
+/**
+ * Voice: every setting for it, in one place, with the command box.
+ *
+ * ALL OF IT, RATHER THAN SOME HERE AND SOME IN THE CLOSET. The recogniser, the
+ * listening mode, the wake word, the hold delay, the download and the spoken
+ * voice used to sit in a wardrobe between eighteen animal portraits and a row
+ * of scarves, while the dashboard grew its own partial summary of the same
+ * things — so there were two screens that could disagree about whether Loaf
+ * was listening. One screen cannot disagree with itself.
+ *
+ * Rendered only once the companion has said what the state is. Controls drawn
+ * from a guess would show the wrong thing selected for the first second and
+ * then jump, which on a page about microphones is worse than a short wait.
+ */
+function voicePanel(opts: DashboardOptions): string {
+  const ask = `<h2>Ask Loaf</h2>
+    <div class="ask">
+      <input id="ask-box" class="ask-input" type="text" maxlength="200"
+             placeholder="start a 25 minute focus session" aria-label="Ask Loaf to do something">
+      <button class="ask-mic" id="ask-mic" data-loaf-ask="mic" hidden
+              title="Hold a moment and speak" aria-label="Speak to Loaf">&#127908;</button>
+      <button class="ask-go" data-loaf-ask="go">Go</button>
+    </div>
+    <p class="ask-hint" id="ask-reply">Try: <em>remind me to call the bank in 20 minutes</em> · <em>open the closet</em> · <em>go quiet</em></p>`;
+
+  const s = opts.settings;
+  if (!s) return ask;
+
+  return `${ask}
+
+    <h2>When it listens</h2>
+    <div class="settings-group">${listenRow(s)}${holdRow(s)}</div>
+
+    <h2>What hears your commands</h2>
+    <div class="settings-group">${engineRow(s)}</div>
+    <p class="note">Dictation hands over to Windows' own voice typing, which
+    types into whatever you are in. Meetings are transcribed by Whisper on this
+    machine — see the Meetings tab.</p>
+
+    <h2>How it talks back</h2>
+    <div class="settings-group">${voiceRow(s)}</div>
+
+    <h2>What Loaf can do right now</h2>
+    <p class="note">Everything above, in plain sentences — what hears you, where
+    anything it hears would go, and what does not exist yet.</p>
+    ${disclosurePanel(s)}`;
+}
+
+
+/**
+ * How long transcripts are kept.
+ *
+ * NOT the audio, and the copy says so: recordings are deleted the moment they
+ * have been transcribed, on every path including failure, so there is no audio
+ * left for a retention window to govern. Saying "delete recordings after N
+ * days" would imply Loaf had been holding them all along.
+ *
+ * The default is forever, because the two ways this can be wrong are not
+ * equal: a note you no longer want costs you a line on a screen, and a note
+ * that vanished before you read it is gone.
+ */
+function retentionRow(settings: ClosetState | undefined): string {
+  if (!settings) return "";
+  const options = RETENTION_CHOICES.map(
+    (d) =>
+      `<option value="${d}"${d === settings.transcriptRetentionDays ? " selected" : ""}>` +
+      `${d === KEEP_FOREVER ? "Until I delete them" : `${d} days`}</option>`,
+  ).join("");
+  // The download lives HERE now, next to the thing it is for. It used to sit
+  // under the recogniser picker in Voice, which read as "this is what hears
+  // your commands" — and it is not, and never was good at that.
+  return `<h2>Transcription</h2>
+    <div class="settings-group">${whisperDownloadRow(settings)}</div>
+
+    <h2>How long to keep them</h2>
+    <div class="listen">
+      <select data-retention>${options}</select>
+      <p class="why">${escapeHTML(retentionLabel(settings.transcriptRetentionDays))}.
+      This governs the words, not the audio — recordings are deleted the moment
+      they have been transcribed, every time, including when it fails.</p>
+    </div>`;
+}
+
+/**
+ * Everything you have written down, as cards.
+ *
+ * A BOARD RATHER THAN A LIST, and the difference is not decoration. The task
+ * list on Today is a checklist: one line each, ordered by priority, designed to
+ * be worked through and emptied. This is where things go that are not one line
+ * — a thought, a paragraph a meeting transcript dropped in, something you want
+ * to be able to READ rather than tick. A transcript rendered as a single
+ * ellipsised row in a checklist is a transcript nobody will ever look at again.
+ *
+ * The two are the same underlying list on purpose. A capture screen that wrote
+ * to its own separate store would mean two places to look for the thing you
+ * wrote down, and the whole point of writing it down is not having to look in
+ * two places.
+ *
+ * The composer is a TEXTAREA, not an input. What lands here is often several
+ * sentences, and a one-line box that scrolls sideways is how you end up with
+ * notes nobody finishes typing.
+ */
+function notesPanel(tasks: readonly TaskView[]): string {
+  const compose = `<div class="nt-compose">
+    <textarea id="nt-title" class="nt-input" rows="3" maxlength="2000"
+              placeholder="Write something down…" aria-label="New note"></textarea>
+    <div class="nt-tools">
+      <select id="nt-priority" class="nt-select" aria-label="Priority">
+        <option value="now">Now</option>
+        <option value="soon" selected>Soon</option>
+        <option value="whenever">Whenever</option>
+      </select>
+      <input id="nt-minutes" class="nt-mins" type="number" min="0" max="600" step="5"
+             placeholder="mins" aria-label="Remind me in, minutes">
+      <button class="nt-add" data-loaf-note="add">Add note</button>
+    </div>
+    <p class="note">Ctrl+Enter adds it. Everything here stays on this computer.</p>
+  </div>`;
+
+  if (tasks.length === 0) {
+    return `<h2>Notes</h2>${compose}
+      <p class="empty">Nothing written down yet. Notes you add here, and anything
+      Loaf transcribes for you, show up as cards.</p>`;
+  }
+
+  const cards = tasks
+    .map((t, i) => {
+      const timer =
+        t.minutesLeft === null ? "" : `<span class="nt-timer">${t.minutesLeft}m</span>`;
+      // Long enough to be a transcript rather than a line: given room to
+      // breathe instead of being clipped to the same height as "buy milk".
+      const long = t.title.length > 120 ? " long" : "";
+      return (
+        `<article class="nt-card p-${escapeHTML(t.priority)}${long}">` +
+        `<div class="nt-body">${escapeHTML(t.title)}</div>` +
+        `<div class="nt-foot">` +
+        `<span class="nt-pri">${escapeHTML(t.priority)}</span>${timer}` +
+        `<span class="nt-acts">` +
+        `<button class="nt-btn" data-loaf-task="done:${i}" title="Mark done">✓</button>` +
+        `<button class="nt-btn" data-loaf-task="remove:${i}" title="Remove">×</button>` +
+        `</span></div></article>`
+      );
+    })
+    .join("");
+
+  return `<h2>Notes</h2>${compose}
+    <div class="nt-board">${cards}</div>`;
+}
+
+/**
+ * Meetings: what is recording now, and everything already kept.
+ *
+ * THE RECORDING STATE IS THE POINT OF THIS SCREEN. Everything else here is a
+ * list; the top line is the answer to "is my microphone on right now", and it
+ * is stated in words rather than implied by the presence of a stop button.
+ * Getting that wrong is the one mistake in this app that a person could not
+ * discover for themselves until afterwards.
+ */
+function meetingsPanel(opts: DashboardOptions): string {
+  const m = opts.meetings;
+  if (!m) {
+    return `<h2>Meetings</h2><p class="empty">Asking Loaf what is recording…</p>`;
+  }
+
+  const state = m.recording
+    ? `<div class="rec-state on"><span class="rec-dot"></span>` +
+      `<b>Recording${m.current ? ` — ${escapeHTML(m.current)}` : ""}</b>` +
+      `<span class="rec-sub">Your microphone only, never the other people.</span></div>`
+    : `<div class="rec-state off"><b>Not recording.</b>` +
+      `<span class="rec-sub">${
+        m.current
+          ? `You appear to be in ${escapeHTML(m.current)}.`
+          : "No call detected right now — you can still record anything."
+      }</span></div>`;
+
+  const button = m.recording
+    ? cmdButton("rec-btn stop", "record:stop", "Stop and transcribe")
+    : m.canRecord
+      ? cmdButton("rec-btn start", "record:start", "Record this meeting")
+      : `<p class="note">${escapeHTML(m.blockedReason ?? "Recording is not available.")}</p>`;
+
+  const rows =
+    m.meetings.length === 0
+      ? `<p class="empty">Nothing recorded yet. What you keep shows up here.</p>`
+      : [...m.meetings]
+          .reverse()
+          .map((row) => {
+            const when = new Date(row.startedAt).toLocaleString(undefined, {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            });
+            const mins = Math.max(1, Math.round(row.seconds / 60));
+            const notes =
+              row.notes.length === 0
+                ? `<p class="empty">No notes kept.</p>`
+                : `<ul class="mt-notes">${row.notes
+                    .map((n) => `<li>${escapeHTML(n)}</li>`)
+                    .join("")}</ul>`;
+            return (
+              `<div class="mt-row"><div class="mt-head">` +
+              `<b>${escapeHTML(row.where)}</b>` +
+              `<span class="time">${escapeHTML(when)} · ${mins}m</span>` +
+              `<button class="mt-x" data-loaf-forget="${escapeHTML(row.id)}" ` +
+              `title="Delete this transcript">×</button>` +
+              `</div>${notes}</div>`
+            );
+          })
+          .join("");
+
+  return `<h2>Right now</h2>
+    ${state}
+    <div class="shelf">${button}</div>
+
+    <div class="section-row">
+      <h2>Kept meetings (${m.meetings.length})</h2>
+      ${
+        m.meetings.length > 0
+          ? cmdButton("mt-forget-all", "meetings:forget-all", "Delete all")
+          : ""
+      }
+    </div>
+    <div class="mt-list">${rows}</div>
+    ${retentionRow(opts.settings)}`;
+}
+
+/**
+ * Everything that is neither a chart nor about voice.
+ *
+ * The habits and the sound switch moved here from the closet for the same
+ * reason the voice controls did: they are about what Loaf DOES, and the closet
+ * is about what it looks like.
+ */
+function settingsPanel(opts: DashboardOptions): string {
+  const s = opts.settings;
+  return `${
+    s
+      ? `<h2>Habits <span class="shelf-note">what they get up to on their own</span></h2>
+    <div class="habits">${habitRows(s)}${soundRow(s)}</div>
+    <p class="note">Wandering is off until you say otherwise — you put the window
+    where it is, and a pet that starts crossing a screen you're working on,
+    unasked, is a bug report.</p>`
+      : ""
+  }
+
+    <h2>Everything else</h2>
+    <div class="shelf">
+      ${cmdButton("shelf-btn", "open:closet", "Closet — character, outfit, opacity")}
+      ${cmdButton("shelf-btn", "open:focus", "Focus timer")}
+    </div>
+    <div class="shelf shelf-soon">
+      ${soonCard("Your sounds", "Drop in your own audio for the little noises he makes.")}
+      ${soonCard("Draw a character", "Hand-drawn sprite packs, so he can be anything you like.")}
+    </div>`;
 }
 
 /** The full view as a standalone document. */

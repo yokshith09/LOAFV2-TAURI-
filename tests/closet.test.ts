@@ -239,40 +239,6 @@ describe("the closet page", () => {
 });
 
 describe("habits", () => {
-  const withHabits = (over: Record<string, boolean> = {}, companionId?: string) => {
-    const store = new MemorySettingsStore();
-    const s = new ClosetSettings(store);
-    if (companionId) s.setCompanion(companionId);
-    s.habits = { loafing: true, playing: true, wandering: false, drifting: true, ...over };
-    return s.read();
-  };
-
-  it("offers the three habits every character has", () => {
-    const html = closetBody(withHabits());
-    for (const h of ["loafing", "playing", "wandering"]) {
-      expect(html).toContain(`data-habit="${h}"`);
-    }
-  });
-
-  it("does not offer drifting to something that cannot drift", () => {
-    // A switch wired to nothing, whose default is the opposite of wandering's
-    // — baffling sitting next to it on a cat.
-    expect(closetBody(withHabits({}, "cat-ginger"))).not.toContain('data-habit="drifting"');
-  });
-
-  it("offers drifting to a ghost", () => {
-    const ghost = COMPANIONS.find((c) => c.drifts)!;
-    expect(closetBody(withHabits({}, ghost.id))).toContain('data-habit="drifting"');
-  });
-
-  it("checks the ones that are on and leaves wandering off", () => {
-    // The window walk has been built and tested and unreachable; this is the
-    // control that finally turns it on, and it must start off.
-    const html = closetBody(withHabits());
-    expect(html).toMatch(/data-habit="loafing" checked/);
-    expect(html).not.toMatch(/data-habit="wandering" checked/);
-  });
-
   it("loads saved habits over the defaults, and nothing else", () => {
     // Only the four booleans come back. A stale or hand-edited file must not be
     // able to leave the pet walking at forty points a second.
@@ -343,6 +309,11 @@ describe("state arriving from the companion", () => {
         names: { "dog-husky": "Wolfgang" },
         habits: { loafing: true, playing: true, wandering: false },
         muted: false,
+        // Null is a real value here — "Loaf can see no microphone" — not an
+        // absent field, so it is checked for rather than defaulted.
+        microphone: null,
+        // 0 is "keep until deleted", a real choice rather than an absent one.
+        transcriptRetentionDays: 0,
       }),
     ).toBe(true);
   });
@@ -400,61 +371,7 @@ describe("habits and settings cannot drift apart", () => {
   });
 });
 
-describe("the Whisper download row", () => {
-  it("offers a download button when Whisper is not ready", () => {
-    const s = fresh();
-    s.engine = "whisper";
-    const html = closetBody(s.read());
-    expect(html).toContain("data-whisper-download");
-    expect(html).toContain("190 MB");
-  });
 
-  it("shows a progress bar instead of the button while downloading", () => {
-    const s = fresh();
-    s.engine = "whisper";
-    s.whisperDownload = { downloaded: 95_000_000, total: 190_000_000 };
-    const html = closetBody(s.read());
-    expect(html).not.toContain("data-whisper-download");
-    expect(html).toContain("whisper-fill");
-    expect(html).toContain("50%");
-  });
-
-  it("shows neither once Whisper is ready", () => {
-    const s = fresh();
-    s.engine = "whisper";
-    s.engineAvailability = {
-      builtinReady: true,
-      whisperModel: true,
-      hostedConnected: false,
-    };
-    const html = closetBody(s.read());
-    expect(html).not.toContain("data-whisper-download");
-    expect(html).not.toContain("whisper-fill");
-  });
-});
-
-describe("the Whisper-is-ready confirmation", () => {
-  it("names meetings once Whisper is installed, not just dictation", () => {
-    const s = fresh();
-    s.engine = "whisper";
-    s.engineAvailability = {
-      builtinReady: true,
-      whisperModel: true,
-      hostedConnected: false,
-    };
-    const html = closetBody(s.read());
-    expect(html).toContain("whisper-ready");
-    expect(html.toLowerCase()).toContain("meeting");
-  });
-
-  it("names meetings on the download button too, before anyone clicks it", () => {
-    const s = fresh();
-    s.engine = "whisper";
-    const html = closetBody(s.read());
-    expect(html.toLowerCase()).toContain("meeting");
-    expect(html).toContain("data-whisper-download");
-  });
-});
 
 describe("window opacity", () => {
   it("defaults to fully opaque", () => {
@@ -490,33 +407,3 @@ describe("window opacity", () => {
   });
 });
 
-describe("the disclosure panel", () => {
-  it("names the active speech engine and where its audio goes", () => {
-    const s = fresh();
-    s.engine = "builtin";
-    let html = closetBody(s.read());
-    expect(html).toContain("never leaves this device");
-
-    s.engine = "hosted";
-    html = closetBody(s.read());
-    expect(html).toContain("Audio leaves this device");
-  });
-
-  it("names the wake word when always-listening is on", () => {
-    const s = fresh();
-    s.listenMode = "always";
-    s.wakeWord = "biscuit";
-    const html = closetBody(s.read());
-    expect(html).toContain("biscuit");
-  });
-
-  it("says meeting recording is not available until Whisper is ready", () => {
-    const s = fresh();
-    s.engineAvailability = { builtinReady: true, whisperModel: false, hostedConnected: false };
-    expect(closetBody(s.read())).toContain("Not available");
-  });
-
-  it("is honest that MCP connections do not have a UI yet", () => {
-    expect(closetBody(fresh().read())).toContain("not built yet");
-  });
-});

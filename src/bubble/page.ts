@@ -1,9 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { Tracker } from "../tracker/tracker";
 import { miniBody, MINI_STYLES, unavailableRadar } from "../dashboard/html";
 import { BUBBLE_CSS, speechBubbleHTML, TEXT_WIDTH } from "./render";
-import { BUBBLE_SHOW_EVENT, BUBBLE_HIDE_EVENT, type BubblePayload } from "./events";
+import {
+  BUBBLE_SHOW_EVENT,
+  BUBBLE_HIDE_EVENT,
+  BUBBLE_ANSWER_EVENT,
+  type BubblePayload,
+} from "./events";
 
 /**
  * The bubble window's entry point.
@@ -49,7 +54,7 @@ async function show(p: BubblePayload): Promise<void> {
     // Rendered with the tail centred first: the real offset needs the placed
     // origin, which needs the size, which needs this render. The second pass
     // below corrects it once there is something to measure.
-    root.innerHTML = speechBubbleHTML(p.text, "above", TEXT_WIDTH / 2);
+    root.innerHTML = speechBubbleHTML(p.text, "above", TEXT_WIDTH / 2, p.choices ?? []);
   } else {
     style.textContent = MINI_STYLES + PREVIEW_CSS;
     document.body.className = "mini";
@@ -87,7 +92,7 @@ async function show(p: BubblePayload): Promise<void> {
     // Re-render with the tail where the character actually is. Only the speech
     // bubble has one; the preview card's tail is fixed in its own CSS. This
     // happens BEFORE the window is revealed, so nobody sees the first guess.
-    root.innerHTML = speechBubbleHTML(p.text, placed.side, placed.tailX);
+    root.innerHTML = speechBubbleHTML(p.text, placed.side, placed.tailX, p.choices ?? []);
   }
 
   await invoke("reveal_bubble").catch(() => {
@@ -114,7 +119,22 @@ const PREVIEW_CSS = `
 // Clicking the bubble dismisses it, as in the reference. The preview ignores
 // the mouse entirely — Rust sets that per show — so this only ever fires for
 // speech.
-root.addEventListener("click", () => void hide());
+//
+// A button is the exception: pressing one answers the question rather than
+// dismissing it unanswered, which is the opposite of what the presser meant.
+root.addEventListener("click", (ev) => {
+  const button =
+    ev.target instanceof Element ? ev.target.closest<HTMLElement>("[data-answer]") : null;
+  if (button) {
+    const answer = button.dataset.answer ?? "";
+    void emit(BUBBLE_ANSWER_EVENT, answer).catch(() => {
+      // No companion listening. Hiding below is still the right thing.
+    });
+    void hide();
+    return;
+  }
+  void hide();
+});
 
 void listen<BubblePayload>(BUBBLE_SHOW_EVENT, (e) => void show(e.payload));
 void listen(BUBBLE_HIDE_EVENT, () => void hide());

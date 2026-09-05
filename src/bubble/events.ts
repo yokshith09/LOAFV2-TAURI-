@@ -9,6 +9,14 @@
 
 export const BUBBLE_SHOW_EVENT = "loaf://bubble/show";
 export const BUBBLE_HIDE_EVENT = "loaf://bubble/hide";
+/**
+ * Bubble -> companion: a button on a question was pressed.
+ *
+ * The payload is the same string a spoken answer would have produced, so it
+ * rejoins the one confirmation pipeline rather than opening a second path to
+ * the same decision.
+ */
+export const BUBBLE_ANSWER_EVENT = "loaf://bubble/answer";
 
 export type BubblePayload =
   | {
@@ -16,6 +24,18 @@ export type BubblePayload =
       readonly text: string;
       /** Auto-hide after this long. 0 or absent means it stays until dismissed. */
       readonly seconds?: number;
+      /**
+       * Buttons, when this bubble is a question.
+       *
+       * Absent for ordinary speech. Present, and the bubble stops being a
+       * notification and becomes something that can be answered without a
+       * microphone or the dashboard's command box.
+       */
+      readonly choices?: ReadonlyArray<{
+        readonly label: string;
+        readonly value: string;
+        readonly primary?: boolean;
+      }>;
     }
   | {
       readonly kind: "preview";

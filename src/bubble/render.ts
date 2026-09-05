@@ -82,6 +82,26 @@ export const BUBBLE_CSS = `
     border-bottom: none; border-right: none;
   }
 
+  /*
+   * The answer buttons.
+   *
+   * A question with no way to answer it is not a question. The confirmation
+   * pipeline behind this one accepts a spoken or typed "yes", and for a while
+   * that was the whole interface — which meant anyone not using voice, and not
+   * looking at the dashboard's command box, got a bubble that asked something
+   * and offered nothing. If Loaf asks, Loaf shows the buttons.
+   */
+  #answers { display: flex; gap: 8px; margin-top: 10px; justify-content: center; }
+  #card.centre #answers { justify-content: center; }
+  .answer {
+    font-family: inherit; font-size: 12px; font-weight: 600;
+    border-radius: 8px; padding: 5px 14px; cursor: pointer;
+    border: 1px solid var(--edge); background: rgba(0,0,0,0.03); color: var(--ink);
+  }
+  .answer.yes { background: #FFB25E; border-color: #DD9A4E; color: #2B1D0E; }
+  .answer:hover { filter: brightness(0.96); }
+  .answer:focus-visible { outline: 2px solid #DD9A4E; outline-offset: 1px; }
+
   @media (prefers-reduced-motion: no-preference) {
     #bubble { animation: pop .14s ease-out; }
     @keyframes pop {
@@ -102,15 +122,36 @@ export function speechBubbleHTML(
   text: string,
   side: BubbleSide,
   tailX: number,
+  choices: readonly BubbleChoice[] = [],
 ): string {
   // Multi-line text is a list — a stats readout, a menu of something. Centring
   // it makes every line a different length from a different origin.
   const alignment = text.includes("\n") ? "" : " centre";
+  const answers =
+    choices.length > 0
+      ? `<div id="answers">${choices
+          .map(
+            (c) =>
+              `<button type="button" class="answer${c.primary ? " yes" : ""}" ` +
+              `data-answer="${escapeHTML(c.value)}">${escapeHTML(c.label)}</button>`,
+          )
+          .join("")}</div>`
+      : "";
   return (
     `<div id="bubble" class="${side === "below" ? "below" : "above"}">` +
     `<div id="card" class="card${alignment}" style="max-width:${TEXT_WIDTH + INSET * 2}px">` +
-    `${escapeHTML(text)}</div>` +
+    `${escapeHTML(text)}${answers}</div>` +
     `<span class="tail" style="left:${tailX - TAIL_BOX / 2}px"></span>` +
     `</div>`
   );
+}
+
+/** One button on a bubble that asked something. */
+export interface BubbleChoice {
+  /** What the button says. */
+  readonly label: string;
+  /** What it means — fed to the same parser a spoken answer goes through. */
+  readonly value: string;
+  /** The affirmative one, styled to stand out. */
+  readonly primary?: boolean;
 }

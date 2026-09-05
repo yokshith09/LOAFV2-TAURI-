@@ -100,6 +100,13 @@ export interface BehaviourSettings {
   hoverListenMs: number;
   /** Which recogniser turns speech into text. See voice/engine.ts. */
   engine: EngineId;
+  /**
+   * How many days transcripts are kept, or 0 for "until you delete them".
+   *
+   * Governs the WORDS, not the audio — recordings are deleted the moment they
+   * have been transcribed. See meetings.ts.
+   */
+  transcriptRetentionDays: number;
   /** Path to a whisper.cpp executable. Empty until the user sets it. */
   whisperBinary: string;
   /** Path to a ggml model file. Empty until the user sets it. */
@@ -146,6 +153,9 @@ export function defaultBehaviourSettings(): BehaviourSettings {
     wakeWord: null,
     hoverListenMs: 5000,
     engine: DEFAULT_ENGINE,
+    // Forever by default: deleting someone's notes on a schedule they did not
+    // ask for is the worse of the two failures.
+    transcriptRetentionDays: 0,
     whisperBinary: "",
     whisperModel: "",
     driftEvery: { min: 0.3, max: 2.0 },

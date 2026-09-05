@@ -48,6 +48,19 @@ pub const HEARD_EVENT: &str = "loaf://voice/heard";
 /// Emitted when the session stops on its own, so the UI cannot show a
 /// microphone that is not actually open.
 pub const STOPPED_EVENT: &str = "loaf://voice/stopped";
+/// Emitted when the recogniser heard something and REJECTED it.
+///
+/// MEASURED, NOT GUESSED: on the machine this was written on, saying the wake
+/// word produced exactly one result — empty text, confidence `Rejected` — and
+/// the handler below dropped it, correctly, because acting on a rejected
+/// result means acting on a sentence nobody said. The consequence was that
+/// "Loaf is not listening" and "Loaf heard you and was not sure" were the same
+/// silence, and no amount of trying again could tell them apart.
+///
+/// This carries NO text, deliberately. It exists so the UI can say "I heard
+/// something" and nothing more; a rejected transcription is not evidence of
+/// what was said and must never reach the command parser.
+pub const REJECTED_EVENT: &str = "loaf://voice/rejected";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct HeardPhrase {
@@ -80,7 +93,7 @@ pub fn stop() {}
 
 #[cfg(windows)]
 mod imp {
-    use super::{HeardPhrase, HEARD_EVENT, LISTENING, NO_PHRASES, STOPPED_EVENT};
+    use super::{HeardPhrase, HEARD_EVENT, LISTENING, NO_PHRASES, REJECTED_EVENT, STOPPED_EVENT};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Mutex};
     use tauri::Emitter;
@@ -91,7 +104,7 @@ mod imp {
     use windows::Media::SpeechRecognition::{
         SpeechContinuousRecognitionCompletedEventArgs,
         SpeechContinuousRecognitionResultGeneratedEventArgs, SpeechContinuousRecognitionSession,
-        SpeechRecognitionConfidence, SpeechRecognitionListConstraint,
+        SpeechRecognitionConfidence, SpeechRecognitionListConstraint, SpeechRecognitionResult,
         SpeechRecognitionResultStatus, SpeechRecognizer,
     };
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
@@ -133,6 +146,26 @@ mod imp {
             SpeechRecognitionConfidence::Low => "low",
             _ => "rejected",
         }
+    }
+
+    /// The best real phrase behind a rejected result, if there is one.
+    ///
+    /// Rejected results carry their candidates, and on this machine the wake
+    /// word was reliably among them while the primary text was empty. Only
+    /// phrases from the compiled grammar can appear here — see the note at the
+    /// call site for why that is what makes reading them safe.
+    fn best_alternate(result: &SpeechRecognitionResult) -> Option<String> {
+        let alternates = result.GetAlternates(5).ok()?;
+        for i in 0..alternates.Size().ok()? {
+            let Ok(alt) = alternates.GetAt(i) else {
+                continue;
+            };
+            let text = alt.Text().map(|t| t.to_string()).unwrap_or_default();
+            if !text.trim().is_empty() {
+                return Some(text);
+            }
+        }
+        None
     }
 
     pub fn start<R: tauri::Runtime>(
@@ -238,9 +271,6 @@ mod imp {
                         .Confidence()
                         .map(confidence_name)
                         .unwrap_or("rejected");
-                    // A rejected result is the recogniser disbelieving its own
-                    // transcription. Forwarding it would hand the wake gate a
-                    // sentence nobody said.
                     if !text.trim().is_empty() && confidence != "rejected" {
                         let _ = sink.emit(
                             HEARD_EVENT,
@@ -249,6 +279,43 @@ mod imp {
                                 confidence: confidence.to_string(),
                             },
                         );
+                    } else if let Some(alt) = best_alternate(&result) {
+                        // THE BUG THIS FIXES, MEASURED ON A REAL MACHINE.
+                        // Saying the wake word produced a top result of EMPTY
+                        // TEXT with confidence `Rejected` — and the wake word
+                        // sitting right there in the alternates:
+                        //
+                        //   [0] ""          raw 0.000  Rejected
+                        //   [1] "loaf"      raw 0.0056 Low
+                        //   [2] "hey loaf"  raw 0.0056 Low
+                        //
+                        // This handler only ever read `Text()`, so it read the
+                        // empty string and threw the match away. Every "I said
+                        // hey loaf and nothing happened" was this.
+                        //
+                        // WHY READING ALTERNATES IS STILL SAFE, which is the
+                        // only question that matters here: the alternates come
+                        // from the SAME compiled list constraint as the primary
+                        // result. Every one of them is a phrase this app put in
+                        // the grammar itself. There is no path by which reading
+                        // them can produce a sentence that was not already in
+                        // the vocabulary, so the closed-grammar property this
+                        // whole module rests on is untouched.
+                        //
+                        // It is marked `weak` rather than passed off as a
+                        // normal result, because the frontend must NOT act on
+                        // one of these as a command. `voice/wake.ts` accepts a
+                        // weak match only as the wake word, where being wrong
+                        // costs a bubble saying "Mm?" and nothing else.
+                        let _ = sink.emit(
+                            HEARD_EVENT,
+                            HeardPhrase {
+                                text: alt,
+                                confidence: "weak".to_string(),
+                            },
+                        );
+                    } else {
+                        let _ = sink.emit(REJECTED_EVENT, ());
                     }
                 }
                 Ok(())

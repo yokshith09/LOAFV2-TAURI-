@@ -25,7 +25,7 @@ export function isListenMode(v: unknown): v is ListenMode {
 /** Short labels, for the setting itself. */
 export const LABELS: Readonly<Record<ListenMode, string>> = {
   off: "Never",
-  push: "When I press the microphone button",
+  push: "When I press the microphone in Ask Loaf, below",
   hover: "While I hold the cursor on Loaf",
   always: "Always — listen for “Hey Loaf”",
 };
@@ -48,8 +48,11 @@ export const DESCRIPTIONS: Readonly<Record<ListenMode, string>> = {
     "this device.",
   always:
     "Microphone stays active and listens for your wake word. Audio is processed on this " +
-    "device. Loaf can only recognise its own list of phrases, so it cannot transcribe a " +
-    "conversation — but the microphone is genuinely open the whole time.",
+    "device. Until you say the wake word, Loaf can only recognise its own short list of " +
+    "phrases, so it cannot transcribe a conversation — but the microphone is genuinely " +
+    "open the whole time. Once it hears the wake word, Whisper takes one sentence and " +
+    "closes again: that is the part that can hear anything, and it only runs after you " +
+    "have called Loaf by name.",
 };
 
 /** Whether the mode ever opens the microphone at all. */

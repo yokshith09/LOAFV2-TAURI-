@@ -13,7 +13,7 @@
 //!    `b4938`, and its byte size is checked against what the download actually
 //!    produced — a truncated download during testing was caught exactly this
 //!    way, by the size not matching.
-//!  - which five files inside that zip `whisper-cli.exe` actually needs was
+//!  - which files inside that zip `whisper-cli.exe` actually needs was
 //!    found empirically, not guessed: running the extracted exe alone failed
 //!    with `STATUS_DLL_NOT_FOUND` until `whisper.dll`, `ggml.dll`,
 //!    `ggml-base.dll` and `ggml-cpu-x64.dll` sat next to it, at which point it
@@ -47,14 +47,46 @@ const MODEL_URL: &str =
 const MODEL_BYTES: u64 = 190_098_681;
 const MODEL_FILENAME: &str = "ggml-small.en-q5_1.bin";
 
-/// The five files a working `whisper-cli.exe` needs beside it, verified by
+/// The files a working `whisper-cli.exe` needs beside it, verified by
 /// running it and adding files until `STATUS_DLL_NOT_FOUND` stopped.
 const NEEDED_FILES: &[&str] = &[
     "Release/whisper-cli.exe",
     "Release/whisper.dll",
     "Release/ggml.dll",
     "Release/ggml-base.dll",
+    // EVERY CPU BACKEND, NOT JUST THE BASELINE — THIS IS A 14x SPEED
+    // DIFFERENCE AND IT WAS MEASURED, TWICE.
+    //
+    // ggml loads ONE of these at runtime, picking the best your processor can
+    // actually run. Shipping only `ggml-cpu-x64.dll` meant it always picked
+    // the fallback: plain x86-64 with no SIMD at all. whisper printed the
+    // evidence every single run and nobody read it —
+    //
+    //   CPU : OPENMP = 1 | REPACK = 1          <- no AVX, no AVX2, no FMA
+    //
+    // where a machine with the right file loads haswell and prints
+    //
+    //   CPU : AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1
+    //
+    // On one 5.7-second clip, same model, same thread count: 33 seconds on the
+    // baseline, 5.8 seconds on haswell. It was 83 seconds before the thread
+    // count was fixed too. That is the difference between dictation that
+    // works and a feature people report as broken — and it looked like
+    // "Whisper is failing" rather than "Whisper is running scalar code",
+    // because nothing surfaced which backend had been chosen.
+    //
+    // They are about 800 KB each and only one is ever loaded. Carrying all
+    // nine costs ~7 MB on disk and removes an entire class of "it is slow on
+    // my machine" that nobody could have diagnosed from inside the app.
     "Release/ggml-cpu-x64.dll",
+    "Release/ggml-cpu-sse42.dll",
+    "Release/ggml-cpu-sandybridge.dll",
+    "Release/ggml-cpu-haswell.dll",
+    "Release/ggml-cpu-skylakex.dll",
+    "Release/ggml-cpu-icelake.dll",
+    "Release/ggml-cpu-cascadelake.dll",
+    "Release/ggml-cpu-cannonlake.dll",
+    "Release/ggml-cpu-alderlake.dll",
 ];
 
 /// Where the installed engine lives, under the app's own data directory.
@@ -75,7 +107,19 @@ pub fn model_path(data_dir: &Path) -> PathBuf {
 /// Same check `transcribe::missing` does, just pointed at the fixed location
 /// this module installs to rather than a path the user typed.
 pub fn is_installed(data_dir: &Path) -> bool {
-    binary_path(data_dir).is_file() && model_path(data_dir).is_file()
+    binary_path(data_dir).is_file() && model_path(data_dir).is_file() && has_fast_backend(data_dir)
+}
+
+/// Whether the install has the optimised CPU backends, not just the fallback.
+///
+/// AN INSTALL FROM BEFORE THOSE WERE SHIPPED IS TREATED AS NOT INSTALLED, on
+/// purpose. It would otherwise keep working — at a fourteenth of the speed,
+/// forever, with no way for the user to find out why and no reason for them to
+/// press a download button next to an engine that says it is ready. Reporting
+/// it as missing is what gets the fast files onto machines that already ran
+/// the old installer.
+fn has_fast_backend(data_dir: &Path) -> bool {
+    install_dir(data_dir).join("ggml-cpu-haswell.dll").is_file()
 }
 
 /// One update as a download proceeds.
@@ -207,6 +251,23 @@ fn install_model(data_dir: &Path, mut on_progress: impl FnMut(Progress)) -> Resu
 /// Deliberately not parallel: these are two large sequential downloads run
 /// from a UI showing one progress bar, and interleaving their progress would
 /// make that bar move backwards.
+/// WINDOWS ONLY, FOR NOW, AND IT SAYS SO RATHER THAN TRYING.
+///
+/// The release fetched above is `whisper-bin-x64.zip` — Windows executables and
+/// Windows DLLs. Downloading two hundred megabytes of those onto a Mac and
+/// then reporting the engine as installed would be worse than not offering it:
+/// every later failure would look like a bug in transcription rather than a
+/// platform that was never wired up.
+#[cfg(not(windows))]
+pub fn install(
+    _dir: &Path,
+    _progress: impl FnMut(Progress) + Send + 'static,
+) -> Result<(), String> {
+    Err("Meeting transcription is Windows-only for now.          The engine Loaf downloads is a Windows build."
+        .into())
+}
+
+#[cfg(windows)]
 pub fn install(data_dir: &Path, mut on_progress: impl FnMut(Progress)) -> Result<(), String> {
     install_binary(data_dir, &mut on_progress)?;
     install_model(data_dir, &mut on_progress)?;
@@ -239,13 +300,45 @@ mod tests {
     }
 
     #[test]
-    fn the_five_files_are_exactly_what_was_proven_necessary() {
+    fn the_file_list_is_exactly_what_was_proven_necessary() {
         // Changing this list changes what gets installed. It should only ever
-        // change alongside re-running the empirical DLL-dependency check this
-        // module's doc comment describes, not by guessing.
-        assert_eq!(NEEDED_FILES.len(), 5);
+        // change alongside re-running the empirical check this module's doc
+        // comment describes, not by guessing.
+        //
+        // Four to run at all, found by extracting them one at a time until the
+        // executable stopped failing with STATUS_DLL_NOT_FOUND, plus one CPU
+        // backend per instruction set. ggml loads exactly one of those at
+        // runtime and picks the best the processor supports.
+        assert_eq!(NEEDED_FILES.len(), 13);
         assert!(NEEDED_FILES.contains(&"Release/whisper-cli.exe"));
         assert!(NEEDED_FILES.iter().all(|f| f.starts_with("Release/")));
+        assert_eq!(
+            NEEDED_FILES
+                .iter()
+                .filter(|f| f.contains("ggml-cpu-"))
+                .count(),
+            9
+        );
+    }
+
+    /// The baseline backend alone is what made transcription fourteen times
+    /// slower than it needed to be, and it is invisible from inside the app:
+    /// whisper reports the chosen backend and nothing read it. An install
+    /// carrying only the fallback must therefore read as INCOMPLETE, or a
+    /// machine that ran the old installer keeps the slow one forever.
+    #[test]
+    fn an_install_without_the_fast_backends_is_not_finished() {
+        let dir = std::env::temp_dir().join(format!("loaf-stale-{}", std::process::id()));
+        let engine = install_dir(&dir);
+        std::fs::create_dir_all(&engine).unwrap();
+        std::fs::write(binary_path(&dir), b"x").unwrap();
+        std::fs::write(model_path(&dir), b"x").unwrap();
+        std::fs::write(engine.join("ggml-cpu-x64.dll"), b"x").unwrap();
+        assert!(!is_installed(&dir), "the fallback alone must not count");
+
+        std::fs::write(engine.join("ggml-cpu-haswell.dll"), b"x").unwrap();
+        assert!(is_installed(&dir), "with a fast backend it is finished");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A REAL download and install, against the real GitHub and Hugging Face

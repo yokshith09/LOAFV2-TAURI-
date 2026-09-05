@@ -40,6 +40,39 @@ impl Recording {
     pub fn seconds(&self) -> u64 {
         self.started.elapsed().as_secs()
     }
+
+    /// How many samples have been captured so far.
+    ///
+    /// At `TARGET_HZ` this is also a clock, and a more honest one than
+    /// `seconds` for deciding when someone stopped talking: it counts audio
+    /// that actually arrived rather than wall time, so a microphone that
+    /// silently stopped delivering does not read as a room full of silence.
+    pub fn sample_count(&self) -> usize {
+        self.samples.lock().map(|s| s.len()).unwrap_or(0)
+    }
+
+    /// Loudness of the last `window` samples, from 0.0 to 1.0.
+    ///
+    /// Root mean square rather than peak: one keyboard click is a large peak
+    /// and almost no energy, and a dictation window that ended on the first
+    /// click would end before most people finished their first word.
+    pub fn recent_level(&self, window: usize) -> f32 {
+        let Ok(samples) = self.samples.lock() else {
+            return 0.0;
+        };
+        if samples.is_empty() || window == 0 {
+            return 0.0;
+        }
+        let tail = &samples[samples.len().saturating_sub(window)..];
+        let sum: f64 = tail
+            .iter()
+            .map(|s| {
+                let v = f64::from(*s) / 32768.0;
+                v * v
+            })
+            .sum();
+        ((sum / tail.len() as f64).sqrt() as f32).clamp(0.0, 1.0)
+    }
 }
 
 /// The name of the microphone that would be used, for showing before starting.

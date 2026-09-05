@@ -4,7 +4,7 @@ name = "loaf"
 # be told which one `cargo run` means. Without this, `tauri dev` and the
 # release build both stop with "could not determine which binary to run".
 default-run = "loaf"
-version = "0.3.0"
+version = "0.4.0"
 description = "Loaf — a private desktop companion"
 authors = ["Loaf"]
 edition = "2021"

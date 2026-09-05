@@ -6,9 +6,16 @@ import {
   escapeHTML,
   hourRangeLabel,
   disabledRadar,
+  DASHBOARD_VIEWS,
   type RadarSnapshot,
 } from "../src/dashboard/html";
 import { isCommand, TANTRUM_OPTIONS } from "../src/dashboard/events";
+import { wakeWordsFor } from "../src/voice/wake";
+import {
+  ClosetSettings,
+  MemorySettingsStore,
+  type ClosetState,
+} from "../src/closet/settings";
 
 const clockAt = (iso: string) => {
   let t = new Date(iso);
@@ -627,5 +634,380 @@ describe("tasks on the hover card", () => {
       tasks: [{ title: '<script>x</script>', priority: "soon", minutesLeft: null }],
     });
     expect(html).not.toContain("<script>x</script>");
+  });
+});
+
+describe("the sectioned dashboard", () => {
+  const t = () => trackerWith({ Code: 40 }).tracker;
+
+  it("offers every section as a tab", () => {
+    const html = dashboardHTML(t());
+    for (const v of DASHBOARD_VIEWS) {
+      expect(html).toContain(`data-loaf-view="${v.id}"`);
+      expect(html).toContain(v.label);
+    }
+  });
+
+  it("opens on Today, and marks only that tab active", () => {
+    const html = dashboardHTML(t());
+    expect(html).toContain(`class="view-tab active" role="tab" aria-selected="true" data-loaf-view="today"`);
+    expect(html).toContain(`id="view-today" role="tabpanel"`);
+    // Exactly one active tab, or the header lies about where you are.
+    expect(html.match(/view-tab active/g)).toHaveLength(1);
+  });
+
+  it("opens on whichever section it was told to", () => {
+    const html = dashboardHTML(t(), { view: "voice" });
+    expect(html).toContain(`aria-selected="true" data-loaf-view="voice"`);
+    expect(html.match(/view-tab active/g)).toHaveLength(1);
+  });
+
+  // Every panel is rendered and all but one hidden, so switching costs no
+  // work and a stats tick cannot drop the section the reader was on.
+  it("renders every panel, hiding the ones that are not open", () => {
+    const html = dashboardHTML(t(), { view: "history" });
+    for (const v of DASHBOARD_VIEWS) expect(html).toContain(`id="view-${v.id}"`);
+    expect(html).toContain(`id="view-today" role="tabpanel" hidden`);
+    expect(html).not.toContain(`id="view-history" role="tabpanel" hidden`);
+  });
+
+  it("refuses a section it does not have, rather than rendering none", () => {
+    const html = dashboardHTML(t(), { view: "nonsense" as never });
+    expect(html).toContain(`aria-selected="true" data-loaf-view="today"`);
+  });
+
+  it("keeps the headline total outside the sections, where it is always seen", () => {
+    const html = dashboardHTML(t(), { view: "help" });
+    expect(html).toContain("Time with you today");
+  });
+});
+
+describe("the voice section", () => {
+  const t = () => trackerWith({ Code: 40 }).tracker;
+  const settingsWith = (over: Partial<ClosetState> = {}): ClosetState => ({
+    ...new ClosetSettings(new MemorySettingsStore()).read(),
+    ...over,
+  });
+
+  // Said rather than guessed: controls drawn before the companion has answered
+  // would show the wrong thing selected and then jump, which on a page about
+  // microphones is worse than a short wait.
+  it("shows no controls until the companion has said something", () => {
+    const html = dashboardHTML(t(), { view: "voice" });
+    expect(html).not.toContain("data-listen-mode");
+    expect(html).not.toContain("data-engine");
+    // The command box does not depend on any of that, so it is always there.
+    expect(html).toContain("ask-box");
+  });
+
+  // The whole point of the move: one screen holds every voice setting, so no
+  // two screens can disagree about whether Loaf is listening.
+  it("holds every voice control once the state has arrived", () => {
+    const html = dashboardHTML(t(), {
+      view: "voice",
+      // Listening switched on, or the mode picker is correctly absent — see
+      // the on/off tests in settingsPanels.
+      settings: settingsWith({ voices: ["George"], listenMode: "push" }),
+    });
+    expect(html).toContain("data-listen-on");
+    expect(html).toContain("data-listen-mode");
+    expect(html).toContain("data-engine");
+    expect(html).toContain("data-voice");
+    expect(html).toContain("ask-box");
+  });
+
+  it("offers the wake-word field only in the mode that uses one", () => {
+    expect(
+      dashboardHTML(t(), { view: "voice", settings: settingsWith({ listenMode: "always" }) }),
+    ).toContain("data-wake-word");
+    expect(
+      dashboardHTML(t(), { view: "voice", settings: settingsWith({ listenMode: "push" }) }),
+    ).not.toContain("data-wake-word");
+  });
+
+  it("offers the hold delay only in hover mode", () => {
+    expect(
+      dashboardHTML(t(), { view: "voice", settings: settingsWith({ listenMode: "hover" }) }),
+    ).toContain("data-hold");
+    expect(
+      dashboardHTML(t(), { view: "voice", settings: settingsWith({ listenMode: "always" }) }),
+    ).not.toContain("data-hold");
+  });
+
+  it("names the microphone, and says plainly when there is none", () => {
+    expect(
+      dashboardHTML(t(), {
+        view: "voice",
+        settings: settingsWith({ microphone: "Blue Yeti" }),
+      }),
+    ).toContain("Blue Yeti");
+    expect(
+      dashboardHTML(t(), { view: "voice", settings: settingsWith({ microphone: null }) }),
+    ).toContain("None found");
+  });
+
+  it("escapes the device name, like every other value on the page", () => {
+    const html = dashboardHTML(t(), {
+      view: "voice",
+      settings: settingsWith({ microphone: "<script>x</script>" }),
+    });
+    expect(html).not.toContain("<script>x</script>");
+  });
+});
+
+describe("the settings section", () => {
+  const t = () => trackerWith({ Code: 40 }).tracker;
+  const state = (): ClosetState => new ClosetSettings(new MemorySettingsStore()).read();
+
+  // These moved out of the closet, which is now only about how anyone looks.
+  it("holds the habits and the sound switch", () => {
+    const html = dashboardHTML(t(), { view: "settings", settings: state() });
+    expect(html).toContain("data-habit");
+    expect(html).toContain('data-sound="muted"');
+  });
+
+  it("still points at the closet for the things that stayed there", () => {
+    const html = dashboardHTML(t(), { view: "settings", settings: state() });
+    expect(html).toContain("open:closet");
+  });
+});
+
+describe("the meetings section", () => {
+  const t = () => trackerWith({ Code: 40 }).tracker;
+  const snap = (over: Record<string, unknown> = {}) => ({
+    recording: false,
+    current: null,
+    currentSeconds: 0,
+    canRecord: true,
+    blockedReason: null,
+    meetings: [],
+    ...over,
+  });
+
+  // This window must never state that a microphone is off on the strength of
+  // not having heard from the companion yet.
+  it("says it is still asking, rather than 'nothing recorded'", () => {
+    const html = dashboardHTML(t(), { view: "meetings" });
+    expect(html).toContain("Asking Loaf what is recording");
+    expect(html).not.toContain("Not recording");
+  });
+
+  // The one line that has to be readable from across a room.
+  it("states the recording state in words, not by which button is showing", () => {
+    expect(
+      dashboardHTML(t(), { view: "meetings", meetings: snap({ recording: true, current: "Zoom" }) as never }),
+    ).toContain("Recording");
+    expect(
+      dashboardHTML(t(), { view: "meetings", meetings: snap() as never }),
+    ).toContain("Not recording");
+  });
+
+  it("offers a manual start, and a stop while it runs", () => {
+    expect(dashboardHTML(t(), { view: "meetings", meetings: snap() as never })).toContain(
+      'data-loaf-cmd="record:start"',
+    );
+    expect(
+      dashboardHTML(t(), { view: "meetings", meetings: snap({ recording: true }) as never }),
+    ).toContain('data-loaf-cmd="record:stop"');
+  });
+
+  it("gives the reason instead of a dead button when it cannot record", () => {
+    const html = dashboardHTML(t(), {
+      view: "meetings",
+      meetings: snap({ canRecord: false, blockedReason: "Whisper is not downloaded yet." }) as never,
+    });
+    expect(html).toContain("Whisper is not downloaded yet.");
+    expect(html).not.toContain('data-loaf-cmd="record:start"');
+  });
+
+  it("lists what was kept, newest first, with its notes", () => {
+    const html = dashboardHTML(t(), {
+      view: "meetings",
+      meetings: snap({
+        meetings: [
+          { id: "a", where: "Zoom", startedAt: 1756000000000, seconds: 600, notes: ["older"] },
+          { id: "b", where: "Meet", startedAt: 1756900000000, seconds: 900, notes: ["newer"] },
+        ],
+      }) as never,
+    });
+    expect(html).toContain("Kept meetings (2)");
+    expect(html.indexOf("Meet")).toBeLessThan(html.indexOf("Zoom"));
+    expect(html).toContain("newer");
+  });
+
+  it("escapes the meeting name and its notes", () => {
+    const html = dashboardHTML(t(), {
+      view: "meetings",
+      meetings: snap({
+        meetings: [
+          {
+            id: "a",
+            where: "<script>x</script>",
+            startedAt: 1756000000000,
+            seconds: 60,
+            notes: ["<script>y</script>"],
+          },
+        ],
+      }) as never,
+    });
+    expect(html).not.toContain("<script>x</script>");
+    expect(html).not.toContain("<script>y</script>");
+  });
+});
+
+describe("the notes board", () => {
+  const t = () => trackerWith({ Code: 40 }).tracker;
+  const note = (title: string, priority = "soon", minutesLeft: number | null = null) => ({
+    title,
+    priority,
+    minutesLeft,
+  });
+
+  it("offers a composer even with nothing written down yet", () => {
+    const html = dashboardHTML(t(), { view: "notes" });
+    expect(html).toContain('id="nt-title"');
+    expect(html).toContain('data-loaf-note="add"');
+    expect(html).toContain("Nothing written down yet");
+  });
+
+  // A one-line input that scrolls sideways is how you get notes nobody
+  // finishes typing.
+  it("composes into a textarea, not a single-line input", () => {
+    const html = dashboardHTML(t(), { view: "notes" });
+    expect(html).toMatch(/<textarea id="nt-title"/);
+  });
+
+  // Every panel is in the document at once, so a shared id would mean
+  // getElementById returning whichever came first and one box doing nothing.
+  it("uses different ids from the checklist composer on Today", () => {
+    const html = dashboardHTML(t(), { view: "notes" });
+    expect(html).toContain('id="tp-title"');
+    expect(html).toContain('id="nt-title"');
+    expect(html.match(/id="nt-title"/g)).toHaveLength(1);
+    expect(html.match(/id="tp-title"/g)).toHaveLength(1);
+  });
+
+  it("draws one card per note, carrying its priority", () => {
+    const html = dashboardHTML(t(), {
+      view: "notes",
+      tasks: [note("call the bank", "now"), note("tidy the desk", "whenever")] as never,
+    });
+    expect(html).toContain("call the bank");
+    expect(html).toContain("nt-card p-now");
+    expect(html).toContain("nt-card p-whenever");
+  });
+
+  it("gives a long note room instead of clipping it like a one-liner", () => {
+    const html = dashboardHTML(t(), {
+      view: "notes",
+      tasks: [note("x".repeat(300))] as never,
+    });
+    expect(html).toContain("nt-card p-soon long");
+  });
+
+  it("keeps done and remove on every card", () => {
+    const html = dashboardHTML(t(), { view: "notes", tasks: [note("a")] as never });
+    expect(html).toContain('data-loaf-task="done:0"');
+    expect(html).toContain('data-loaf-task="remove:0"');
+  });
+
+  it("escapes a note, like every other value on the page", () => {
+    const html = dashboardHTML(t(), {
+      view: "notes",
+      tasks: [note("<script>x</script>")] as never,
+    });
+    expect(html).not.toContain("<script>x</script>");
+  });
+});
+
+describe("the retention control", () => {
+  const t = () => trackerWith({ Code: 40 }).tracker;
+  const snap = {
+    recording: false,
+    current: null,
+    currentSeconds: 0,
+    canRecord: true,
+    blockedReason: null,
+    meetings: [],
+  };
+  const settingsWith = (days: number): ClosetState => ({
+    ...new ClosetSettings(new MemorySettingsStore()).read(),
+    transcriptRetentionDays: days,
+  });
+
+  it("is absent until the companion has said what the setting is", () => {
+    const html = dashboardHTML(t(), { view: "meetings", meetings: snap as never });
+    expect(html).not.toContain("data-retention");
+  });
+
+  it("offers every window, with the current one selected", () => {
+    const html = dashboardHTML(t(), {
+      view: "meetings",
+      meetings: snap as never,
+      settings: settingsWith(30),
+    });
+    expect(html).toContain("data-retention");
+    expect(html).toMatch(/value="30" selected/);
+    expect(html).toContain("Until I delete them");
+  });
+
+  // Saying "delete recordings after N days" would imply Loaf had been holding
+  // the audio all along. It deletes it the moment it is transcribed.
+  it("is worded as keeping words, and says the audio is already gone", () => {
+    const html = dashboardHTML(t(), {
+      view: "meetings",
+      meetings: snap as never,
+      settings: settingsWith(90),
+    });
+    expect(html).toContain("Kept for 90 days");
+    expect(html).toContain("not the audio");
+  });
+});
+
+describe("deleting kept transcripts", () => {
+  const t = () => trackerWith({ Code: 40 }).tracker;
+  const withMeetings = (n: number) => ({
+    recording: false, current: null, currentSeconds: 0,
+    canRecord: true, blockedReason: null,
+    meetings: Array.from({ length: n }, (_, i) => ({
+      id: `m${i}`, where: "Zoom", startedAt: 1756000000000, seconds: 600, notes: [],
+    })),
+  });
+
+  // There was no way to delete one at all, which made the retention setting
+  // the only way to get rid of anything.
+  it("puts a delete on every kept transcript", () => {
+    const html = dashboardHTML(t(), { view: "meetings", meetings: withMeetings(2) as never });
+    expect(html).toContain('data-loaf-forget="m0"');
+    expect(html).toContain('data-loaf-forget="m1"');
+  });
+
+  it("offers delete-all only when there is something to delete", () => {
+    expect(
+      dashboardHTML(t(), { view: "meetings", meetings: withMeetings(1) as never }),
+    ).toContain('data-loaf-cmd="meetings:forget-all"');
+    expect(
+      dashboardHTML(t(), { view: "meetings", meetings: withMeetings(0) as never }),
+    ).not.toContain('data-loaf-cmd="meetings:forget-all"');
+  });
+
+  it("escapes the id, which reaches an attribute", () => {
+    const html = dashboardHTML(t(), {
+      view: "meetings",
+      meetings: {
+        ...withMeetings(0),
+        meetings: [{ id: '"><script>x</script>', where: "Z", startedAt: 1, seconds: 60, notes: [] }],
+      } as never,
+    });
+    expect(html).not.toContain("<script>x</script>");
+  });
+});
+
+describe("the wake-word badge", () => {
+  // Showing "Hey Loaf" to someone who renamed the wake word to "hey mini" is
+  // the badge telling them to say the wrong thing.
+  it("is a rule about the wake word, tested where the wake word lives", () => {
+    expect(wakeWordsFor("mini")[0]).toBe("hey mini");
+    expect(wakeWordsFor(null)[0]).toBe("hey loaf");
   });
 });
