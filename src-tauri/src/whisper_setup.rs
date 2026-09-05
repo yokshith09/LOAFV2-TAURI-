@@ -251,24 +251,25 @@ fn install_model(data_dir: &Path, mut on_progress: impl FnMut(Progress)) -> Resu
 /// Deliberately not parallel: these are two large sequential downloads run
 /// from a UI showing one progress bar, and interleaving their progress would
 /// make that bar move backwards.
-/// WINDOWS ONLY, FOR NOW, AND IT SAYS SO RATHER THAN TRYING.
+/// Fetch and install the engine.
 ///
-/// The release fetched above is `whisper-bin-x64.zip` — Windows executables and
-/// Windows DLLs. Downloading two hundred megabytes of those onto a Mac and
-/// then reporting the engine as installed would be worse than not offering it:
-/// every later failure would look like a bug in transcription rather than a
-/// platform that was never wired up.
-#[cfg(not(windows))]
-pub fn install(
-    _dir: &Path,
-    _progress: impl FnMut(Progress) + Send + 'static,
-) -> Result<(), String> {
-    Err("Meeting transcription is Windows-only for now.          The engine Loaf downloads is a Windows build."
-        .into())
-}
-
-#[cfg(windows)]
+/// WINDOWS ONLY FOR NOW, AND IT SAYS SO RATHER THAN TRYING. The release
+/// fetched here is `whisper-bin-x64.zip` — Windows executables and Windows
+/// DLLs. Pulling two hundred megabytes of those onto a Mac and then reporting
+/// the engine as installed would be worse than not offering it: every later
+/// failure would look like a bug in transcription rather than a platform that
+/// was never wired up.
+///
+/// The guard is a runtime check inside one function rather than two `cfg`
+/// bodies, because everything it calls — the download, the unzip, the size
+/// checks — is ordinary cross-platform Rust. Splitting the function turned all
+/// of that into dead code on macOS, which is a clippy failure and, more to the
+/// point, two versions of a function to keep in step.
 pub fn install(data_dir: &Path, mut on_progress: impl FnMut(Progress)) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("Meeting transcription is Windows-only for now.                     The engine Loaf downloads is a Windows build."
+            .into());
+    }
     install_binary(data_dir, &mut on_progress)?;
     install_model(data_dir, &mut on_progress)?;
     Ok(())
