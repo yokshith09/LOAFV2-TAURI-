@@ -92,14 +92,24 @@ jobs:
         include:
           - os: macos-latest
             label: macos-arm64
-          # Intel, natively. `macos-latest` is Apple Silicon, so without this
-          # runner nothing here ever compiles for x86_64 — which is how the
-          # universal release build managed to fail three times while CI stayed
-          # green. The release now builds each architecture on a machine that
-          # runs it, and this is the job that proves both still compile before a
-          # tag goes anywhere near them.
-          - os: macos-13
+          # Intel, cross-compiled from the Apple Silicon runner.
+          #
+          # NOT `macos-13`. That was tried first, on the reasoning that a native
+          # Intel runner beats cross-compiling — and the job sat queued for
+          # SEVENTY-SIX MINUTES with no runner ever assigned and not one step
+          # started. That is not capacity; that label has been retired and has
+          # nothing behind it. A job that queues forever is worse than one that
+          # fails, because nothing ever tells you.
+          #
+          # So: a runner that certainly exists, building the one extra target.
+          # Apple ships both SDKs, so x86_64 from arm64 is a supported
+          # cross-compile — and it is a strictly smaller job than the universal
+          # build that kept failing, which did both architectures AND a lipo
+          # step. If this passes and universal still does not, the lipo step is
+          # where the problem always was.
+          - os: macos-latest
             label: macos-x64
+            target: x86_64-apple-darwin
           - os: windows-latest
             label: windows
     runs-on: ${{ matrix.os }}
@@ -118,8 +128,14 @@ jobs:
       # NOTE: unsigned. Signing and notarisation are Phase 4 — see the
       # direction document. Until then macOS users need right-click -> Open and
       # Windows shows a SmartScreen warning.
+      # Only the cross-compiled row asks for an extra target; the rest build
+      # for the machine they are on and this is a no-op.
+      - name: Add the target
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
+
       - name: Build application
-        run: npm run tauri:build
+        run: npm run tauri:build ${{ matrix.target != '' && format('-- --target {0}', matrix.target) || '' }}
 
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
@@ -128,6 +144,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: |
+            src-tauri/target/*/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.app
             src-tauri/target/release/bundle/**/*.msi

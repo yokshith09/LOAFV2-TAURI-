@@ -41,28 +41,30 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          # TWO MAC BUILDS, EACH NATIVE, INSTEAD OF ONE UNIVERSAL.
+          # TWO MAC BUILDS, ONE PER ARCHITECTURE, INSTEAD OF ONE UNIVERSAL.
           #
           # The universal build failed on every release attempt — v0.3.0,
           # v0.4.0, v0.4.1 — while CI's plain `tauri:build` passed every time.
-          # The only difference was `--target universal-apple-darwin`, so the
-          # problem is cross-compiling the x86_64 half on an arm64 runner, not
-          # the Mac build itself.
+          # The only difference was `--target universal-apple-darwin`. A
+          # universal build does BOTH architectures and then lipos them
+          # together, so splitting it into two single-target builds removes the
+          # step that has no counterpart in the CI job that works.
           #
-          # Rather than keep guessing at that from a distance, each architecture
-          # is now built on a machine that runs it: `macos-latest` is Apple
-          # Silicon and `macos-13` is Intel. Nothing cross-compiles, so the
-          # failing step is not on the path at all.
+          # `macos-13` was tried for the Intel half first, to build it natively.
+          # That job sat queued for seventy-six minutes with no runner ever
+          # assigned — the label is retired and has nothing behind it. So Intel
+          # is cross-compiled from the Apple Silicon runner instead, which at
+          # least certainly exists.
           #
-          # The cost is two downloads instead of one, and the notes say which
-          # is which. A file people have to choose between beats a file that
-          # was never produced.
+          # The cost is two downloads rather than one, named in the notes. A
+          # file people have to choose between beats a file that was never
+          # produced.
           - os: macos-latest
             label: macOS (Apple Silicon)
             args: ""
-          - os: macos-13
+          - os: macos-latest
             label: macOS (Intel)
-            args: ""
+            args: --target x86_64-apple-darwin
           - os: windows-latest
             label: Windows
             args: ""
@@ -72,10 +74,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          # No extra targets: each Mac now builds for the machine it is on, so
-          # the host toolchain is already the right one. These were only ever
-          # here for the universal build that never worked.
-          targets: ""
+          # The Intel row cross-compiles, so that target has to be installed.
+          # Only on macOS — Windows builds for the machine it is on.
+          targets: ${{ startsWith(matrix.os, 'macos') && 'x86_64-apple-darwin' || '' }}
 
       - uses: Swatinem/rust-cache@v2
         with:
