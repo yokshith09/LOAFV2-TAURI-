@@ -41,21 +41,27 @@ jobs:
       max-parallel: 1
       matrix:
         include:
+          # TWO MAC BUILDS, EACH NATIVE, INSTEAD OF ONE UNIVERSAL.
+          #
+          # The universal build failed on every release attempt — v0.3.0,
+          # v0.4.0, v0.4.1 — while CI's plain `tauri:build` passed every time.
+          # The only difference was `--target universal-apple-darwin`, so the
+          # problem is cross-compiling the x86_64 half on an arm64 runner, not
+          # the Mac build itself.
+          #
+          # Rather than keep guessing at that from a distance, each architecture
+          # is now built on a machine that runs it: `macos-latest` is Apple
+          # Silicon and `macos-13` is Intel. Nothing cross-compiles, so the
+          # failing step is not on the path at all.
+          #
+          # The cost is two downloads instead of one, and the notes say which
+          # is which. A file people have to choose between beats a file that
+          # was never produced.
           - os: macos-latest
-            label: macOS
-            # NATIVE ARM64, NOT UNIVERSAL — and this is why.
-            #
-            # The universal build has failed on every release attempt so far,
-            # v0.3.0 and v0.4.0 included, while CI's macOS bundle has passed
-            # every time. The only difference between them was this line: CI
-            # runs a plain `tauri:build`, the release added
-            # `--target universal-apple-darwin`. A release that has never once
-            # produced a .dmg is worth less than one that serves Apple Silicon.
-            #
-            # The cost is honest and stated in the notes: Intel Macs are not
-            # covered by this download. Restoring universal means working out
-            # why the x86_64 half will not cross-compile on an arm64 runner,
-            # which is its own job and not one to do inside a release.
+            label: macOS (Apple Silicon)
+            args: ""
+          - os: macos-13
+            label: macOS (Intel)
             args: ""
           - os: windows-latest
             label: Windows
@@ -66,7 +72,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          # No extra targets: each Mac now builds for the machine it is on, so
+          # the host toolchain is already the right one. These were only ever
+          # here for the universal build that never worked.
+          targets: ""
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -107,7 +116,8 @@ jobs:
 
             | | |
             |---|---|
-            | **macOS** | `Loaf_${{ steps.ver.outputs.v }}_aarch64.dmg` — Apple Silicon. Intel Macs are not covered by this build yet. |
+            | **macOS — Apple Silicon** | `Loaf_${{ steps.ver.outputs.v }}_aarch64.dmg` — M1 and later |
+            | **macOS — Intel** | `Loaf_${{ steps.ver.outputs.v }}_x64.dmg` — pre-2020 Macs |
             | **Windows** | `Loaf_${{ steps.ver.outputs.v }}_x64-setup.exe` |
 
             ## First launch

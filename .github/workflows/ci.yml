@@ -91,7 +91,15 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            label: macos
+            label: macos-arm64
+          # Intel, natively. `macos-latest` is Apple Silicon, so without this
+          # runner nothing here ever compiles for x86_64 — which is how the
+          # universal release build managed to fail three times while CI stayed
+          # green. The release now builds each architecture on a machine that
+          # runs it, and this is the job that proves both still compile before a
+          # tag goes anywhere near them.
+          - os: macos-13
+            label: macos-x64
           - os: windows-latest
             label: windows
     runs-on: ${{ matrix.os }}
