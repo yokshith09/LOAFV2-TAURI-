@@ -137,6 +137,16 @@ jobs:
       - name: Build application
         run: npm run tauri:build ${{ matrix.target != '' && format('-- --target {0}', matrix.target) || '' }}
 
+      # THE CHECK THAT WOULD HAVE CAUGHT THE "DAMAGED" BUG. Every gate we had
+      # was a compile gate, and the macOS bundle was broken in a way that
+      # compiles perfectly: unsigned, so Gatekeeper called it damaged and
+      # offered testers nothing but Move to Trash. This asserts the bundle is
+      # signed and declares the private data it touches, and it runs here so a
+      # tag cannot be cut on a commit that would ship another one.
+      - name: Verify the macOS bundle
+        if: startsWith(matrix.os, 'macos')
+        run: bash scripts/verify-macos-bundle.sh
+
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
         with:

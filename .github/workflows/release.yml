@@ -98,9 +98,24 @@ jobs:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: echo "v=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      # NOTE: unsigned and un-notarised. macOS testers must right-click -> Open
-      # the first time, and Windows shows a SmartScreen warning. Signing is
-      # Phase 4 — it needs a paid Apple Developer ID and a Windows cert.
+      # AD-HOC SIGNED, NOT NOTARISED, AND THE DIFFERENCE IS NOT COSMETIC.
+      #
+      # Up to 0.4.3 the macOS bundle had no signature at all, because Tauri's
+      # bundler skips signing entirely unless an identity is configured and none
+      # was. Gatekeeper does not treat that as "unknown developer" — on Apple
+      # Silicon a quarantined unsigned bundle is DAMAGED, and the only button is
+      # Move to Trash. There is no Open Anyway for it. Testers could not run any
+      # release we ever shipped.
+      #
+      # tauri.conf.json now sets bundle.macOS.signingIdentity to "-", so the
+      # bundler runs `codesign --force -s -` over the app. That is a real,
+      # verifiable signature by nobody in particular, which is enough for macOS
+      # to fall back to the ordinary "unidentified developer" prompt the user
+      # can get past. Notarisation still needs a paid Apple Developer ID, and
+      # Windows still shows SmartScreen; both are a later phase.
+      #
+      # The verify step below runs after this one and fails the job if the
+      # signature is missing again.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -128,29 +143,31 @@ jobs:
             who built it. One-time steps:
 
             <details>
-            <summary><b>macOS</b> — please do not just double-click it</summary>
+            <summary><b>macOS</b> — one extra click the first time</summary>
 
-            Double-clicking gives you *"Loaf cannot be opened because the
-            developer cannot be verified"* and only a **Cancel** button.
+            Open the `.dmg` and drag **Loaf** into **Applications**. Then:
 
-            Open the `.dmg`, drag **Loaf** into **Applications**, then:
-
-            **macOS 14 (Sonoma) and earlier**
-            1. Open **Applications**
-            2. **Right-click** Loaf → **Open**
-            3. Click **Open** in the dialog
-
-            **macOS 15 (Sequoia) and later** — Apple removed right-click → Open, so:
+            **macOS 15 (Sequoia) and later**
             1. Double-click Loaf once. It gets blocked. This is expected.
             2. **System Settings** → **Privacy & Security**
             3. Scroll down to *"Loaf was blocked"* → **Open Anyway**
             4. Confirm with Touch ID or your password
 
-            Still refusing? In Terminal:
+            **macOS 14 (Sonoma) and earlier**
+            1. **Right-click** Loaf in **Applications** → **Open**
+            2. Click **Open** in the dialog
+
+            If anything still refuses, this always works:
 
             ```
             xattr -dr com.apple.quarantine /Applications/Loaf.app
             ```
+
+            **If you tried 0.4.3 or earlier and were told Loaf was
+            "damaged":** that was a real bug in our build, not a bad download.
+            The app was going out with no code signature at all, and macOS has
+            no Open Anyway path for that — only Move to Trash. It is fixed in
+            this build. Delete the old copy and use this one.
 
             </details>
 
@@ -197,10 +214,24 @@ jobs:
 
             ## Known gaps
 
-            - **macOS is unverified.** It compiles and its platform code is
-              tested, but this is the first build to reach a Mac. Please say what
-              breaks.
-            - Unsigned on both platforms, hence the steps above.
+            - **Not notarised.** The macOS build is ad-hoc signed, which is
+              what makes it openable at all, but there is no Apple Developer ID
+              behind it — so macOS still asks before the first launch. Windows
+              shows SmartScreen for the same reason. Both need a paid
+              certificate, which is a later phase.
+            - **macOS is lightly tested.** It compiles, its platform code is
+              tested and CI now checks the bundle is signed and declares what it
+              touches. It is still the least-used half. Please say what breaks.
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
+
+      # Runs AFTER the upload, deliberately: tauri-action builds and publishes in
+      # one step and there is no seam between them. That is fine — the same
+      # script gates the CI bundle job, so a broken signature stops a commit long
+      # before it can be tagged. This copy is the belt-and-braces check on the
+      # exact bundle that went into the .dmg people will download, and it turns
+      # the job red rather than letting a draft look healthy.
+      - name: Verify the macOS bundle
+        if: startsWith(matrix.os, 'macos')
+        run: bash scripts/verify-macos-bundle.sh

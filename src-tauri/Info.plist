@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  WITHOUT THESE TWO KEYS macOS DOES NOT DENY THE REQUEST, IT KILLS THE APP.
+
+	  Since 10.14 the first touch of a TCC-protected resource by a process with
+	  no matching usage string terminates that process outright: "This app has
+	  crashed because it attempted to access privacy-sensitive data without a
+	  usage description." There is no dialog and no log the user will find.
+
+	  Tauri merges this file into the generated Info.plist because it sits
+	  beside tauri.conf.json. It had never existed, so every macOS build so far
+	  would have died the first time somebody recorded a meeting.
+
+	  The strings are shown verbatim in the system prompt, so they say what
+	  actually happens rather than what sounds reassuring.
+	-->
+
+	<!-- audio.rs opens a cpal input stream on macOS as well as Windows. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Loaf listens only while you are recording a meeting, and you start that yourself. The audio is transcribed on this Mac and the recording is deleted straight afterwards. Nothing is uploaded.</string>
+
+	<!--
+	  platform/macos_probe.rs asks System Events which app is frontmost, and
+	  browser.rs asks the browser for the front tab. Apple Events to another
+	  application are TCC-gated even though osascript is a separate process:
+	  the request is attributed to the app that asked for it, which is Loaf.
+	-->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Loaf asks macOS which app is in front, so it can tell you where your day went. If you switch the privacy radar on, it also asks your browser for the domain of the front tab — github.com, never the rest of the address and never the page itself.</string>
+</dict>
+</plist>
