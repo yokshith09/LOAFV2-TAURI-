@@ -15,12 +15,23 @@
 //!
 //! No network code exists in this crate, and none should. That is the product's
 //! central promise and it is enforced by review, not by comment.
+//!
+//! ONE THING QUALIFIES THAT NOW, and it is better said here than discovered.
+//! `connections` lets the user attach an MCP server: another program, chosen by
+//! them, that Loaf starts and talks to over a pipe. Loaf still opens no sockets.
+//! The program on the other end may open as many as it likes, and Loaf can
+//! neither see nor stop it. So the promise that survives is "Loaf makes no
+//! network calls", and it stops being a useful description of the whole system
+//! the moment a server is connected. Nothing is connected by default, nothing
+//! starts until it is used, and every call is written to a log the user can
+//! read. See `connections.rs` for why each of those is load-bearing.
 
 pub mod apps;
 pub mod audio;
 pub mod browser;
 #[cfg(windows)]
 pub mod browser_windows;
+pub mod connections;
 pub mod control;
 pub mod mcp;
 pub mod mcp_client;
@@ -1550,10 +1561,140 @@ fn open_feedback_page() {
     open_url(FEEDBACK_URL);
 }
 
+// ---------------------------------------------------------------------------
+// Connections: the MCP servers the user has attached.
+//
+// Every command here is thin on purpose. The decisions — what the window may
+// see, what a save is allowed to overwrite, when a program gets started — all
+// live in `connections.rs` where they are testable without a running app. What
+// is left below is plumbing, and plumbing is the right place for nothing to be
+// happening.
+//
+// All of them are `async`: opening a server spawns a process and waits for a
+// handshake, and a slow one must not freeze the pet.
+// ---------------------------------------------------------------------------
+
+/// The servers as configured, with every secret stripped out.
+#[tauri::command(async)]
+fn mcp_servers(app: tauri::AppHandle) -> Result<Vec<connections::ServerView>, String> {
+    Ok(connections::redact(&connections::load(&data_dir(&app)?)?))
+}
+
+/// Save the list the window is showing, and hand back what it may now see.
+///
+/// `secrets` is the one direction a value travels: up. It is keyed by server
+/// and variable, holds only what was actually typed, and anything absent from
+/// it leaves the stored value alone.
+#[tauri::command(async)]
+fn mcp_save_servers(
+    app: tauri::AppHandle,
+    servers: Vec<connections::ServerView>,
+    secrets: Option<connections::SecretsIn>,
+) -> Result<Vec<connections::ServerView>, String> {
+    let dir = data_dir(&app)?;
+    let stored = connections::load(&dir)?;
+    let next = connections::apply(&stored, servers, &secrets.unwrap_or_default());
+    // Round-trip through the parser so a config the app writes is one the app
+    // would also agree to read. Two names the same, an empty command — the
+    // rules are in one place and this is how they get enforced on writes too.
+    let json = serde_json::to_string(&next).map_err(|e| e.to_string())?;
+    let checked = mcp_client::parse_config(&json)?;
+    connections::save(&dir, &checked)?;
+    Ok(connections::redact(&checked))
+}
+
+/// What a server can do. THE FIRST CALL TO THIS IS WHAT STARTS IT.
+#[tauri::command(async)]
+fn mcp_tools(
+    app: tauri::AppHandle,
+    pool: tauri::State<'_, connections::Pool>,
+    name: String,
+) -> Result<Vec<String>, String> {
+    let config = connections::load(&data_dir(&app)?)?;
+    connections::with_connection(&pool, &config, &name, |conn| conn.tools())
+}
+
+/// Ask a server to do one named thing.
+///
+/// The record is written whether the call worked or not, and BEFORE the answer
+/// is returned. A log that only remembers successes is not an audit trail; the
+/// call that failed still sent the arguments.
+#[tauri::command(async)]
+fn mcp_call(
+    app: tauri::AppHandle,
+    pool: tauri::State<'_, connections::Pool>,
+    name: String,
+    tool: String,
+    arguments: String,
+) -> Result<String, String> {
+    let dir = data_dir(&app)?;
+    let config = connections::load(&dir)?;
+    let parsed: serde_json::Value = if arguments.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(&arguments)
+            .map_err(|e| format!("Those arguments are not JSON: {e}"))?
+    };
+
+    let outcome = connections::with_connection(&pool, &config, &name, |conn| {
+        conn.call(&tool, parsed.clone())
+    });
+
+    let _ = mcp_client::record(
+        &dir,
+        &mcp_client::CallRecord {
+            server: name,
+            tool,
+            arguments: parsed.to_string(),
+            at: connections::now(),
+            ok: outcome.is_ok(),
+        },
+    );
+    outcome
+}
+
+/// Everything Loaf has sent to a server, oldest first.
+#[tauri::command(async)]
+fn mcp_calls(app: tauri::AppHandle) -> Result<Vec<mcp_client::CallRecord>, String> {
+    Ok(connections::calls(&data_dir(&app)?))
+}
+
+/// Which servers are running right now.
+#[tauri::command(async)]
+fn mcp_connected(pool: tauri::State<'_, connections::Pool>) -> Vec<String> {
+    connections::connected(&pool)
+}
+
+/// Stop a server. It is started again by the next thing that needs it.
+#[tauri::command(async)]
+fn mcp_disconnect(pool: tauri::State<'_, connections::Pool>, name: String) {
+    connections::disconnect(&pool, &name);
+}
+
+/// Reveal the config file, for the things the window deliberately will not do.
+///
+/// Editing a secret in place, adding a variable the UI has no field for,
+/// reading what is actually stored: all of it belongs to a text editor and the
+/// person whose machine it is, not to a WebView.
+#[tauri::command(async)]
+fn open_mcp_config(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    let path = mcp_client::config_path(&dir);
+    if !path.exists() {
+        // Made rather than reported missing: "open the file" failing because
+        // the file has never been written is a dead end for the user.
+        connections::save(&dir, &connections::load(&dir)?)?;
+    }
+    open_in_file_manager(&path.to_string_lossy())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        // Empty at launch and it stays empty: a server appears in here
+        // only because something asked it a question.
+        .manage(connections::Pool::default())
         .setup(|app| {
             // A desktop pet is an accessory, not an application: no Dock icon,
             // no app switcher entry, and it never steals focus. This is the
@@ -1644,7 +1785,15 @@ pub fn run() {
             open_automation_settings,
             place_bubble,
             reveal_bubble,
-            hide_bubble
+            hide_bubble,
+            mcp_servers,
+            mcp_save_servers,
+            mcp_tools,
+            mcp_call,
+            mcp_calls,
+            mcp_connected,
+            mcp_disconnect,
+            open_mcp_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running Loaf");

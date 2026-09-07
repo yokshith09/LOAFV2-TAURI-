@@ -27,6 +27,12 @@ import {
 } from "../settings/panels";
 import type { ClosetState } from "../closet/settings";
 import { RETENTION_CHOICES, KEEP_FOREVER, retentionLabel } from "../meetings/meetings";
+import {
+  connectionsPanel,
+  CONNECTIONS_CSS,
+  EMPTY_CONNECTIONS,
+  type ConnectionsState,
+} from "../connections/connections";
 
 /**
  * Both dashboard views, as self-contained HTML. Ported from `DashboardHTML.swift`.
@@ -181,6 +187,15 @@ export interface DashboardOptions {
   readonly tabsNow?: number | null;
   /** The most tabs seen on each past day, oldest first. */
   readonly pastPeakTabs?: readonly number[];
+  /**
+   * The MCP servers the user has attached, or undefined before Rust has said.
+   *
+   * Undefined renders the tab as if nothing is connected, which is the truth
+   * on a machine that has never opened it — unlike `meetings`, there is no
+   * state here the window could be wrong about, because "no servers" and "not
+   * asked yet" produce the same page and the same available actions.
+   */
+  readonly connections?: ConnectionsState;
 }
 
 /** Just enough of a task to draw one. */
@@ -733,6 +748,10 @@ export const DASHBOARD_VIEWS = [
   { id: "history", label: "History" },
   { id: "voice", label: "Voice" },
   { id: "meetings", label: "Meetings" },
+  // After Meetings and before Settings: it is a thing you set up once and then
+  // check on, which puts it past the sections you read daily and ahead of the
+  // ones you open when something is wrong.
+  { id: "connections", label: "Connections" },
   { id: "settings", label: "Settings" },
   { id: "privacy", label: "Privacy" },
   { id: "help", label: "Help" },
@@ -752,7 +771,8 @@ export const DASHBOARD_STYLES =
   MEETINGS_CSS +
   NOTES_CSS +
   MEETINGS_DELETE_CSS +
-  MEMORY_CSS;
+  MEMORY_CSS +
+  CONNECTIONS_CSS;
 /** The complete stylesheet for the hover card. */
 export const MINI_STYLES = BASE_CSS + PLUS_CSS + MINI_CSS;
 
@@ -890,6 +910,14 @@ export function dashboardBody(
     ${panel("notes", notesPanel(opts.tasks ?? [], opts.memory))}
 
     ${panel("meetings", meetingsPanel(opts))}
+
+    ${panel(
+      "connections",
+      connectionsPanel(
+        opts.connections ?? EMPTY_CONNECTIONS,
+        (opts.now ?? new Date()).getTime(),
+      ),
+    )}
 
     ${panel("settings", settingsPanel(opts))}
 

@@ -22,6 +22,15 @@ import type { EngineId } from "../voice/engine";
 import type { ListenMode } from "../voice/mode";
 import { spokenPhrases } from "../voice/phrases";
 import {
+  isServerView,
+  isCallRecord,
+  parseArgs,
+  EMPTY_CONNECTIONS,
+  type ConnectionsState,
+  type ServerView,
+  type CallRecord,
+} from "../connections/connections";
+import {
   COMMAND_EVENT,
   TASK_COMMAND_EVENT,
   TASKS_CHANGED_EVENT,
@@ -124,6 +133,43 @@ let memory: MemorySnapshot | undefined;
 /** Whether a microphone button is worth showing at all. See the note below. */
 let micUsable = false;
 
+/**
+ * The attached MCP servers, as Rust last described them.
+ *
+ * Held here for the same reason `activeView` is: `render` rebuilds the whole
+ * body several times a minute, and a tools list that vanished on the next
+ * stats tick would be unusable. Nothing in here is a secret — see
+ * connections.rs for why the window is only ever told the key NAMES.
+ */
+let connections: ConnectionsState = EMPTY_CONNECTIONS;
+
+/**
+ * Re-read the servers, what is running, and the call log.
+ *
+ * Deliberately does NOT list anybody's tools: doing that starts the program,
+ * and refreshing a page the user is looking at must not launch four processes.
+ * Tools appear only when the button that says it will start it is pressed.
+ */
+async function refreshConnections(keep = true): Promise<void> {
+  const [servers, running, calls] = await Promise.all([
+    invoke<unknown[]>("mcp_servers").catch(() => []),
+    invoke<unknown[]>("mcp_connected").catch(() => []),
+    invoke<unknown[]>("mcp_calls").catch(() => []),
+  ]);
+  connections = {
+    ...connections,
+    servers: servers.filter(isServerView) as ServerView[],
+    running: (running as unknown[]).filter((r): r is string => typeof r === "string"),
+    calls: calls.filter(isCallRecord) as CallRecord[],
+    // A tools list survives a refresh; it is what the user just asked for.
+    // Errors do not: the point of pressing again is to find out if it still
+    // fails, and a stale red line under a server that now works is a lie.
+    tools: keep ? connections.tools : {},
+    errors: {},
+  };
+  await render();
+}
+
 async function render(): Promise<void> {
   let json: string | null;
   try {
@@ -153,6 +199,7 @@ async function render(): Promise<void> {
       settings,
       meetings,
       memory,
+      connections,
     });
     // The button is recreated on every render, so the decision to show it has
     // to be made again — otherwise it appears once and vanishes at the next
@@ -190,6 +237,108 @@ root.addEventListener("click", (ev) => {
         panel.hidden = panel.id !== `view-${which}`;
       }
     }
+    return;
+  }
+
+  // --- Connections ----------------------------------------------------------
+  //
+  // Handled here rather than sent to the companion, unlike almost everything
+  // else on this page. The companion owns the tracker's in-memory state and is
+  // the only writer to it; the server list has no in-memory state at all — it
+  // is a file plus a pool of child processes, both owned by Rust. Routing
+  // through a third window would add a hop and a way to be out of date.
+
+  const startIt = target.closest<HTMLElement>("[data-mcp-tools]");
+  if (startIt) {
+    const name = startIt.dataset.mcpTools!;
+    // Said out loud on the button that does it, because this is the moment a
+    // program the user chose is actually launched.
+    startIt.textContent = "Starting it…";
+    void (async () => {
+      try {
+        const tools = await invoke<string[]>("mcp_tools", { name });
+        connections = {
+          ...connections,
+          tools: { ...connections.tools, [name]: tools },
+          errors: { ...connections.errors, [name]: "" },
+        };
+      } catch (err) {
+        connections = {
+          ...connections,
+          errors: { ...connections.errors, [name]: String(err) },
+        };
+      }
+      await refreshConnections();
+    })();
+    return;
+  }
+
+  const stopIt = target.closest<HTMLElement>("[data-mcp-stop]");
+  if (stopIt) {
+    const name = stopIt.dataset.mcpStop!;
+    void invoke("mcp_disconnect", { name }).then(() => refreshConnections());
+    return;
+  }
+
+  const removeIt = target.closest<HTMLElement>("[data-mcp-remove]");
+  if (removeIt) {
+    const name = removeIt.dataset.mcpRemove!;
+    void (async () => {
+      // Stopped before it is forgotten. Removing the entry loses the only
+      // handle we have on the process, and a child left running with nothing
+      // left that knows about it outlives the window that started it.
+      await invoke("mcp_disconnect", { name }).catch(() => {});
+      const left = connections.servers.filter((srv) => srv.name !== name);
+      await invoke("mcp_save_servers", { servers: left }).catch((err) =>
+        console.error("could not save connections", err),
+      );
+      await refreshConnections(false);
+    })();
+    return;
+  }
+
+  if (target.closest("[data-mcp-add-open]")) {
+    connections = { ...connections, adding: true };
+    void render();
+    return;
+  }
+
+  if (target.closest("[data-mcp-add-cancel]")) {
+    connections = { ...connections, adding: false };
+    void render();
+    return;
+  }
+
+  if (target.closest("[data-mcp-add-save]")) {
+    const value = (id: string): string =>
+      (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? "";
+    const name = value("mcp-new-name");
+    const command = value("mcp-new-cmd");
+    // Nothing is saved without both. Rust refuses this config too — the check
+    // is here as well so the answer is immediate rather than an error string.
+    if (!name || !command) return;
+    const server: ServerView = {
+      name,
+      command,
+      args: parseArgs(value("mcp-new-args")),
+      note: value("mcp-new-note"),
+      env_keys: [],
+    };
+    void (async () => {
+      const servers = [...connections.servers, server];
+      try {
+        await invoke("mcp_save_servers", { servers });
+        connections = { ...connections, adding: false };
+      } catch (err) {
+        connections = { ...connections, errors: { ...connections.errors, [name]: String(err) } };
+      }
+      await refreshConnections();
+    })();
+    return;
+  }
+
+  if (target.closest("[data-mcp-config]")) {
+    void invoke("open_mcp_config").catch((err) => console.error("could not open it", err));
     return;
   }
 
@@ -662,3 +811,12 @@ void invoke<boolean>("speech_available")
   .catch(() => {
     // Stays hidden, which is the right answer.
   });
+
+// The attached servers, read once when the window opens.
+//
+// A read, not a connect: this asks the config file what exists and the pool
+// what is already running, and starts nothing. See `refreshConnections`.
+void refreshConnections().catch(() => {
+  // The tab renders as "nothing connected", which is what a machine with no
+  // config file should see anyway.
+});
