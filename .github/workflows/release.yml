@@ -82,6 +82,16 @@ jobs:
             He sits in the corner of your screen. Click him to see your day;
             leave him alone and he gets on with his own life.
 
+            ## Fixed in 0.5.2 — the missing character
+
+            If you installed **0.4.4 to 0.5.1** and the app was clearly running
+            but there was no cat or dog anywhere on screen, that was a real bug
+            and this build fixes it. One line of the app's code ran before
+            another line it depended on, so the drawing never started and the
+            window stayed empty. It affected Windows and macOS equally — the
+            Mac reports simply came in first. Nothing you did caused it and
+            nothing you saved was lost.
+
             ## Download
 
             | | |
