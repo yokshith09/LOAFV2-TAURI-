@@ -199,7 +199,21 @@ fn read_stats(app: tauri::AppHandle) -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn write_stats(app: tauri::AppHandle, json: String) -> Result<(), String> {
-    storage::write_atomic(&data_dir(&app)?, &json)
+    storage::write_atomic(&data_dir(&app)?, &json)?;
+
+    // AND INTO THE STORE, the same dual write save_meetings does and for the
+    // same reasons: the file stays the source of truth so nothing that reads it
+    // breaks and an older build loses nothing, while the store gets the copy
+    // that can be queried a day at a time instead of by reading the whole
+    // history into memory.
+    //
+    // A failure here must NOT fail the command. write_atomic above is what the
+    // tracker actually depends on, and losing a queryable copy is not worth
+    // losing somebody's day.
+    if let Err(e) = with_store(&app, |c| store::import_stats(c, &json)) {
+        eprintln!("loaf/store could not index the history: {e}");
+    }
+    Ok(())
 }
 
 /// Every hand-drawn character in the Characters folder.
@@ -1906,6 +1920,34 @@ fn store_add_line(
     with_store(&app, |c| store::add_line(c, meeting.as_deref(), at, &text))
 }
 
+/// Every line still in the store, newest first.
+///
+/// EXISTS SO MEMORY CAN BE REBUILT AFTER A DELETE. The knowledge graph is
+/// derived from transcripts, so deleting a transcript has to take what was
+/// learned from it — otherwise "forget everything about the acquisition"
+/// removes the words and leaves the people and topics standing in the memory
+/// panel, which is the opposite of what was asked for and worse than not
+/// offering the button.
+///
+/// Rebuilding from what remains is used rather than trying to subtract: working
+/// out which entities came only from the deleted lines means tracking
+/// provenance per edge, and getting that subtly wrong leaves a trace of
+/// something the user believes is gone. Rebuilding cannot be subtly wrong.
+#[tauri::command(async)]
+fn store_all_lines(app: tauri::AppHandle, limit: Option<usize>) -> Result<Vec<String>, String> {
+    let limit = limit.unwrap_or(20_000).clamp(1, 200_000) as i64;
+    with_store(&app, |c| {
+        let mut stmt = c
+            .prepare("SELECT text FROM lines ORDER BY at DESC LIMIT ?1")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![limit], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    })
+}
+
 /// Read one durable value out of the store.
 ///
 /// EXISTS FOR THE KNOWLEDGE GRAPH, and for the class of problem it is in. The
@@ -2102,6 +2144,7 @@ pub fn run() {
             store_add_line,
             store_get,
             store_set,
+            store_all_lines,
             store_export
         ])
         .run(tauri::generate_context!())

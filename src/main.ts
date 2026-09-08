@@ -159,6 +159,7 @@ import {
   MEETINGS_STATE_EVENT,
   MEETINGS_HELLO_EVENT,
   MEETING_FORGET_EVENT,
+  STORE_DELETED_EVENT,
   MEMORY_STATE_EVENT,
   MEMORY_HELLO_EVENT,
 } from "./dashboard/events";
@@ -2263,6 +2264,38 @@ function saveGraph(): void {
  * disappear. The only way they disagree is a build that wrote one and not the
  * other, and in that case the durable one is the one to keep.
  */
+/**
+ * Build the memory again from whatever transcripts are left.
+ *
+ * Called after the Search tab deletes anything. The graph is DERIVED from the
+ * transcripts, so a delete that took the words and left the people standing
+ * would be the opposite of what the button promised.
+ *
+ * Rebuilt rather than subtracted from. Working out which entities came only
+ * from the deleted lines needs provenance on every edge, and getting that
+ * subtly wrong leaves a trace of something the user believes is gone. A rebuild
+ * cannot be subtly wrong: what is not in the store is not in the memory.
+ */
+async function rebuildMemoryFromTheStore(): Promise<void> {
+  if (!hasTauriHost()) return;
+  const lines = await invokeSafe<string[]>("store_all_lines");
+  if (!Array.isArray(lines)) return;
+  memory = new KnowledgeGraph();
+  const now = Date.now();
+  for (const text of lines) {
+    if (typeof text !== "string") continue;
+    const found = observationsIn(text);
+    const ids = found.map((o) => memory.observe(o, now));
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        memory.link(ids[i]!, ids[j]!, "co-occurred", now);
+      }
+    }
+  }
+  saveGraph();
+  announceMemory();
+}
+
 async function adoptTheStoredGraph(): Promise<void> {
   if (!hasTauriHost()) return;
   const stored = await invokeSafe<string | null>("store_get", { key: STORE_GRAPH });
@@ -3188,6 +3221,13 @@ if (hasTauriHost()) {
   // marked with a cross, on the row it belongs to, is not something anybody
   // hits by accident, and a confirmation dialogue for every single row is how
   // people stop tidying up at all.
+  // Something was deleted in the Search tab. Rebuild what Loaf remembers from
+  // what is left, so the memory panel cannot keep showing people and topics
+  // learned from transcripts that no longer exist.
+  void listen(STORE_DELETED_EVENT, () => {
+    void rebuildMemoryFromTheStore();
+  });
+
   void listen<string>(MEETING_FORGET_EVENT, (e) => {
     const id = e.payload;
     if (typeof id !== "string" || id.length === 0) return;

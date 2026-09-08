@@ -50,6 +50,7 @@ import {
   MEETINGS_STATE_EVENT,
   MEETINGS_HELLO_EVENT,
   MEETING_FORGET_EVENT,
+  STORE_DELETED_EVENT,
   MEMORY_STATE_EVENT,
   MEMORY_HELLO_EVENT,
   isMemorySnapshot,
@@ -363,6 +364,8 @@ root.addEventListener("click", (ev) => {
       } catch (err) {
         search = { ...search, error: String(err) };
       }
+      // The companion owns the memory and it was built from what just went.
+      void emit(STORE_DELETED_EVENT, {});
       // Re-run the search so the results no longer show what was just deleted.
       await runSearch();
     })();
@@ -430,6 +433,7 @@ root.addEventListener("click", (ev) => {
       } catch (err) {
         search = { ...search, pending: null, error: String(err) };
       }
+      void emit(STORE_DELETED_EVENT, {});
       await runSearch();
     })();
     return;

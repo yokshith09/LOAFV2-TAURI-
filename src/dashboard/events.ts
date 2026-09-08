@@ -187,6 +187,20 @@ export function isTaskCommand(v: unknown): v is TaskCommand {
  */
 export const MEETING_FORGET_EVENT = "loaf://meetings/forget";
 
+/**
+ * Dashboard -> companion: something was deleted from the store.
+ *
+ * The companion owns the knowledge graph, and the graph is derived from the
+ * transcripts the dashboard just removed. Without this, deleting a transcript
+ * takes the words and leaves the people and topics learned from them standing
+ * in the memory panel — which is the opposite of what was asked for.
+ *
+ * Carries nothing. What was deleted does not matter; the companion rebuilds
+ * from whatever is left, which cannot be subtly wrong in the way subtracting
+ * could be.
+ */
+export const STORE_DELETED_EVENT = "loaf://store/deleted";
+
 /** Dashboard -> companion: a task was added or changed. */
 export const TASK_COMMAND_EVENT = "loaf://task";
 /** Companion -> dashboard: the current list, as the only writer sees it. */
