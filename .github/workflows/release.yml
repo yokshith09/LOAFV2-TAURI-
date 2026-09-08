@@ -300,8 +300,13 @@ jobs:
       # BEFORE the upload this time, not after. The old job used tauri-action,
       # which built and published in one step with no seam between them; this one
       # has a seam, so a bad bundle gets stopped rather than merely reported.
+      # Through the same readable-failure step as the build, for the reason
+      # given beside the copy of this in ci.yml.
       - name: Verify the macOS bundle
-        run: bash scripts/verify-macos-bundle.sh universal/stage/Loaf.app
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/verify-macos-bundle.sh universal/stage/Loaf.app 2>&1             | tee "$RUNNER_TEMP/build.log"
 
       # UPLOADING INTO A DRAFT IS THE FIDDLY PART, so it does not rely on one
       # command working. A draft release has no git tag ref of its own as far as

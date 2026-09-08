@@ -137,7 +137,19 @@ echo "  executable bit: set"
 # everywhere else. The app then fails to launch with exactly the dialog above
 # and no other symptom. This is the single most likely way for compiling
 # whisper.cpp in to have broken a build that previously worked.
-BAD="$(otool -L "$BIN" | tail -n +2 | awk '{print $1}'         | grep -v '^/usr/lib/' | grep -v '^/System/Library/' || true)"
+# ONLY THE INDENTED LINES ARE LIBRARIES.
+#
+# `otool -L` on a FAT binary prints a header per architecture:
+#
+#     .../Loaf (architecture x86_64):
+#     <tab>/usr/lib/libc++.1.dylib (compatibility version ...)
+#     .../Loaf (architecture arm64):
+#
+# The first version of this skipped one line and read every header as a library
+# path, so the universal build failed a check the single-architecture builds
+# passed — and it looked exactly like the bug being hunted. Library lines are
+# the indented ones; headers start at column zero.
+BAD="$(otool -L "$BIN" | grep -E '^[[:space:]]' | awk '{print $1}'         | grep -v '^/usr/lib/' | grep -v '^/System/Library/' || true)"
 if [ -n "$BAD" ]; then
   echo "FAIL: the binary depends on libraries that will not exist elsewhere:" >&2
   echo "$BAD" | sed 's/^/        /' >&2

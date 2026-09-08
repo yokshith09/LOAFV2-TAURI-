@@ -224,9 +224,16 @@ jobs:
       # offered testers nothing but Move to Trash. This asserts the bundle is
       # signed and declares the private data it touches, and it runs here so a
       # tag cannot be cut on a commit that would ship another one.
+      # Its output goes through the same readable-failure step as the build. The
+      # first run of the launch checks failed here and said nothing but "exit
+      # code 1" — the third time on this bug that a correct check has produced
+      # an unreadable answer.
       - name: Verify the macOS bundle
         if: startsWith(matrix.os, 'macos')
-        run: bash scripts/verify-macos-bundle.sh ${{ matrix.universal != '' && 'universal/stage/Loaf.app' || '' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/verify-macos-bundle.sh ${{ matrix.universal != '' && 'universal/stage/Loaf.app' || '' }} 2>&1             | tee "$RUNNER_TEMP/build.log"
 
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
