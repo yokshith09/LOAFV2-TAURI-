@@ -324,6 +324,25 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
         true,
         None::<&str>,
     )?;
+    // THE ONLY WAY BACK FROM AN INVISIBLE PET, and until now there was none.
+    //
+    // A transparent, undecorated, no-taskbar window that ends up off-screen,
+    // behind the Dock, on another Space, or simply never shown is
+    // indistinguishable from a crash: the app is running, and there is nothing
+    // to click. That happened on macOS with a Dock icon showing and no
+    // character anywhere, and the honest answer was that the app had no
+    // recovery path at all.
+    //
+    // This does not diagnose why he went; it puts him back. Shown, on top,
+    // re-parked bottom right, and pulled onto the current Space — the four
+    // things any of the causes would need undone.
+    let find = MenuItem::with_id(
+        app,
+        "find",
+        "Can’t see him? Bring him back",
+        true,
+        None::<&str>,
+    )?;
     let reset = MenuItem::with_id(app, "reset", "Reset today's stats", true, None::<&str>)?;
     let forget = MenuItem::with_id(app, "forget", "Forget all site data", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "About Loaf", true, None::<&str>)?;
@@ -338,6 +357,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
             &packs_item,
             &recap,
             &PredefinedMenuItem::separator(app)?,
+            &find,
             &sleep,
             &reset,
             &forget,
@@ -395,6 +415,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 // on the same channel — one handler for them, wherever they came
                 // from, rather than a second path that can drift from the first.
                 "recap" => send_command(app, "recap"),
+                "find" => bring_him_back(app),
                 "sleep" => send_command(app, "sleep"),
                 "reset" => send_command(app, "reset"),
                 "forget" => send_command(app, "sites:forget"),
@@ -891,6 +912,41 @@ fn cursor_pos(window: tauri::Window) -> Option<(f64, f64)> {
 /// told to be; harmless to call there.
 fn follow_the_user(window: &tauri::WebviewWindow) {
     let _ = window.set_visible_on_all_workspaces(true);
+}
+
+/// Put the companion somewhere the user can actually see him.
+///
+/// Every step is a separate `let _ =` rather than a chain, because these are
+/// four independent recoveries and the one that would have helped must not be
+/// skipped because an earlier one failed. If he is off-screen, re-parking is
+/// what fixes it; if he was never shown, `show` is; if he is on another Space,
+/// the workspace call is. We do not know which, so we do all of them.
+///
+/// Also prints where he was. A tester who runs this from a terminal can then
+/// say whether the window was at a sane coordinate or somewhere impossible,
+/// which is the one fact that separates "never shown" from "shown off-screen"
+/// — and it cannot be got any other way from a window with no chrome.
+fn bring_him_back(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window(COMPANION_LABEL) else {
+        eprintln!("loaf: there is no companion window to bring back");
+        return;
+    };
+    match (
+        window.outer_position(),
+        window.outer_size(),
+        window.is_visible(),
+    ) {
+        (Ok(p), Ok(s), visible) => eprintln!(
+            "loaf: companion was at {},{} size {}x{} visible={:?}",
+            p.x, p.y, s.width, s.height, visible
+        ),
+        _ => eprintln!("loaf: could not read where the companion was"),
+    }
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_visible_on_all_workspaces(true);
+    park_bottom_right(&window);
 }
 
 /// Write a recap card to a file the user can find and post.
