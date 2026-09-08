@@ -252,13 +252,37 @@ jobs:
       - name: Verify the macOS bundle
         run: bash scripts/verify-macos-bundle.sh universal/stage/Loaf.app
 
+      # UPLOADING INTO A DRAFT IS THE FIDDLY PART, so it does not rely on one
+      # command working. A draft release has no git tag ref of its own as far as
+      # the releases API is concerned, and `GET /releases/tags/{tag}` is
+      # documented to look up published releases. `gh release upload` is
+      # believed to fall back to listing, but "believed to" is how the last four
+      # macOS releases went out broken, so there is an explicit fallback that
+      # resolves the release id from the list — which definitely does include
+      # drafts — and posts the asset straight to the upload endpoint.
       - name: Attach it to the draft release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
-          ls -lh universal/*.dmg
-          gh release upload "$TAG" universal/*.dmg --clobber
+          set -euo pipefail
+          DMG=$(ls universal/*.dmg | head -1)
+          ls -lh "$DMG"
+
+          if gh release upload "$TAG" "$DMG" --clobber; then
+            echo "Uploaded with gh release upload."
+          else
+            echo "gh release upload could not see the draft. Resolving it by id."
+            ID=$(gh api "repos/$REPO/releases" --paginate                    --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -1)
+            if [ -z "$ID" ]; then
+              echo "::error title=no release::Nothing exists for tag $TAG. The Windows job should have created it."
+              exit 1
+            fi
+            gh api --method POST               -H "Content-Type: application/octet-stream"               "https://uploads.github.com/repos/$REPO/releases/$ID/assets?name=$(basename "$DMG")"               --input "$DMG"
+            echo "Uploaded by release id $ID."
+          fi
+
           echo "The draft now holds:"
-          gh release view "$TAG" --json assets --jq '.assets[].name'
+          gh api "repos/$REPO/releases" --paginate             --jq ".[] | select(.tag_name==\"$TAG\") | .assets[].name"
