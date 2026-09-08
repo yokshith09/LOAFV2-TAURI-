@@ -81,15 +81,184 @@ pub const NO_PHRASES: &str = "Loaf had no phrases to listen for, so it did not s
 pub use imp::{start, stop};
 
 #[cfg(not(windows))]
-pub fn start<R: tauri::Runtime>(
-    _app: tauri::AppHandle<R>,
-    _phrases: Vec<String>,
-) -> Result<(), String> {
-    Err("Always-on listening is Windows-only for now.".into())
-}
+pub use elsewhere::{start, stop};
 
+/// Always-on listening where there is no Windows speech API.
+///
+/// HOW IT DIFFERS FROM THE WINDOWS PATH, AND WHY THAT MATTERS. Windows listens
+/// with a CLOSED GRAMMAR: a compiled list of exactly the phrases Loaf will
+/// accept. Nothing else can be recognised, by construction, which is what keeps
+/// the recogniser on the machine and is the strongest privacy property the
+/// voice feature has. There is no equivalent here. Whisper transcribes whatever
+/// it is given, so the shape has to be different and the difference has to be
+/// stated rather than discovered.
+///
+/// WHAT IS ACTUALLY TRANSCRIBED, narrowed on purpose:
+///
+///  1. The detector decides what is speech at all. Silence, typing and a fan
+///     never reach the transcriber, which is most of a working day.
+///  2. **Only utterances short enough to BE a wake word are transcribed.** A
+///     wake word is one or two words. A sentence of conversation is longer, and
+///     is thrown away without ever being looked at. This is a CPU saving and it
+///     is also the closest thing available to the closed grammar: the great
+///     majority of what is said near the machine is discarded unheard.
+///  3. Nothing is written down. The audio is dropped after the check and the
+///     text after the match, and neither reaches disk.
+///
+/// It is still weaker than the Windows path, and the setting says so. The real
+/// answer is a purpose-built wake-word model — openWakeWord runs on both
+/// platforms for a few percent of one core and recognises exactly one word by
+/// construction. That is M4's stage two and it needs an ONNX runtime; this is
+/// what can be built without one.
 #[cfg(not(windows))]
-pub fn stop() {}
+mod elsewhere {
+    use super::{HeardPhrase, HEARD_EVENT, LISTENING, STOPPED_EVENT};
+    use std::sync::atomic::Ordering;
+    use tauri::{Emitter, Manager};
+
+    /// Longest utterance that could be a wake word. Anything longer is
+    /// conversation and is discarded without being transcribed.
+    const MAX_WAKE_MS: u32 = 2_500;
+    /// Shortest. Below this it is a cough or a door.
+    const MIN_WAKE_MS: u32 = 200;
+
+    /// Restart the capture after this much audio, to bound memory.
+    ///
+    /// An hour of 16 kHz mono is about 115 MB and this runs all day. Restarted
+    /// only while nobody is talking, so a wake word is never cut in half.
+    const RESTART_AFTER: usize = 16_000 * 60;
+
+    pub fn start<R: tauri::Runtime>(
+        app: tauri::AppHandle<R>,
+        phrases: Vec<String>,
+    ) -> Result<(), String> {
+        if phrases.is_empty() {
+            return Err(super::NO_PHRASES.into());
+        }
+        if LISTENING.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        // Resolved before the microphone opens, so a missing model refuses
+        // rather than listening to somebody for a transcription that was never
+        // going to run — the same rule dictate_once follows.
+        let dir = app.path().app_data_dir().map_err(|e| {
+            LISTENING.store(false, Ordering::SeqCst);
+            e.to_string()
+        })?;
+        let setup = crate::transcribe::WhisperSetup {
+            model: crate::whisper_setup::model_path(&dir)
+                .to_string_lossy()
+                .into_owned(),
+        };
+        if let Some(what) = crate::transcribe::missing(&setup) {
+            LISTENING.store(false, Ordering::SeqCst);
+            return Err(crate::transcribe::missing_reason(&what));
+        }
+
+        let wanted: Vec<String> = phrases.iter().map(|p| p.to_lowercase()).collect();
+
+        std::thread::spawn(move || {
+            let result = listen(&app, &setup, &wanted);
+            LISTENING.store(false, Ordering::SeqCst);
+            let _ = app.emit(STOPPED_EVENT, result.err().unwrap_or_default());
+        });
+        Ok(())
+    }
+
+    pub fn stop() {
+        LISTENING.store(false, Ordering::SeqCst);
+    }
+
+    fn listen<R: tauri::Runtime>(
+        app: &tauri::AppHandle<R>,
+        setup: &crate::transcribe::WhisperSetup,
+        wanted: &[String],
+    ) -> Result<(), String> {
+        let mut recording = crate::audio::start()?;
+        let mut vad = crate::vad::Vad::default();
+        let mut read_from = 0usize;
+        let mut pending: Vec<i16> = Vec::new();
+        let mut utterance: Vec<i16> = Vec::new();
+
+        while LISTENING.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let (fresh, next) = recording.samples_since(read_from);
+            read_from = next;
+            pending.extend_from_slice(&fresh);
+
+            while pending.len() >= crate::vad::FRAME {
+                let frame: Vec<i16> = pending.drain(..crate::vad::FRAME).collect();
+                match vad.push(&frame) {
+                    crate::vad::Event::Started => {
+                        utterance.clear();
+                        utterance.extend_from_slice(&frame);
+                    }
+                    crate::vad::Event::Speaking => {
+                        // Capped while it grows, so a long conversation cannot
+                        // fill memory before the length check throws it away.
+                        if utterance.len() < 16_000 * 5 {
+                            utterance.extend_from_slice(&frame);
+                        }
+                    }
+                    crate::vad::Event::Ended => {
+                        heard(app, setup, wanted, &utterance);
+                        utterance.clear();
+                    }
+                    crate::vad::Event::Quiet => {}
+                }
+            }
+
+            // Only while nobody is talking, so a wake word is never cut in two.
+            if read_from > RESTART_AFTER && !vad.speaking() {
+                crate::audio::discard(recording);
+                recording = crate::audio::start()?;
+                read_from = 0;
+                pending.clear();
+            }
+        }
+
+        crate::audio::discard(recording);
+        Ok(())
+    }
+
+    /// Decide whether an utterance was the wake word, and say so if it was.
+    fn heard<R: tauri::Runtime>(
+        app: &tauri::AppHandle<R>,
+        setup: &crate::transcribe::WhisperSetup,
+        wanted: &[String],
+        utterance: &[i16],
+    ) {
+        let ms = (utterance.len() as u32) * 1000 / 16_000;
+        // THE LENGTH GATE, which is the privacy narrowing as much as the CPU
+        // one: anything too long to be a wake word is thrown away here, before
+        // it is transcribed, and most of what is said near a machine is too
+        // long to be a wake word.
+        if !(MIN_WAKE_MS..=MAX_WAKE_MS).contains(&ms) {
+            return;
+        }
+
+        let audio: Vec<f32> = utterance.iter().map(|s| *s as f32 / 32768.0).collect();
+        let Ok(text) = crate::transcribe::transcribe_samples(setup, &audio) else {
+            return;
+        };
+        let said = text.to_lowercase();
+        let matched = wanted.iter().any(|w| said.contains(w.as_str()));
+        if !matched {
+            return;
+        }
+        let _ = app.emit(
+            HEARD_EVENT,
+            HeardPhrase {
+                text: said,
+                // Never "strong". This path cannot be as sure as a closed
+                // grammar, and saying so lets the caller keep treating a weak
+                // match as a wake word only — never as a command.
+                confidence: "weak".to_string(),
+            },
+        );
+    }
+}
 
 #[cfg(windows)]
 mod imp {

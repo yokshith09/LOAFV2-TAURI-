@@ -133,6 +133,19 @@ pub fn start() -> Result<Recording, String> {
     imp::start()
 }
 
+/// Stop a recording and keep nothing.
+///
+/// EXISTS FOR ALWAYS-ON LISTENING, which restarts its capture regularly to keep
+/// the buffer from growing without limit — an hour of 16 kHz mono is about
+/// 115 MB, and a desktop pet cannot hold a working day of it. Until now the
+/// only way to end a recording was to write it to a file, so the only way to
+/// throw audio away was to put it on disk first and then delete it. For a
+/// feature whose whole promise is that the audio never lands anywhere, that was
+/// the wrong shape.
+pub fn discard(recording: Recording) {
+    imp::discard(recording);
+}
+
 /// Stop, and write what was captured to `path` as a 16 kHz mono WAV.
 ///
 /// Returns how many seconds were written. Zero means nothing was captured,
@@ -253,6 +266,14 @@ mod imp {
         }
     }
 
+    pub fn discard(mut recording: Recording) {
+        recording.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = recording.handle.take() {
+            let _ = handle.join();
+        }
+        // The samples go out of scope with the Recording. Nothing is written.
+    }
+
     pub fn stop(mut recording: Recording, path: &std::path::Path) -> Result<f32, String> {
         recording.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = recording.handle.take() {
@@ -289,6 +310,8 @@ mod imp {
     pub fn start() -> Result<Recording, String> {
         Err("Recording is not supported here.".into())
     }
+    pub fn discard(_recording: Recording) {}
+
     pub fn stop(_recording: Recording, _path: &std::path::Path) -> Result<f32, String> {
         Err("Recording is not supported here.".into())
     }

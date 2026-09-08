@@ -434,7 +434,7 @@ mod imp {
         }
         // Two copies of the same app — one in /Applications and one in
         // ~/Applications — are one app as far as anybody speaking is concerned.
-        found.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        found.sort_by_key(|a| a.name.to_lowercase());
         found.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
         found
     }
