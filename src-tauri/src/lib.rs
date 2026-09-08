@@ -47,6 +47,7 @@ pub mod wake;
 pub mod whisper_setup;
 
 use platform::{ForegroundApp, PlatformProbe};
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 // Brings `get_webview_window` and friends into scope on `App`/`AppHandle`.
 use tauri::{Emitter, Manager};
@@ -1905,6 +1906,43 @@ fn store_add_line(
     with_store(&app, |c| store::add_line(c, meeting.as_deref(), at, &text))
 }
 
+/// Read one durable value out of the store.
+///
+/// EXISTS FOR THE KNOWLEDGE GRAPH, and for the class of problem it is in. The
+/// graph has been living in the WebView's own storage, which is invisible to
+/// this process, capped at a few megabytes, and **wiped without warning if site
+/// data is ever cleared**. Everything the user's memory is built from would go
+/// with it and nothing would say so. A file the app owns is the fix.
+///
+/// Deliberately a generic key/value rather than a `graph` command: the closet's
+/// choices and the focus timer's state are in the same browser storage for the
+/// same reason, and they should move here too rather than needing a command
+/// each.
+#[tauri::command(async)]
+fn store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
+    with_store(&app, |c| {
+        c.query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            rusqlite::params![key],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command(async)]
+fn store_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
+    with_store(&app, |c| {
+        c.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        )
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    })
+}
+
 /// Write everything out as ordinary files, and reveal the folder.
 ///
 /// Into a dated folder rather than one fixed place, so exporting twice does not
@@ -2062,6 +2100,8 @@ pub fn run() {
             store_delete_matching,
             store_delete_everything,
             store_add_line,
+            store_get,
+            store_set,
             store_export
         ])
         .run(tauri::generate_context!())

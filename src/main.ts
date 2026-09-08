@@ -2221,7 +2221,12 @@ const meetingWatch = new MeetingWatch();
  * the transcripts are, because a graph that outlived the notes it was built
  * from would make "delete it" a promise only half kept.
  */
-const memory = KnowledgeGraph.fromJSON(readGraph(browserStore()));
+// `let`, because the durable copy arrives from the store a moment after this
+// runs and replaces it. See adoptTheStoredGraph below.
+let memory = KnowledgeGraph.fromJSON(readGraph(browserStore()));
+
+/** Where the graph lives in the store's key/value table. */
+const STORE_GRAPH = "graph";
 
 const K_GRAPH = "memory.graph";
 
@@ -2237,7 +2242,44 @@ function readGraph(store: ReturnType<typeof browserStore>): unknown {
 }
 
 function saveGraph(): void {
-  browserStore().setItem(K_GRAPH, JSON.stringify(memory.toJSON()));
+  const json = JSON.stringify(memory.toJSON());
+  // BOTH, FOR NOW, AND THE STORE IS THE ONE THAT MATTERS. Browser storage is
+  // invisible to Rust, capped at a few megabytes, and wiped without warning if
+  // site data is ever cleared — which would take everything Loaf remembers and
+  // say nothing. The localStorage write stays for one release so a user who
+  // drops back to an older build keeps their memory, and then it goes.
+  browserStore().setItem(K_GRAPH, json);
+  void invokeSafe("store_set", { key: STORE_GRAPH, value: json });
+}
+
+/**
+ * Take the store's copy of the graph if it has one, and seed it if it does not.
+ *
+ * Runs once, just after launch. Until it does, `memory` holds whatever browser
+ * storage had, which is the right thing to show in the meantime — an empty
+ * memory panel for a second would read as "Loaf has forgotten you".
+ *
+ * The store WINS when both exist, because it is the copy that cannot silently
+ * disappear. The only way they disagree is a build that wrote one and not the
+ * other, and in that case the durable one is the one to keep.
+ */
+async function adoptTheStoredGraph(): Promise<void> {
+  if (!hasTauriHost()) return;
+  const stored = await invokeSafe<string | null>("store_get", { key: STORE_GRAPH });
+  if (typeof stored === "string" && stored.length > 0) {
+    try {
+      memory = KnowledgeGraph.fromJSON(JSON.parse(stored));
+      announceMemory();
+      return;
+    } catch {
+      // A corrupt stored graph costs the connections, not the launch — the
+      // same rule readGraph already follows. Fall through and re-seed it from
+      // what browser storage had.
+    }
+  }
+  // Nothing in the store yet: put what we have there, so the next launch reads
+  // from the durable copy rather than the one a cache clear can take.
+  saveGraph();
 }
 
 /**
@@ -3348,3 +3390,13 @@ setInterval(() => {
 setInterval(() => {
 }, 5000);
 requestAnimationFrame(frame);
+
+// The durable copy of what Loaf remembers, adopted a moment after launch.
+//
+// Not awaited at module level: the character must appear whether or not the
+// store opens, and the browser-storage copy is a perfectly good stand-in for
+// the second this takes. See adoptTheStoredGraph.
+void adoptTheStoredGraph().catch(() => {
+  // The memory panel keeps showing the browser-storage copy, which is what it
+  // showed before the store existed.
+});
