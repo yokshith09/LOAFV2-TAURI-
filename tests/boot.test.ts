@@ -232,6 +232,48 @@ describe("the render loop never starting", () => {
   });
 });
 
+/**
+ * The mark on screen is the fourth reporting channel, and the only one that
+ * assumes nothing. stderr assumed a terminal, the notification assumed macOS
+ * permission, the file assumed somebody goes looking. A tester sends a
+ * screenshot — so the thing they photograph has to carry the answer.
+ */
+describe("the mark names which failure it was", () => {
+  it("says no host when the bridge is missing", () => {
+    const h = host({ invoke: undefined, drewFlag: () => false });
+    installBootGuards(h);
+    h.rec.ops.length = 0;
+    h.rec.timers[0]!();
+    expect(h.rec.ops.join(",")).toContain("text:no host");
+  });
+
+  it("says error when something threw", () => {
+    const h = host({ drewFlag: () => false });
+    installBootGuards(h);
+    h.rec.listeners.error![0]!({ error: new Error("kaboom") });
+    h.rec.ops.length = 0;
+    h.rec.timers[0]!();
+    expect(h.rec.ops.join(",")).toContain("text:error");
+  });
+
+  it("says stalled when the bridge is fine and nothing threw", () => {
+    const h = host({ drewFlag: () => false });
+    installBootGuards(h);
+    h.rec.ops.length = 0;
+    h.rec.timers[0]!();
+    expect(h.rec.ops.join(",")).toContain("text:stalled");
+  });
+
+  // A working build must never repaint over the cat.
+  it("repaints nothing at all once a frame has drawn", () => {
+    const h = host({ drewFlag: () => true });
+    installBootGuards(h);
+    h.rec.ops.length = 0;
+    h.rec.timers[0]!();
+    expect(h.rec.ops).toEqual([]);
+  });
+});
+
 describe("installBootGuards", () => {
   it("listens for both kinds of failure and paints, in one call", () => {
     const h = host();

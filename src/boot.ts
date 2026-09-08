@@ -84,7 +84,7 @@ export function report(host: BootHost, what: string, detail: string): void {
  * the single most useful sentence they could send back. A working build paints
  * over it within about sixteen milliseconds.
  */
-export function paintProofOfLife(host: BootHost): void {
+export function paintProofOfLife(host: BootHost, label = "loading"): void {
   const canvas = host.getElementById("stage") as {
     width: number;
     height: number;
@@ -127,40 +127,69 @@ export function paintProofOfLife(host: BootHost): void {
   ctx.fillStyle = "#23201b";
   ctx.font = "9px system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("loading", w / 2, h / 2 + 4);
+  ctx.fillText(label, w / 2, h / 2 + 4);
   ctx.restore();
 }
 
-/** Complain to the terminal if the real render loop never produced a frame. */
-export function watchForTheFirstFrame(host: BootHost): void {
+/**
+ * The last word, painted where somebody will actually see it.
+ *
+ * THE REPORT HAS TO SURVIVE THE PERSON NOT LOOKING FOR IT. Three channels were
+ * added before this one and each assumed something: stderr assumed the app was
+ * launched from a terminal, the notification assumed macOS had been granted
+ * permission to post one, and the file assumed somebody would go and open it.
+ * A tester sends a screenshot. So the mark on screen — the one thing they
+ * already photograph — says which of the three cases it is.
+ *
+ * `no host` is the interesting one and could not be reported any other way: it
+ * means the Tauri bridge is missing, which is also why nothing else would have
+ * been sent. A diagnostic that cannot report its own most silent failure is not
+ * finished.
+ */
+export function watchForTheFirstFrame(host: BootHost, caught?: Caught): void {
   host.setTimeout(() => {
-    if (!host.drewFlag()) {
-      report(
-        host,
-        "boot",
-        "the render loop never produced a frame — main.ts stopped before requestAnimationFrame",
-      );
-    }
+    if (host.drewFlag()) return;
+    const why = !host.invoke ? "no host" : caught?.error ? "error" : "stalled";
+    report(
+      host,
+      "boot",
+      `the render loop never produced a frame (${why}) — main.ts stopped before requestAnimationFrame`,
+    );
+    paintProofOfLife(host, why);
   }, FRAME_DEADLINE_MS);
 }
 
+/**
+ * What has been caught so far, so the mark can say which case this is.
+ *
+ * A box passed between the handler and the watcher rather than a module-level
+ * variable. The first version was module-level, which is fine for a page that
+ * loads once and wrong for anything else: a test that recorded an error leaked
+ * it into the next one, and the "stalled" case could never be observed again
+ * once anything had thrown. State that only one caller can ever reset is state
+ * that cannot be tested.
+ */
+export interface Caught {
+  error: string | null;
+}
+
 export function installBootGuards(host: BootHost): void {
+  const caught: Caught = { error: null };
+
   host.addEventListener("error", (e) => {
     const ev = e as { error?: Error; message?: string; filename?: string; lineno?: number };
-    report(
-      host,
-      "uncaught",
-      ev.error?.stack ?? `${ev.message} (${ev.filename}:${ev.lineno})`,
-    );
+    caught.error = ev.error?.stack ?? `${ev.message} (${ev.filename}:${ev.lineno})`;
+    report(host, "uncaught", caught.error);
   });
 
   host.addEventListener("unhandledrejection", (e) => {
     const ev = e as { reason?: { stack?: string } };
-    report(host, "unhandled rejection", ev.reason?.stack ?? String(ev.reason));
+    caught.error = ev.reason?.stack ?? String(ev.reason);
+    report(host, "unhandled rejection", caught.error);
   });
 
   paintProofOfLife(host);
-  watchForTheFirstFrame(host);
+  watchForTheFirstFrame(host, caught);
 }
 
 /** The real browser, wrapped up as a host. */
