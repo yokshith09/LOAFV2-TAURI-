@@ -1833,13 +1833,37 @@ fn can_speak() -> bool {
 /// problem that only matters while somebody is looking. See src/boot.ts for the
 /// other half, and for why an invisible pet is otherwise undiagnosable from a PC.
 #[tauri::command]
-fn report_error(what: String, detail: String) {
+fn report_error(app: tauri::AppHandle, what: String, detail: String) {
     // Truncated on the way in as well as on the way out: this is reachable from
     // a window, and an unbounded string from a window should not be able to
     // fill a terminal buffer.
     let detail: String = detail.chars().take(4000).collect();
     let what: String = what.chars().take(80).collect();
     eprintln!("loaf/webview {what}: {detail}");
+
+    // AND ON SCREEN, BECAUSE stderr IS NOT WHERE ANYBODY IS LOOKING.
+    //
+    // This is what the last three days of the invisible-pet bug came down to.
+    // The diagnostic worked exactly as designed — the mark appeared, which
+    // proved the window was alive and the drawing had failed — and then the
+    // actual exception went to a terminal nobody was running the app from, so
+    // the one fact that would end it was written down where it could not be
+    // read. A desktop app that can only be diagnosed by launching it from a
+    // shell is a desktop app that cannot be diagnosed.
+    //
+    // ONCE PER RUN. A render loop that throws throws every frame, and sixty
+    // notifications a second is its own emergency.
+    static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if TOLD.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app
+        .notification()
+        .builder()
+        .title("Loaf hit an error and could not start")
+        .body(detail.chars().take(400).collect::<String>())
+        .show();
 }
 
 // ---------------------------------------------------------------------------

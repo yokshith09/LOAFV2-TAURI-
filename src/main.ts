@@ -2585,11 +2585,54 @@ function watchPixelRatio(): void {
   mq.addEventListener("change", onChange, { once: true });
 }
 
+/**
+ * One animation frame.
+ *
+ * THE RESCHEDULE HAPPENS FIRST, AND THAT IS THE POINT. It used to be the last
+ * line of this function, which meant a single throw anywhere in the drawing
+ * ended the animation permanently — not one dropped frame, the pet gone for the
+ * rest of the session, on a transparent window that then looks exactly like an
+ * app that failed to launch. That is the shape of the macOS bug this was found
+ * chasing: something in here throws on a Mac and never gets a second chance.
+ *
+ * Scheduling first means a bad frame costs a frame. Anything transient — a
+ * sprite that has not finished loading, a size that is briefly zero — heals on
+ * the next one instead of being fatal.
+ */
 function frame(nowMs: number): void {
-  // Read by boot.ts, which complains to the terminal if no frame ever arrives.
-  // A transparent window that draws nothing looks exactly like an app that did
-  // not launch, and this is the flag that tells those apart.
-  (window as unknown as { __loafDrew?: boolean }).__loafDrew = true;
+  // BEFORE ANYTHING THAT CAN THROW.
+  requestAnimationFrame(frame);
+  try {
+    drawFrame(nowMs);
+  } catch (err) {
+    // Reported once by boot.ts's handler, which de-duplicates — sixty
+    // notifications a second is its own emergency. The loop keeps running.
+    reportFrameFailure(err);
+  }
+}
+
+/** How many frames have failed, so the report is made once and not per frame. */
+let frameFailures = 0;
+
+function reportFrameFailure(err: unknown): void {
+  frameFailures += 1;
+  if (frameFailures !== 1) return;
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  console.error("[loaf] the frame threw:", detail);
+  void invokeSafe("report_error", { what: "frame", detail });
+}
+
+function drawFrame(nowMs: number): void {
+  // Read by boot.ts, which complains if no frame ever arrives. A transparent
+  // window that draws nothing looks exactly like an app that did not launch,
+  // and this is the flag that tells those apart.
+  //
+  // Set at the END of a successful frame, not the start. Setting it first made
+  // it mean "the loop was entered", when the only useful question is "did
+  // anything reach the screen" — a frame that throws before it paints is
+  // indistinguishable from no frame at all, and used to silence the very
+  // warning that would have named it.
+  markDrewLater();
   const dpr = window.devicePixelRatio || 1;
   const phase = prefersReducedMotion ? 0 : nowMs / 1000;
 
@@ -2695,8 +2738,22 @@ function frame(nowMs: number): void {
     ctx!.restore();
   }
   ctx!.restore();
+  drewSomething = true;
+}
 
-  requestAnimationFrame(frame);
+/**
+ * Whether a frame has ever finished painting.
+ *
+ * Two flags rather than one: `drewSomething` is set at the bottom of a frame
+ * that completed, and only then is boot.ts told. The old single flag was set at
+ * the top, so a frame that threw before painting still reported success and
+ * silenced the warning that would have named the fault.
+ */
+let drewSomething = false;
+
+function markDrewLater(): void {
+  if (!drewSomething) return;
+  (window as unknown as { __loafDrew?: boolean }).__loafDrew = true;
 }
 
 /**
