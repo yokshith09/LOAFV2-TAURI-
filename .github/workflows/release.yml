@@ -160,9 +160,15 @@ jobs:
             The privacy radar is **off until you turn it on**. Even then it reads
             only the DOMAIN of your frontmost browser tab (`github.com`) — never
             page content, never a screenshot. Meeting recording captures **your
-            microphone only** — never system audio, so the other people in a call
-            are not recorded — and the audio is deleted the moment the transcript
-            exists.
+            microphone only** — never system audio — and the audio is deleted the
+            moment the transcript exists.
+
+            To be precise about what that does and does not promise: Loaf never
+            captures anyone else's audio stream. It cannot stop a microphone from
+            hearing a room. **On speakers, the other side of the call comes out of
+            them and back into your microphone**, so some of it lands in the
+            transcript. Wear headphones if you want "only my voice" to be
+            strictly true.
 
             One honest exception: if you attach a program under **Connections**,
             that program can do anything it likes, including making network calls

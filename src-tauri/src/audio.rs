@@ -13,6 +13,17 @@
 //! places it is not merely rude. Recording your own microphone captures half a
 //! conversation — your half — which is the half that is unambiguously yours.
 //!
+//! THE HONEST LIMIT OF THAT PROMISE, which must not be dropped from the copy
+//! that repeats it. Loaf never captures anybody else's audio STREAM. It cannot
+//! stop a microphone from hearing a room. On speakers rather than headphones,
+//! the other side of the call comes out of the speakers, goes into the
+//! microphone, and lands in the transcript — quieter and more mangled, but
+//! there. So the accurate sentence is "Loaf records only your microphone",
+//! never "the other people in the call are not recorded", because the second
+//! one is a promise about physics that this code cannot keep. Anywhere the user
+//! is told about recording should say headphones if they want that to be
+//! strictly true.
+//!
 //! WHAT IT PRODUCES. 16 kHz mono 16-bit WAV, which is exactly what Whisper
 //! wants, so nothing downstream has to resample. Written to a temporary file
 //! the caller owns and is expected to delete.
