@@ -8,6 +8,13 @@
  * it broadcasts back; none of them writes state of its own.
  */
 
+// FIRST, AND THE ORDER IS THE WHOLE POINT. ES modules evaluate imports in
+// the order they are written, so this one runs before every other module in
+// this file has a chance to throw while being evaluated. It paints a mark on
+// the canvas and forwards every uncaught error to the terminal, which is what
+// turns "the app opens and there is no cat" into a sentence someone can act
+// on. See boot.ts.
+import "./boot";
 import { COMPANIONS, findCompanion } from "./companions/registry";
 import { OUTFITS, findOutfit, SEASONAL_ID, seasonalOutfit } from "./outfits/registry";
 import { renderScene } from "./render/scene";
@@ -2506,6 +2513,10 @@ function watchPixelRatio(): void {
 }
 
 function frame(nowMs: number): void {
+  // Read by boot.ts, which complains to the terminal if no frame ever arrives.
+  // A transparent window that draws nothing looks exactly like an app that did
+  // not launch, and this is the flag that tells those apart.
+  (window as unknown as { __loafDrew?: boolean }).__loafDrew = true;
   const dpr = window.devicePixelRatio || 1;
   const phase = prefersReducedMotion ? 0 : nowMs / 1000;
 

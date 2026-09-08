@@ -910,6 +910,31 @@ fn cursor_pos(window: tauri::Window) -> Option<(f64, f64)> {
 ///
 /// A no-op on Windows, where a window is already on every virtual desktop it is
 /// told to be; harmless to call there.
+/// Print where the companion actually ended up.
+///
+/// Costs one line of stderr per launch and is the only way anybody on a Mac can
+/// tell "the window was never shown" from "the window is at -20000,50" from
+/// "the window is fine and the drawing failed". Two testers have now reported
+/// the same empty screen, and neither report could distinguish those.
+fn describe_the_companion(window: &tauri::WebviewWindow) {
+    let pos = window.outer_position();
+    let size = window.outer_size();
+    let visible = window.is_visible();
+    let scale = window.scale_factor();
+    eprintln!("loaf/companion position={pos:?} size={size:?} visible={visible:?} scale={scale:?}");
+    match window.current_monitor() {
+        Ok(Some(m)) => eprintln!(
+            "loaf/monitor name={:?} position={:?} size={:?} scale={}",
+            m.name(),
+            m.position(),
+            m.size(),
+            m.scale_factor()
+        ),
+        Ok(None) => eprintln!("loaf/monitor NONE — the window is on no monitor"),
+        Err(e) => eprintln!("loaf/monitor could not be read: {e}"),
+    }
+}
+
 fn follow_the_user(window: &tauri::WebviewWindow) {
     let _ = window.set_visible_on_all_workspaces(true);
 }
@@ -1727,6 +1752,22 @@ fn mcp_disconnect(pool: tauri::State<'_, connections::Pool>, name: String) {
     connections::disconnect(&pool, &name);
 }
 
+/// Where the frontend's uncaught errors go, so a blank window can say why.
+///
+/// stderr rather than a file. A tester who has been asked to run the app from a
+/// terminal sees it immediately, and nothing is written to their disk for a
+/// problem that only matters while somebody is looking. See src/boot.ts for the
+/// other half, and for why an invisible pet is otherwise undiagnosable from a PC.
+#[tauri::command]
+fn report_error(what: String, detail: String) {
+    // Truncated on the way in as well as on the way out: this is reachable from
+    // a window, and an unbounded string from a window should not be able to
+    // fill a terminal buffer.
+    let detail: String = detail.chars().take(4000).collect();
+    let what: String = what.chars().take(80).collect();
+    eprintln!("loaf/webview {what}: {detail}");
+}
+
 /// Reveal the config file, for the things the window deliberately will not do.
 ///
 /// Editing a secret in place, adding a variable the UI has no field for,
@@ -1768,6 +1809,11 @@ pub fn run() {
             if let Some(window) = app.get_webview_window(COMPANION_LABEL) {
                 park_bottom_right(&window);
                 follow_the_user(&window);
+                // SAID OUT LOUD AT EVERY LAUNCH, because the alternative is
+                // asking a tester to describe an empty rectangle. A companion
+                // that is off-screen, sized zero, or never shown all look
+                // identical from the outside and are three different bugs.
+                describe_the_companion(&window);
             }
             if let Some(bubble) = app.get_webview_window(BUBBLE_LABEL) {
                 // The card has to follow him. A companion on every Space whose
@@ -1849,7 +1895,8 @@ pub fn run() {
             mcp_calls,
             mcp_connected,
             mcp_disconnect,
-            open_mcp_config
+            open_mcp_config,
+            report_error
         ])
         .run(tauri::generate_context!())
         .expect("error while running Loaf");

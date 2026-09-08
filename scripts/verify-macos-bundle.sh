@@ -110,7 +110,7 @@ echo
 
 # ------------------------------------------------------------ usage strings --
 PLIST="$APP/Contents/Info.plist"
-for key in NSMicrophoneUsageDescription NSAppleEventsUsageDescription; do
+for key in NSMicrophoneUsageDescription NSAppleEventsUsageDescription LSUIElement; do
   if ! /usr/libexec/PlistBuddy -c "Print :$key" "$PLIST" >/dev/null 2>&1; then
     echo "FAIL: Info.plist has no $key." >&2
     echo "      macOS kills the process outright the first time it asks for" >&2

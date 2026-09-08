@@ -18,6 +18,25 @@
 	  actually happens rather than what sounds reassuring.
 	-->
 
+	<!--
+	  A DESKTOP PET IS AN ACCESSORY, NOT AN APPLICATION.
+
+	  lib.rs calls set_activation_policy(Accessory) as the first statement in
+	  setup(), which is supposed to mean no Dock icon and no app-switcher entry.
+	  A tester's screenshot shows Loaf sitting in the Dock with a running dot
+	  anyway, so that call is not doing what the code assumes on at least one
+	  version of macOS.
+
+	  LSUIElement is the declarative form of the same thing, read by the system
+	  before the process starts rather than requested after it has. The Swift
+	  original used exactly this, and lib.rs's own comment says so. Setting both
+	  is not belt-and-braces for its own sake: the runtime call is still needed
+	  because Loaf flips to Regular while a normal window is open and back
+	  afterwards, and this only fixes the state it starts in.
+	-->
+	<key>LSUIElement</key>
+	<true/>
+
 	<!-- audio.rs opens a cpal input stream on macOS as well as Windows. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Loaf listens only while you are recording a meeting, and you start that yourself. The audio is transcribed on this Mac and the recording is deleted straight afterwards. Nothing is uploaded.</string>
