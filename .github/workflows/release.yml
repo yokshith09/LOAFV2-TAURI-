@@ -149,6 +149,15 @@ jobs:
             Bring him back"** — that shows the window, puts it back on top, and
             re-parks it in the bottom-right corner.
 
+            **See a small orange box that says "loading" and never a character?**
+            That means the window is fine and the drawing failed, which is a bug
+            we want to hear about. Loaf writes what went wrong to a file — open
+            it and send it over:
+
+            ```
+            open ~/Library/Application\ Support/LoafPlus/last-error.txt
+            ```
+
             ## What is in it
 
             Screen-time tracking with a full history, eighteen characters with

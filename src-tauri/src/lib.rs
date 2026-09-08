@@ -1857,6 +1857,33 @@ fn report_error(app: tauri::AppHandle, what: String, detail: String) {
     if TOLD.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
+
+    // A FILE FIRST, BECAUSE A NOTIFICATION CAN BE REFUSED.
+    //
+    // macOS asks before an app may post notifications, and a user who has never
+    // granted it — or who dismissed the request months ago — would get nothing
+    // at all from the line below. That is the same failure this whole function
+    // exists to fix, one layer up: the answer written somewhere the person who
+    // needs it cannot see. A file is not refusable.
+    if let Ok(dir) = data_dir(&app) {
+        let dir = dir.join("LoafPlus");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let when = connections::now();
+            let _ = std::fs::write(
+                dir.join("last-error.txt"),
+                format!(
+                    "Loaf {}
+{when} (seconds since 1970)
+{what}
+
+{detail}
+",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            );
+        }
+    }
+
     use tauri_plugin_notification::NotificationExt;
     let _ = app
         .notification()
