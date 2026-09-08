@@ -22,6 +22,14 @@ import type { EngineId } from "../voice/engine";
 import type { ListenMode } from "../voice/mode";
 import { spokenPhrases } from "../voice/phrases";
 import {
+  isHit,
+  isRemoval,
+  describeRemoval,
+  EMPTY_SEARCH,
+  type SearchState,
+  type Hit,
+} from "../search/search";
+import {
   isServerView,
   isCallRecord,
   parseArgs,
@@ -144,6 +152,52 @@ let micUsable = false;
 let connections: ConnectionsState = EMPTY_CONNECTIONS;
 
 /**
+ * The search box and what it found.
+ *
+ * Held here for the same reason as everything else on this page: `render`
+ * rebuilds the whole body several times a minute, and results that vanished on
+ * the next stats tick would be unusable.
+ */
+let search: SearchState = EMPTY_SEARCH;
+
+/** Read the box before acting on it — the input is not a controlled field. */
+function readSearchBox(): void {
+  const el = document.getElementById("sr-input") as HTMLInputElement | null;
+  if (el) search = { ...search, phrase: el.value };
+}
+
+/**
+ * Run the search and re-render.
+ *
+ * An empty box CLEARS the results rather than searching for nothing: a list of
+ * everything is not a search result, and showing one after the box was emptied
+ * looks like the box was ignored.
+ */
+async function runSearch(): Promise<void> {
+  readSearchBox();
+  if (!search.phrase.trim()) {
+    search = { ...search, hits: null, error: "", searching: false };
+    await render();
+    return;
+  }
+  search = { ...search, searching: true, error: "" };
+  await render();
+  try {
+    const rows = await invoke<unknown[]>("store_search", { phrase: search.phrase });
+    search = {
+      ...search,
+      hits: (rows as unknown[]).filter(isHit) as Hit[],
+      searching: false,
+    };
+  } catch (err) {
+    // Said out loud rather than rendered as "no results". "We could not look"
+    // and "there is nothing there" mean very different things.
+    search = { ...search, hits: [], searching: false, error: String(err) };
+  }
+  await render();
+}
+
+/**
  * Re-read the servers, what is running, and the call log.
  *
  * Deliberately does NOT list anybody's tools: doing that starts the program,
@@ -187,6 +241,18 @@ async function render(): Promise<void> {
   }
 
   const tracker = new Tracker({ json });
+  // WHERE THE CURSOR WAS, BEFORE THE PAGE IS THROWN AWAY.
+  //
+  // `render` replaces the entire body, and it runs on every stats tick — which
+  // is several times a minute. A text field inside that is destroyed and rebuilt
+  // underneath whoever is typing: the focus goes, the caret goes, and half a
+  // typed word disappears. Every other control on this page is a button, so
+  // this only became a problem when the search box arrived.
+  const typing = document.activeElement as HTMLInputElement | null;
+  const focusedId = typing?.id ?? "";
+  const caret = typing?.selectionStart ?? null;
+  const typed = typing?.value ?? "";
+
   try {
     root!.innerHTML = dashboardBody(tracker, {
       radar,
@@ -200,11 +266,31 @@ async function render(): Promise<void> {
       meetings,
       memory,
       connections,
+      search,
     });
     // The button is recreated on every render, so the decision to show it has
     // to be made again — otherwise it appears once and vanishes at the next
     // stats tick.
     if (micUsable) document.getElementById("ask-mic")?.removeAttribute("hidden");
+
+    // Put the cursor back where it was. The value is restored from what was on
+    // screen rather than from state, because the keystroke that arrived a
+    // millisecond before the tick has not reached state yet.
+    if (focusedId) {
+      const again = document.getElementById(focusedId) as HTMLInputElement | null;
+      if (again) {
+        if (typed && again.value !== typed) again.value = typed;
+        again.focus();
+        if (caret !== null) {
+          try {
+            again.setSelectionRange(caret, caret);
+          } catch {
+            // Some input types refuse a selection range. Focus is the half that
+            // matters; losing the caret position is survivable.
+          }
+        }
+      }
+    }
   } catch (err) {
     throw err;
   }
@@ -216,6 +302,16 @@ async function render(): Promise<void> {
  * The markup carries `data-loaf-cmd` and `data-loaf-tab` instead of inline
  * handlers — see the note in `html.ts`. This is the other half of that.
  */
+// Enter searches. A search box you have to reach for the mouse to submit is a
+// search box people stop using.
+root.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  const target = ev.target;
+  if (!(target instanceof HTMLInputElement) || target.id !== "sr-input") return;
+  ev.preventDefault();
+  void runSearch();
+});
+
 root.addEventListener("click", (ev) => {
   const target = ev.target;
   if (!(target instanceof Element)) return;
@@ -237,6 +333,105 @@ root.addEventListener("click", (ev) => {
         panel.hidden = panel.id !== `view-${which}`;
       }
     }
+    return;
+  }
+
+  // --- Search, delete and export ---------------------------------------------
+  //
+  // Handled here rather than sent to the companion, like Connections and for the
+  // same reason: the store is a file owned by Rust, not in-memory state owned by
+  // the companion window. Routing through a third window would add a hop and a
+  // way to be out of date.
+
+  if (target.closest("[data-search-go]")) {
+    void runSearch();
+    return;
+  }
+
+  const forgetMeeting = target.closest<HTMLElement>("[data-search-forget-meeting]");
+  if (forgetMeeting) {
+    const id = forgetMeeting.dataset.searchForgetMeeting!;
+    void (async () => {
+      try {
+        const gone = await invoke<unknown>("store_delete_meeting", { id });
+        search = {
+          ...search,
+          lastAction: isRemoval(gone)
+            ? `Forgotten: ${describeRemoval(gone)}.`
+            : "Forgotten.",
+        };
+      } catch (err) {
+        search = { ...search, error: String(err) };
+      }
+      // Re-run the search so the results no longer show what was just deleted.
+      await runSearch();
+    })();
+    return;
+  }
+
+  if (target.closest("[data-search-export]")) {
+    void (async () => {
+      try {
+        const where = await invoke<string>("store_export");
+        search = { ...search, lastAction: `Exported to ${where}`, error: "" };
+      } catch (err) {
+        search = { ...search, error: String(err) };
+      }
+      await render();
+    })();
+    return;
+  }
+
+  // NOTHING IS DELETED BY ONE CLICK. The first press only asks; the confirm
+  // block that appears names exactly what will go. Deleting somebody's recorded
+  // life should take two deliberate actions.
+  if (target.closest("[data-search-forget-matching]")) {
+    readSearchBox();
+    if (!search.phrase.trim()) return;
+    search = { ...search, pending: { kind: "matching", phrase: search.phrase } };
+    void render();
+    return;
+  }
+
+  if (target.closest("[data-search-forget-all]")) {
+    search = { ...search, pending: { kind: "everything" } };
+    void render();
+    return;
+  }
+
+  if (target.closest("[data-search-cancel]")) {
+    search = { ...search, pending: null };
+    void render();
+    return;
+  }
+
+  if (target.closest("[data-search-confirm]")) {
+    const pending = search.pending;
+    if (!pending) return;
+    void (async () => {
+      try {
+        let said = "Deleted.";
+        if (pending.kind === "everything") {
+          await invoke("store_delete_everything");
+          said = "Everything has been deleted.";
+        } else if (pending.kind === "matching") {
+          const gone = await invoke<unknown>("store_delete_matching", {
+            phrase: pending.phrase,
+          });
+          said = isRemoval(gone) ? `Deleted ${describeRemoval(gone)}.` : said;
+        } else {
+          const gone = await invoke<unknown>("store_delete_range", {
+            from: pending.from,
+            to: pending.to,
+          });
+          said = isRemoval(gone) ? `Deleted ${describeRemoval(gone)}.` : said;
+        }
+        search = { ...search, pending: null, lastAction: said, error: "" };
+      } catch (err) {
+        search = { ...search, pending: null, error: String(err) };
+      }
+      await runSearch();
+    })();
     return;
   }
 

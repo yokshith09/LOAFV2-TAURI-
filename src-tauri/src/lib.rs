@@ -41,6 +41,7 @@ pub mod scroll;
 pub mod sounds;
 pub mod speech;
 pub mod storage;
+pub mod store;
 pub mod transcribe;
 pub mod wake;
 pub mod whisper_setup;
@@ -1768,6 +1769,138 @@ fn report_error(what: String, detail: String) {
     eprintln!("loaf/webview {what}: {detail}");
 }
 
+// ---------------------------------------------------------------------------
+// The store (M3): search, delete, export.
+//
+// The connection is opened LAZILY and kept behind a mutex. Lazily because a
+// store that cannot be opened must not stop the pet from appearing — screen
+// time tracking, the character and the focus timer have nothing to do with
+// SQLite, and an app that refuses to launch because a database file is locked
+// would be a worse product than one whose search box says why it is empty.
+//
+// Behind a mutex because rusqlite's Connection is Send but not Sync, and
+// because the tracker writes on a timer while a search may be reading. WAL mode
+// (see store.rs) means those do not block each other at the SQLite level; the
+// mutex is about Rust's rules, not about contention.
+// ---------------------------------------------------------------------------
+
+/// The one connection, opened the first time something needs it.
+#[derive(Default)]
+pub struct Store(std::sync::Mutex<Option<rusqlite::Connection>>);
+
+/// Run `f` against the store, opening and importing it if this is the first ask.
+///
+/// The import runs here rather than at startup deliberately: it reads two files
+/// and writes every day of somebody's history, and doing that during launch
+/// would delay the character appearing for the one reason a user would never
+/// guess. Doing it on first use means it happens when the dashboard is opened,
+/// which is exactly when the results are wanted.
+fn with_store<T>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    let dir = data_dir(app)?;
+    let state = app.state::<Store>();
+    let mut held = state.0.lock().map_err(|_| "the store lock broke")?;
+    if held.is_none() {
+        let conn = store::open(&dir)?;
+        match store::import_once(&conn, &dir) {
+            Ok((0, 0)) => {}
+            Ok((days, meetings)) => {
+                eprintln!("loaf/store imported {days} days and {meetings} meetings");
+            }
+            // A failed import must not make the store unusable. The old files
+            // are untouched, so this can be retried by deleting loaf.db.
+            Err(e) => eprintln!("loaf/store could not import the old files: {e}"),
+        }
+        *held = Some(conn);
+    }
+    let conn = held.as_ref().ok_or("the store vanished as it was opened")?;
+    f(conn)
+}
+
+/// Find a phrase in anything the user has said or written.
+#[tauri::command(async)]
+fn store_search(
+    app: tauri::AppHandle,
+    phrase: String,
+    limit: Option<usize>,
+) -> Result<Vec<store::Hit>, String> {
+    // Capped rather than trusted: the limit arrives from a window, and a search
+    // asking for every row would hold the lock for as long as it took.
+    let limit = limit.unwrap_or(50).clamp(1, 500);
+    with_store(&app, |c| store::search(c, &phrase, limit))
+}
+
+#[tauri::command(async)]
+fn store_meetings(app: tauri::AppHandle) -> Result<Vec<store::Meeting>, String> {
+    with_store(&app, store::meetings)
+}
+
+/// What deleting a range WOULD remove. Changes nothing.
+#[tauri::command(async)]
+fn store_preview_range(
+    app: tauri::AppHandle,
+    from: String,
+    to: String,
+) -> Result<store::Removal, String> {
+    with_store(&app, |c| store::preview_range(c, &from, &to))
+}
+
+#[tauri::command(async)]
+fn store_delete_range(
+    app: tauri::AppHandle,
+    from: String,
+    to: String,
+) -> Result<store::Removal, String> {
+    with_store(&app, |c| store::delete_range(c, &from, &to))
+}
+
+#[tauri::command(async)]
+fn store_delete_meeting(app: tauri::AppHandle, id: String) -> Result<store::Removal, String> {
+    with_store(&app, |c| store::delete_meeting(c, &id))
+}
+
+/// Forget every line mentioning a phrase, wherever it was said.
+#[tauri::command(async)]
+fn store_delete_matching(app: tauri::AppHandle, phrase: String) -> Result<store::Removal, String> {
+    with_store(&app, |c| store::delete_matching(c, &phrase))
+}
+
+#[tauri::command(async)]
+fn store_delete_everything(app: tauri::AppHandle) -> Result<(), String> {
+    with_store(&app, store::delete_everything)
+}
+
+/// Remember one line — a transcript line, or a note taken outside a meeting.
+#[tauri::command(async)]
+fn store_add_line(
+    app: tauri::AppHandle,
+    meeting: Option<String>,
+    text: String,
+) -> Result<i64, String> {
+    let at = connections::now() as i64;
+    with_store(&app, |c| store::add_line(c, meeting.as_deref(), at, &text))
+}
+
+/// Write everything out as ordinary files, and reveal the folder.
+///
+/// Into a dated folder rather than one fixed place, so exporting twice does not
+/// silently overwrite the first one — an export is usually taken because
+/// somebody is about to do something irreversible.
+#[tauri::command(async)]
+fn store_export(app: tauri::AppHandle) -> Result<String, String> {
+    let stamp = connections::now();
+    let dir = data_dir(&app)?
+        .join("LoafPlus")
+        .join("Exports")
+        .join(format!("loaf-export-{stamp}"));
+    with_store(&app, |c| store::export_to(c, &dir))?;
+    let shown = dir.to_string_lossy().into_owned();
+    open_in_file_manager(&shown)?;
+    Ok(shown)
+}
+
 /// Reveal the config file, for the things the window deliberately will not do.
 ///
 /// Editing a secret in place, adding a variable the UI has no field for,
@@ -1792,6 +1925,8 @@ pub fn run() {
         // Empty at launch and it stays empty: a server appears in here
         // only because something asked it a question.
         .manage(connections::Pool::default())
+        // Opened on first use, not at launch: see with_store.
+        .manage(Store::default())
         .setup(|app| {
             // A desktop pet is an accessory, not an application: no Dock icon,
             // no app switcher entry, and it never steals focus. This is the
@@ -1896,7 +2031,16 @@ pub fn run() {
             mcp_connected,
             mcp_disconnect,
             open_mcp_config,
-            report_error
+            report_error,
+            store_search,
+            store_meetings,
+            store_preview_range,
+            store_delete_range,
+            store_delete_meeting,
+            store_delete_matching,
+            store_delete_everything,
+            store_add_line,
+            store_export
         ])
         .run(tauri::generate_context!())
         .expect("error while running Loaf");

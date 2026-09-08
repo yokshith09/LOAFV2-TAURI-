@@ -33,6 +33,12 @@ import {
   EMPTY_CONNECTIONS,
   type ConnectionsState,
 } from "../connections/connections";
+import {
+  searchPanel,
+  SEARCH_CSS,
+  EMPTY_SEARCH,
+  type SearchState,
+} from "../search/search";
 
 /**
  * Both dashboard views, as self-contained HTML. Ported from `DashboardHTML.swift`.
@@ -196,6 +202,14 @@ export interface DashboardOptions {
    * asked yet" produce the same page and the same available actions.
    */
   readonly connections?: ConnectionsState;
+  /**
+   * The search box, its results, and the delete and export controls.
+   *
+   * Undefined renders an empty box inviting a search, which is exactly what a
+   * machine that has not searched yet should see — unlike `meetings`, there is
+   * nothing here the window could be wrong about.
+   */
+  readonly search?: SearchState;
 }
 
 /** Just enough of a task to draw one. */
@@ -744,6 +758,9 @@ function radarSection(
  */
 export const DASHBOARD_VIEWS = [
   { id: "today", label: "Today" },
+  // SECOND. Once there is anything in the store, "find the thing I said" is the
+  // reason this window gets opened, and no other tab can answer it.
+  { id: "search", label: "Search" },
   { id: "notes", label: "Notes" },
   { id: "history", label: "History" },
   { id: "voice", label: "Voice" },
@@ -772,7 +789,8 @@ export const DASHBOARD_STYLES =
   NOTES_CSS +
   MEETINGS_DELETE_CSS +
   MEMORY_CSS +
-  CONNECTIONS_CSS;
+  CONNECTIONS_CSS +
+  SEARCH_CSS;
 /** The complete stylesheet for the hover card. */
 export const MINI_STYLES = BASE_CSS + PLUS_CSS + MINI_CSS;
 
@@ -910,6 +928,11 @@ export function dashboardBody(
     ${panel("notes", notesPanel(opts.tasks ?? [], opts.memory))}
 
     ${panel("meetings", meetingsPanel(opts))}
+
+    ${panel(
+      "search",
+      searchPanel(opts.search ?? EMPTY_SEARCH, (opts.now ?? new Date()).getTime()),
+    )}
 
     ${panel(
       "connections",

@@ -42,6 +42,16 @@ hound = "3"
 ureq = "2"
 # Only the release zip needs unzipping; the model is a plain file download.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# THE STORE (M3). Bundled rather than linked against a system SQLite: the
+# version that ships with macOS is old, Windows has none at all, and a search
+# index whose behaviour depends on which machine it is running on is not a
+# search index. Bundled also guarantees FTS5, which the whole of search rests
+# on and which system builds do not always include.
+#
+# It compiles SQLite from C, which is why the build takes longer. That is the
+# right trade for the one file that will hold everything the user has said.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
 # A native OS notification when a meeting is detected, so the ask-to-record
 # prompt is not missed just because nobody happened to be looking at the
 # character at that moment.
