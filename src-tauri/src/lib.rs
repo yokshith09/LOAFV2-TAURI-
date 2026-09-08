@@ -1276,15 +1276,15 @@ fn stop_recording(app: tauri::AppHandle, model: String) -> Result<String, String
     result
 }
 
-/// How quiet counts as "stopped talking", as an RMS level from 0.0 to 1.0.
-///
-/// A real room is never at zero: fans, a distant road, the microphone's own
-/// noise floor. This sits well above that and well below speech.
-const DICTATION_SILENCE: f32 = 0.012;
-/// How long that quiet has to last before the sentence is considered finished.
-/// Shorter, and an ordinary pause between words ends the recording mid-thought
-/// — the most annoying way for dictation to fail.
-const DICTATION_HUSH_MS: u64 = 1_200;
+// DICTATION_SILENCE AND DICTATION_HUSH_MS USED TO LIVE HERE, and their absence
+// is the point. They were a fixed RMS threshold and a fixed hush, and between
+// them they decided when somebody had stopped talking. A fixed threshold cannot
+// know how loud the room is: a quiet talker never crossed it so nothing was
+// ever heard, and a noisy room never dropped below it so every dictation ran to
+// its cap. `vad::Vad` learns the room instead, needs a run of frames rather
+// than one, and waits out a thinking pause — with the hangover as a named
+// setting rather than a constant beside an unrelated one.
+
 /// The longest a single dictation may run, whatever happens. A dictation that
 /// never ends is a hot microphone with a friendly name.
 const DICTATION_MAX_SECONDS: u64 = 30;
@@ -1333,48 +1333,57 @@ fn dictate_once(
         .clamp(2, DICTATION_MAX_SECONDS);
     let recording = audio::start()?;
 
-    // A fifth of a second of audio is enough to tell speech from a room, and
-    // short enough that the end of a sentence is noticed promptly.
-    let window = (audio::TARGET_HZ / 5) as usize;
+    // THE DETECTOR, RATHER THAN A NUMBER. This loop used to compare the last
+    // fifth of a second against a fixed threshold. That fails in both
+    // directions and both were reported: a quiet talker never crossed it so
+    // nothing was ever heard, and a noisy room never dropped below it so the
+    // recording ran to its cap every time. `vad::Vad` learns the room, needs a
+    // run of frames rather than one, and waits out a thinking pause. See
+    // vad.rs for the three attempts the noise floor took.
+    let mut vad = vad::Vad::default();
+    let mut read_from = 0usize;
+    let mut pending: Vec<i16> = Vec::new();
     let started = std::time::Instant::now();
     let mut spoke = false;
-    let mut quiet_since: Option<std::time::Instant> = None;
 
     while started.elapsed() < std::time::Duration::from_secs(cap) {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if recording.sample_count() < window {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let (fresh, next) = recording.samples_since(read_from);
+        read_from = next;
+        if fresh.is_empty() {
             continue;
         }
-        if recording.recent_level(window) > DICTATION_SILENCE {
-            spoke = true;
-            quiet_since = None;
-            continue;
-        }
-        // Silence only ends the recording once there was something to end.
-        // Otherwise a microphone nobody spoke into would return an instant
-        // empty transcript and read as a broken feature.
-        if !spoke {
-            continue;
-        }
-        match quiet_since {
-            Some(since) => {
-                if since.elapsed() >= std::time::Duration::from_millis(DICTATION_HUSH_MS) {
+        pending.extend_from_slice(&fresh);
+
+        let mut ended = false;
+        while pending.len() >= vad::FRAME {
+            let frame: Vec<i16> = pending.drain(..vad::FRAME).collect();
+            match vad.push(&frame) {
+                vad::Event::Started => spoke = true,
+                // Silence only ends the recording once there was something to
+                // end. A microphone nobody spoke into would otherwise return an
+                // instant empty transcript and read as a broken feature.
+                vad::Event::Ended if spoke => {
+                    ended = true;
                     break;
                 }
+                _ => {}
             }
-            None => quiet_since = Some(std::time::Instant::now()),
+        }
+        if ended {
+            break;
         }
     }
 
-    let wav = transcribe::scratch_wav();
-    let seconds = audio::stop(recording, &wav)?;
-    let result = if !spoke || seconds < 0.4 {
-        Ok(String::new())
-    } else {
-        transcribe::transcribe(&setup, &wav)
-    };
-    let _ = std::fs::remove_file(&wav);
-    result
+    // STRAIGHT FROM MEMORY, no file in between. Writing a WAV so it can be read
+    // back is pure latency, and this is the one place in the product where the
+    // gap between finishing a sentence and something happening IS the feature.
+    let audio_f32 = recording.to_f32();
+    let _ = audio::stop(recording, &transcribe::scratch_wav());
+    if !spoke {
+        return Ok(String::new());
+    }
+    transcribe::transcribe_samples(&setup, &audio_f32)
 }
 
 /// Whether Whisper is ready, and what is missing when it is not.

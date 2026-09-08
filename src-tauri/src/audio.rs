@@ -62,6 +62,38 @@ impl Recording {
         self.samples.lock().map(|s| s.len()).unwrap_or(0)
     }
 
+    /// Copy whatever has arrived since `from`, and say where to read next.
+    ///
+    /// EXISTS SO THE DETECTOR CAN SEE THE AUDIO, not just its loudness.
+    /// `recent_level` answers "how loud is it right now", which is all a fixed
+    /// threshold ever needed. A real voice detector needs the samples: it keeps
+    /// a noise floor across frames and decides on runs of them, and it cannot
+    /// do either from a single number.
+    ///
+    /// Returns a copy rather than a borrow, because the capture thread is
+    /// appending to the same buffer and holding its lock across a transcription
+    /// would stall the microphone.
+    pub fn samples_since(&self, from: usize) -> (Vec<i16>, usize) {
+        let Ok(samples) = self.samples.lock() else {
+            return (Vec::new(), from);
+        };
+        if from >= samples.len() {
+            return (Vec::new(), samples.len());
+        }
+        (samples[from..].to_vec(), samples.len())
+    }
+
+    /// Everything captured so far, as the floats whisper wants.
+    ///
+    /// Lets a caller transcribe without writing a WAV and reading it back —
+    /// pure latency in the one place latency is the feature.
+    pub fn to_f32(&self) -> Vec<f32> {
+        self.samples
+            .lock()
+            .map(|s| s.iter().map(|v| *v as f32 / 32768.0).collect())
+            .unwrap_or_default()
+    }
+
     /// Loudness of the last `window` samples, from 0.0 to 1.0.
     ///
     /// Root mean square rather than peak: one keyboard click is a large peak
