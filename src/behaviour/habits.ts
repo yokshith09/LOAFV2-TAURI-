@@ -97,8 +97,6 @@ export function loadHabits(store: SettingsStore): BehaviourSettings {
     // a hand-edited file cannot start uploading audio.
     settings.engine = readEngineId(saved["engine"]);
     settings.transcriptRetentionDays = readRetentionDays(saved["transcriptRetentionDays"]);
-    const binary = saved["whisperBinary"];
-    if (typeof binary === "string") settings.whisperBinary = binary;
     const model = saved["whisperModel"];
     if (typeof model === "string") settings.whisperModel = model;
   } catch {
@@ -115,7 +113,6 @@ export function saveHabits(store: SettingsStore, settings: BehaviourSettings): v
   out["hoverListenMs"] = settings.hoverListenMs;
   out["engine"] = settings.engine;
   out["transcriptRetentionDays"] = settings.transcriptRetentionDays;
-  out["whisperBinary"] = settings.whisperBinary;
   out["whisperModel"] = settings.whisperModel;
   store.setItem(KEY, JSON.stringify(out));
 }

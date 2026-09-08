@@ -294,16 +294,13 @@ mod tests {
     fn records_and_transcribes_for_real() {
         let dir = std::env::temp_dir().join("loaf-whisper-real-install-test");
         let setup = crate::transcribe::WhisperSetup {
-            binary: crate::whisper_setup::binary_path(&dir)
-                .to_string_lossy()
-                .into_owned(),
             model: crate::whisper_setup::model_path(&dir)
                 .to_string_lossy()
                 .into_owned(),
         };
         assert!(
             crate::whisper_setup::is_installed(&dir),
-            "run the install test first"
+            "download the model first"
         );
 
         println!("Recording for 5 seconds — say something now.");
@@ -314,34 +311,11 @@ mod tests {
         println!("captured {seconds:.1}s, transcribing…");
 
         // Not asserted non-empty: this runs unattended, and silence in the room
-        // is a real, correct outcome — the actual proof is that whisper-cli.exe
-        // ran successfully against a real recording and returned SOME string
-        // rather than erroring. Read the printed transcript to judge accuracy.
-        // The RAW whisper-cli.exe output, before `clean()` touches it — an
-        // empty cleaned result is ambiguous (silence, correctly stripped? or a
-        // real bug?) and only the raw output tells them apart.
-        let raw = std::process::Command::new(&setup.binary)
-            .arg("-m")
-            .arg(&setup.model)
-            .arg("-f")
-            .arg(&wav)
-            .arg("-nt")
-            .output()
-            .expect("run whisper-cli directly");
-        let raw_text = String::from_utf8_lossy(&raw.stdout).into_owned();
-        println!("RAW WHISPER OUTPUT: {raw_text:?}");
-
+        // is a real, correct outcome. The proof is that whisper ran against a
+        // real recording and returned SOME string rather than erroring. Read
+        // the printed transcript to judge accuracy.
         let text = crate::transcribe::transcribe(&setup, &wav).expect("transcribe");
-        println!("CLEANED TRANSCRIPT: {text:?}");
-        let out = std::env::temp_dir().join("loaf-transcript-result.txt");
-        std::fs::write(
-            &out,
-            format!(
-                "RAW: {raw_text:?}
-CLEANED: {text:?}"
-            ),
-        )
-        .expect("write transcript result");
+        println!("transcript: {text:?}");
         let _ = std::fs::remove_file(&wav);
     }
 

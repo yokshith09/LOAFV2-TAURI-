@@ -1257,7 +1257,7 @@ fn recording_seconds() -> Option<u64> {
 /// different and much heavier thing to hold than a transcript, and nothing in
 /// the product needs it after this point.
 #[tauri::command(async)]
-fn stop_recording(app: tauri::AppHandle, binary: String, model: String) -> Result<String, String> {
+fn stop_recording(app: tauri::AppHandle, model: String) -> Result<String, String> {
     let recording = RECORDING
         .lock()
         .map_err(|_| "recording lock poisoned")?
@@ -1266,7 +1266,7 @@ fn stop_recording(app: tauri::AppHandle, binary: String, model: String) -> Resul
 
     let wav = transcribe::scratch_wav();
     let seconds = audio::stop(recording, &wav)?;
-    let setup = resolved_whisper_setup(&app, binary, model)?;
+    let setup = resolved_whisper_setup(&app, model)?;
     let result = if seconds < 0.5 {
         Ok(String::new())
     } else {
@@ -1308,13 +1308,12 @@ const DICTATION_MAX_SECONDS: u64 = 30;
 #[tauri::command(async)]
 fn dictate_once(
     app: tauri::AppHandle,
-    binary: String,
     model: String,
     max_seconds: Option<u64>,
 ) -> Result<String, String> {
     // Resolved BEFORE the microphone opens: refusing afterwards would mean
     // having recorded someone for a transcription that was never going to run.
-    let setup = resolved_whisper_setup(&app, binary, model)?;
+    let setup = resolved_whisper_setup(&app, model)?;
     if let Some(what) = transcribe::missing(&setup) {
         return Err(transcribe::missing_reason(&what));
     }
@@ -1380,11 +1379,9 @@ fn dictate_once(
 
 /// Whether Whisper is ready, and what is missing when it is not.
 #[tauri::command(async)]
-fn whisper_status(app: tauri::AppHandle, binary: String, model: String) -> Option<String> {
-    let Ok(setup) = resolved_whisper_setup(&app, binary, model) else {
-        return Some(
-            "Whisper is not set up yet. It needs a whisper.cpp build and a model file.".into(),
-        );
+fn whisper_status(app: tauri::AppHandle, model: String) -> Option<String> {
+    let Ok(setup) = resolved_whisper_setup(&app, model) else {
+        return Some("Whisper needs its model. Download it from Settings.".into());
     };
     transcribe::missing(&setup).map(|m| transcribe::missing_reason(&m))
 }
@@ -1396,18 +1393,10 @@ fn whisper_status(app: tauri::AppHandle, binary: String, model: String) -> Optio
 /// are in.
 fn resolved_whisper_setup(
     app: &tauri::AppHandle,
-    binary: String,
     model: String,
 ) -> Result<transcribe::WhisperSetup, String> {
     use tauri::Manager;
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let binary = if binary.trim().is_empty() {
-        whisper_setup::binary_path(&dir)
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        binary
-    };
     let model = if model.trim().is_empty() {
         whisper_setup::model_path(&dir)
             .to_string_lossy()
@@ -1415,7 +1404,7 @@ fn resolved_whisper_setup(
     } else {
         model
     };
-    Ok(transcribe::WhisperSetup { binary, model })
+    Ok(transcribe::WhisperSetup { model })
 }
 
 /// Total bytes the Whisper engine download will transfer, so the UI can show

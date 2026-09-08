@@ -107,9 +107,13 @@ export interface BehaviourSettings {
    * have been transcribed. See meetings.ts.
    */
   transcriptRetentionDays: number;
-  /** Path to a whisper.cpp executable. Empty until the user sets it. */
-  whisperBinary: string;
-  /** Path to a ggml model file. Empty until the user sets it. */
+  /**
+   * Path to a ggml model file. Empty until the user downloads one.
+   *
+   * There is no companion path to an executable any more: whisper.cpp is
+   * compiled into Loaf, so the engine cannot be missing or be a version we did
+   * not test against. Only the model is still a download.
+   */
   whisperModel: string;
   /**
    * Barely a pause: drift is meant to look continuous, so one leg starts about
@@ -156,7 +160,6 @@ export function defaultBehaviourSettings(): BehaviourSettings {
     // Forever by default: deleting someone's notes on a schedule they did not
     // ask for is the worse of the two failures.
     transcriptRetentionDays: 0,
-    whisperBinary: "",
     whisperModel: "",
     driftEvery: { min: 0.3, max: 2.0 },
     driftLeash: 330,

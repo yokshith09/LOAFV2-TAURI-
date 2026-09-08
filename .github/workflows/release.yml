@@ -53,6 +53,11 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # whisper.cpp is compiled from source now; see the same step in ci.yml.
+      - name: Point bindgen at libclang (Windows)
+        shell: bash
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> "$GITHUB_ENV"
+
       # The bare version, for the filenames quoted in the notes below. These
       # were hard-coded once and immediately went stale: the notes for 0.2.0
       # still told people to download Loaf_0.1.0_universal.dmg, a file that
@@ -216,6 +221,26 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      # WHAT whisper.cpp NEEDS TO COMPILE, on both platforms.
+      #
+      # whisper-rs builds whisper.cpp from source, which needs cmake, and runs
+      # bindgen over its headers, which needs libclang. Both runners have both,
+      # but bindgen does not always find libclang on Windows by itself — so the
+      # path is given rather than hoped for.
+      #
+      # NOT the pre-generated bindings the crate also ships. Those were built on
+      # Linux: they hard-code the size of glibc's `_IO_FILE` and fail to compile
+      # on Windows and macOS with an arithmetic overflow in a size assertion.
+      # That was found locally, which is the only reason it was not found in CI.
+      - name: Point bindgen at libclang (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> "$GITHUB_ENV"
+
+      - name: Make sure cmake is there
+        shell: bash
+        run: cmake --version
 
       # ONE MAC FILE, JOINED BY HAND RATHER THAN BY TAURI.
       #

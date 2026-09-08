@@ -140,6 +140,26 @@ jobs:
       # Windows shows a SmartScreen warning.
       # Only the cross-compiled row asks for an extra target; the rest build
       # for the machine they are on and this is a no-op.
+      # WHAT whisper.cpp NEEDS TO COMPILE, on both platforms.
+      #
+      # whisper-rs builds whisper.cpp from source, which needs cmake, and runs
+      # bindgen over its headers, which needs libclang. Both runners have both,
+      # but bindgen does not always find libclang on Windows by itself — so the
+      # path is given rather than hoped for.
+      #
+      # NOT the pre-generated bindings the crate also ships. Those were built on
+      # Linux: they hard-code the size of glibc's `_IO_FILE` and fail to compile
+      # on Windows and macOS with an arithmetic overflow in a size assertion.
+      # That was found locally, which is the only reason it was not found in CI.
+      - name: Point bindgen at libclang (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> "$GITHUB_ENV"
+
+      - name: Make sure cmake is there
+        shell: bash
+        run: cmake --version
+
       - name: Add the targets
         if: matrix.rustTargets != ''
         run: rustup target add ${{ matrix.rustTargets }}

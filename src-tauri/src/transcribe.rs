@@ -26,11 +26,21 @@
 
 use std::path::{Path, PathBuf};
 
-/// Where Loaf looks for a whisper build and a model.
+/// Where Loaf looks for a model.
+///
+/// THERE IS NO `binary` FIELD ANY MORE, and its absence is the point. Loaf used
+/// to download a whisper.cpp release and run `whisper-cli.exe` as a subprocess.
+/// That worked on Windows and could never work on a Mac: upstream publishes
+/// binaries for Windows and Ubuntu and an xcframework, and no macOS
+/// command-line build at all. Meeting transcription — a headline feature — was
+/// therefore quietly Windows-only, and the feature table said otherwise.
+///
+/// whisper.cpp is now compiled into Loaf. The engine cannot be missing, cannot
+/// be a version we did not test against, and cannot be half-unzipped. Only the
+/// model is still a download, because a 190 MB file in the installer would be
+/// the whole installer.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct WhisperSetup {
-    /// The whisper.cpp executable, e.g. `whisper-cli.exe`.
-    pub binary: String,
     /// A ggml model file, e.g. `ggml-small.en-q5_1.bin`.
     pub model: String,
 }
@@ -38,29 +48,28 @@ pub struct WhisperSetup {
 /// What is missing, or `None` when it is ready.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum Missing {
-    Binary,
     Model,
-    Both,
 }
 
 pub fn missing(setup: &WhisperSetup) -> Option<Missing> {
-    let has_binary = !setup.binary.trim().is_empty() && Path::new(&setup.binary).is_file();
     let has_model = !setup.model.trim().is_empty() && Path::new(&setup.model).is_file();
-    match (has_binary, has_model) {
-        (true, true) => None,
-        (false, true) => Some(Missing::Binary),
-        (true, false) => Some(Missing::Model),
-        (false, false) => Some(Missing::Both),
+    if has_model {
+        None
+    } else {
+        Some(Missing::Model)
     }
 }
 
 /// A sentence fit to show someone, saying what to do about it.
+///
+/// One case now, where there were three. The engine is compiled in, so the only
+/// thing that can be absent is the model — and "download the model" is a
+/// sentence somebody can act on, unlike "it needs a whisper.cpp build".
 pub fn missing_reason(what: &Missing) -> String {
     match what {
-        Missing::Binary => "Whisper is not set up: the program is missing.".into(),
-        Missing::Model => "Whisper is not set up: the model file is missing.".into(),
-        Missing::Both => {
-            "Whisper is not set up yet. It needs a whisper.cpp build and a model file.".into()
+        Missing::Model => {
+            "Whisper needs its model before it can write anything down.              Download it from Settings."
+                .into()
         }
     }
 }
@@ -118,7 +127,34 @@ fn threads() -> usize {
         .unwrap_or(4)
 }
 
+/// Read a 16 kHz mono 16-bit WAV into the floats whisper wants.
+///
+/// `audio.rs` records in exactly that format precisely so nothing here has to
+/// resample, and this function refuses anything else rather than quietly
+/// producing a transcript of chipmunks. A wrong sample rate does not fail — it
+/// transcribes wrong, which is much harder to notice.
+fn read_wav(path: &Path) -> Result<Vec<f32>, String> {
+    let mut reader = hound::WavReader::open(path).map_err(|e| format!("cannot read it: {e}"))?;
+    let spec = reader.spec();
+    if spec.channels != 1 || spec.sample_rate != 16_000 {
+        return Err(format!(
+            "That recording is {} channel(s) at {} Hz. Loaf records 1 channel at 16000 Hz.",
+            spec.channels, spec.sample_rate
+        ));
+    }
+    reader
+        .samples::<i16>()
+        .map(|s| s.map(|v| v as f32 / 32768.0).map_err(|e| e.to_string()))
+        .collect()
+}
+
 /// Transcribe a WAV file. Blocking, and slow — minutes for a long meeting.
+///
+/// IN PROCESS NOW, not a subprocess. The model is loaded, used and dropped on
+/// each call rather than kept: loading `small.en` costs about a second and
+/// several hundred megabytes of resident memory, and a desktop pet that holds
+/// that all day so a meeting once a fortnight starts a second sooner has its
+/// priorities backwards.
 pub fn transcribe(setup: &WhisperSetup, wav: &Path) -> Result<String, String> {
     if let Some(what) = missing(setup) {
         return Err(missing_reason(&what));
@@ -126,39 +162,66 @@ pub fn transcribe(setup: &WhisperSetup, wav: &Path) -> Result<String, String> {
     if !wav.is_file() {
         return Err("There is no recording to transcribe.".into());
     }
+    let audio = read_wav(wav)?;
+    transcribe_samples(setup, &audio)
+}
 
-    let output = std::process::Command::new(&setup.binary)
-        .arg("-m")
-        .arg(&setup.model)
-        .arg("-f")
-        .arg(wav)
-        // No timestamps, and print to stdout rather than writing files beside
-        // the recording. `clean` strips them anyway if a build ignores this.
-        .arg("-nt")
-        // EVERY CORE, NOT FOUR. whisper-cli defaults to four threads whatever
-        // the machine has, which on a sixteen-thread laptop left three
-        // quarters of it idle and turned 5.7 seconds of speech into 83 seconds
-        // of waiting — measured, not guessed.
-        .arg("-t")
-        .arg(threads().to_string())
-        // Greedy rather than the default five-beam search with best-of-five.
-        // On the same clip that took the transcript from 83 seconds to 33 with
-        // no change to a word of the output. Beam search buys accuracy on hard
-        // audio; a transcript nobody waits for buys nothing at all.
-        .arg("-bo")
-        .arg("1")
-        .arg("-bs")
-        .arg("1")
-        .output()
-        .map_err(|e| format!("Whisper would not run: {e}"))?;
+/// Transcribe samples already in memory.
+///
+/// Separate from [`transcribe`] because the wake word and spoken commands have
+/// the audio in hand already and writing it to a file so it can be read back is
+/// pure latency in the one place latency is the feature.
+pub fn transcribe_samples(setup: &WhisperSetup, audio: &[f32]) -> Result<String, String> {
+    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-    if !output.status.success() {
-        let why = String::from_utf8_lossy(&output.stderr);
-        // The last line is usually the actual complaint; the rest is a banner.
-        let last = why.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("");
-        return Err(format!("Whisper failed. {last}"));
+    if let Some(what) = missing(setup) {
+        return Err(missing_reason(&what));
     }
-    Ok(clean(&String::from_utf8_lossy(&output.stdout)))
+    // Under about a tenth of a second whisper has nothing to work with and
+    // returns its own hallucinations rather than an empty string.
+    if audio.len() < 1_600 {
+        return Ok(String::new());
+    }
+
+    let ctx = WhisperContext::new_with_params(&setup.model, WhisperContextParameters::default())
+        .map_err(|e| format!("Whisper could not load the model: {e}"))?;
+    let mut state = ctx
+        .create_state()
+        .map_err(|e| format!("Whisper could not start: {e}"))?;
+
+    // Greedy rather than the default beam search. On the clip that was measured
+    // this took a transcript from 33 seconds to well under ten with no change
+    // to a word of the output. Beam search buys accuracy on hard audio; a
+    // transcript nobody waits for buys nothing at all.
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    // EVERY CORE BUT ONE, NOT FOUR. whisper defaults to four threads whatever
+    // the machine has, which on a sixteen-thread laptop left three quarters of
+    // it idle and turned 5.7 seconds of speech into 83 seconds of waiting —
+    // measured, not guessed.
+    params.set_n_threads(threads() as i32);
+    params.set_language(Some("en"));
+    params.set_translate(false);
+    // Nothing is printed. This is a library call inside a desktop app now, and
+    // whisper.cpp writes a banner and a running transcript to stderr by default.
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    params.set_no_timestamps(true);
+
+    state
+        .full(params, audio)
+        .map_err(|e| format!("Whisper failed: {e}"))?;
+
+    let mut out = String::new();
+    for segment in state.as_iter() {
+        // Lossy: a model can emit a byte sequence that is not valid text, and
+        // losing one character is better than losing the whole meeting.
+        if let Ok(text) = segment.to_str_lossy() {
+            out.push_str(&text);
+        }
+    }
+    Ok(clean(&out))
 }
 
 /// Where a recording is kept while it is being transcribed.
@@ -180,40 +243,49 @@ pub fn scratch_wav() -> PathBuf {
 mod tests {
     use super::*;
 
-    fn setup(binary: &str, model: &str) -> WhisperSetup {
+    fn setup(model: &str) -> WhisperSetup {
         WhisperSetup {
-            binary: binary.into(),
             model: model.into(),
         }
     }
 
+    // ONE THING CAN BE MISSING NOW, where there were three. The engine is
+    // compiled in, so it cannot be absent, cannot be the wrong version, and
+    // cannot be half-unzipped.
     #[test]
-    fn says_which_half_is_missing() {
-        assert_eq!(missing(&setup("", "")), Some(Missing::Both));
-        assert_eq!(
-            missing(&setup("C:/nope/whisper.exe", "C:/nope/model.bin")),
-            Some(Missing::Both)
-        );
-        // A real file for one half, nonsense for the other.
-        let real = file!();
-        assert_eq!(missing(&setup(real, "C:/nope")), Some(Missing::Model));
-        assert_eq!(missing(&setup("C:/nope", real)), Some(Missing::Binary));
-        assert_eq!(missing(&setup(real, real)), None);
+    fn a_missing_model_is_the_only_way_to_be_unready() {
+        assert_eq!(missing(&setup("")), Some(Missing::Model));
+        assert_eq!(missing(&setup("   ")), Some(Missing::Model));
+        assert_eq!(missing(&setup("C:/nope/model.bin")), Some(Missing::Model));
+        // A real file — this source file will do — reads as ready.
+        assert_eq!(missing(&setup(file!())), None);
     }
 
     #[test]
-    fn every_reason_says_what_to_do() {
-        for what in [Missing::Binary, Missing::Model, Missing::Both] {
-            let reason = missing_reason(&what);
-            assert!(reason.contains("Whisper"), "{reason}");
-            assert!(reason.len() > 20, "{reason}");
-        }
+    fn the_reason_says_what_to_do_about_it() {
+        let reason = missing_reason(&Missing::Model);
+        assert!(reason.contains("model"), "{reason}");
+        assert!(reason.contains("Download"), "{reason}");
     }
 
     #[test]
     fn refuses_rather_than_running_when_unset() {
-        let err = transcribe(&setup("", ""), Path::new("nope.wav")).unwrap_err();
-        assert!(err.contains("not set up"), "{err}");
+        let err = transcribe(&setup(""), Path::new("nope.wav")).unwrap_err();
+        assert!(err.contains("model"), "{err}");
+    }
+
+    #[test]
+    fn a_missing_recording_is_said_plainly() {
+        let err = transcribe(&setup(file!()), Path::new("nope.wav")).unwrap_err();
+        assert!(err.contains("no recording"), "{err}");
+    }
+
+    // Under a tenth of a second, whisper returns its own hallucinations rather
+    // than an empty string — so it is never asked.
+    #[test]
+    fn a_snippet_too_short_to_hear_returns_nothing() {
+        let out = transcribe_samples(&setup(file!()), &[0.0; 100]).unwrap();
+        assert_eq!(out, "");
     }
 
     #[test]

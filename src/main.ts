@@ -815,7 +815,6 @@ async function startRecording(): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   try {
     const why = await invoke<string | null>("whisper_status", {
-      binary: behaviour.whisperBinary,
       model: behaviour.whisperModel,
     });
     if (why) {
@@ -858,7 +857,6 @@ async function stopRecording(): Promise<void> {
   say({ kind: "speech", text: "Transcribing… this can take a minute.", seconds: 8 });
   try {
     const text = await invoke<string>("stop_recording", {
-      binary: behaviour.whisperBinary,
       model: behaviour.whisperModel,
     });
     if (text.trim().length === 0) {

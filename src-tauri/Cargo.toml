@@ -35,7 +35,28 @@ thiserror = "2"
 # and is deliberately not used. See audio.rs.
 cpal = "0.15"
 hound = "3"
-# Fetching the optional whisper.cpp binary and model on request. Blocking
+# THE TRANSCRIBER, COMPILED IN RATHER THAN DOWNLOADED.
+#
+# Loaf used to download a whisper.cpp release and shell out to whisper-cli.exe.
+# That worked on Windows and could never work on a Mac: upstream publishes
+# binaries for Windows and Ubuntu and an xcframework, and no macOS command-line
+# build at all. So meeting transcription — a headline feature — was quietly
+# Windows-only, and so was any hope of a wake word that is not the Windows
+# speech API.
+#
+# whisper-rs compiles whisper.cpp from source as part of the build, so both
+# platforms run the same code and there is no binary to fetch, no zip to
+# unpack, and no per-platform release to keep in step. Only the model is
+# downloaded now.
+#
+# DEFAULT FEATURES, WHICH MEANS CPU ONLY. Metal on macOS and CUDA on Windows are
+# both much faster and both add link-time and runtime requirements that differ
+# per machine. The property being bought here is "if CI compiles it, it works on
+# both platforms", and a GPU feature is exactly the thing that breaks it.
+# Speed is a later, separate decision.
+whisper-rs = "0.16"
+
+# Fetching the optional whisper model on request. Blocking
 # rather than async: these are Tauri (async) commands already running on the
 # thread pool, and a blocking read loop is what makes byte-by-byte progress
 # reporting straightforward.
