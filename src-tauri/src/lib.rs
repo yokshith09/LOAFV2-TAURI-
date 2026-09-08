@@ -1164,7 +1164,29 @@ fn save_meetings(app: tauri::AppHandle, json: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .join("LoafPlus");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("meetings.json"), json).map_err(|e| e.to_string())
+    std::fs::write(dir.join("meetings.json"), &json).map_err(|e| e.to_string())?;
+
+    // AND INTO THE STORE, so a meeting recorded today is findable today rather
+    // than only after a migration that has already run.
+    //
+    // Written to BOTH places on purpose. The JSON file stays the source of
+    // truth for now, so nothing that reads it breaks and a user who drops back
+    // to an older build loses nothing. The store is the copy that can be
+    // searched. When the frontend reads meetings from the store instead, the
+    // file write becomes the redundant one and can go — in that order, so
+    // there is never a moment where the only copy is the new one.
+    //
+    // It re-imports every meeting rather than just the changed one, which is
+    // O(all meetings) on each save. That is milliseconds at present scale and
+    // is worth revisiting when a user has thousands; `import_meetings` replaces
+    // a meeting's lines rather than appending, so doing it repeatedly is safe.
+    //
+    // A failure here must NOT fail the command: the file above is what the app
+    // still runs on, and losing a search index is not worth losing a meeting.
+    if let Err(e) = with_store(&app, |c| store::import_meetings(c, &json)) {
+        eprintln!("loaf/store could not index the meetings: {e}");
+    }
+    Ok(())
 }
 
 /// A recording in progress, if there is one.
