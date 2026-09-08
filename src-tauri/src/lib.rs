@@ -44,10 +44,12 @@ pub mod packs;
 pub mod platform;
 pub mod scroll;
 pub mod sounds;
+pub mod speak;
 pub mod speech;
 pub mod storage;
 pub mod store;
 pub mod transcribe;
+pub mod vad;
 pub mod wake;
 pub mod whisper_setup;
 
@@ -1803,6 +1805,29 @@ fn mcp_disconnect(pool: tauri::State<'_, connections::Pool>, name: String) {
     connections::disconnect(&pool, &name);
 }
 
+/// Say something out loud. Returns as soon as it starts, not when it finishes.
+///
+/// Off until the user turns it on — the setting lives in the closet with the
+/// other voice choices, and this command is only reached when it is on. A
+/// desktop pet that starts talking unprompted is not a feature anybody wants
+/// twice.
+#[tauri::command(async)]
+fn speak(text: String) -> Result<(), String> {
+    speak::say(&text)
+}
+
+/// Stop mid-sentence.
+#[tauri::command(async)]
+fn stop_speaking() {
+    speak::stop();
+}
+
+/// Whether this machine can speak at all, so the setting can be hidden if not.
+#[tauri::command(async)]
+fn can_speak() -> bool {
+    speak::available()
+}
+
 /// Where the frontend's uncaught errors go, so a blank window can say why.
 ///
 /// stderr rather than a file. A tester who has been asked to run the app from a
@@ -2147,6 +2172,9 @@ pub fn run() {
             mcp_disconnect,
             open_mcp_config,
             report_error,
+            speak,
+            stop_speaking,
+            can_speak,
             store_search,
             store_meetings,
             store_preview_range,
