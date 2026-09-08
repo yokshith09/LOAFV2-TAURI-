@@ -86,6 +86,28 @@ if codesign -dvv "$APP" 2>&1 | grep -q 'flags=.*runtime'; then
   echo
 fi
 
+# --------------------------------------------------------------- which chips --
+#
+# Printed always, and it is the only way to tell a universal build from a
+# single-architecture one after the fact. A .dmg named "universal" that holds
+# one architecture is the worst outcome available here: it installs fine, it
+# runs fine on the machine that built it, and it refuses to open on half the
+# Macs it was made for.
+BIN="$APP/Contents/MacOS/Loaf"
+if [ -f "$BIN" ]; then
+  ARCHS="$(lipo -archs "$BIN" 2>/dev/null || echo unknown)"
+  echo "  architectures: $ARCHS"
+  case "$APP" in
+    *universal*)
+      case "$ARCHS" in
+        *arm64*x86_64*|*x86_64*arm64*) echo "  universal: both present" ;;
+        *) echo "FAIL: built as universal but only holds: $ARCHS" >&2; exit 1 ;;
+      esac
+      ;;
+  esac
+fi
+echo
+
 # ------------------------------------------------------------ usage strings --
 PLIST="$APP/Contents/Info.plist"
 for key in NSMicrophoneUsageDescription NSAppleEventsUsageDescription; do

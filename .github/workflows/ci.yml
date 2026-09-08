@@ -110,6 +110,23 @@ jobs:
           - os: macos-latest
             label: macos-x64
             target: x86_64-apple-darwin
+            rustTargets: x86_64-apple-darwin
+          # UNIVERSAL, ON TRIAL. One Mac download instead of two is what a
+          # tester should get, and the universal build failed on v0.3.0, v0.4.0
+          # and v0.4.1 while the plain builds passed every time. It was worked
+          # around, never diagnosed, and the workaround is the reason there are
+          # two Mac files today.
+          #
+          # This row is how that gets settled instead of guessed at. It runs on
+          # every push, so either it is green and the release switches to one
+          # file, or it fails HERE with a log to read rather than in a release.
+          - os: macos-latest
+            label: macos-universal
+            target: universal-apple-darwin
+            # NOT `rustup target add universal-apple-darwin` — no such target
+            # exists. It is a Tauri instruction to build both real ones and lipo
+            # the result, so both real ones have to be installed.
+            rustTargets: aarch64-apple-darwin x86_64-apple-darwin
           - os: windows-latest
             label: windows
     runs-on: ${{ matrix.os }}
@@ -130,9 +147,9 @@ jobs:
       # Windows shows a SmartScreen warning.
       # Only the cross-compiled row asks for an extra target; the rest build
       # for the machine they are on and this is a no-op.
-      - name: Add the target
-        if: matrix.target != ''
-        run: rustup target add ${{ matrix.target }}
+      - name: Add the targets
+        if: matrix.rustTargets != ''
+        run: rustup target add ${{ matrix.rustTargets }}
 
       - name: Build application
         run: npm run tauri:build ${{ matrix.target != '' && format('-- --target {0}', matrix.target) || '' }}
