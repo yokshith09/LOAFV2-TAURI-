@@ -108,6 +108,64 @@ if [ -f "$BIN" ]; then
 fi
 echo
 
+# ------------------------------------------------- CAN IT ACTUALLY BE RUN? --
+#
+# ADDED AFTER 0.5.1 SHIPPED AND macOS SAID "The application Loaf can't be
+# opened." That is not Gatekeeper — Gatekeeper says "damaged" or "unidentified
+# developer" — it is LaunchServices failing to exec the binary at all. Every
+# check above passed on that build: it was signed, it verified, it declared its
+# usage strings and it held both architectures. All of them inspect the bundle's
+# METADATA, and none of them asked the only question that matters, which is
+# whether the thing runs.
+#
+# The difference between 0.4.6, which launched, and 0.5.1, which did not, is
+# that whisper.cpp and SQLite are now compiled in. That points at the loader.
+
+if [ ! -x "$BIN" ]; then
+  echo "FAIL: $BIN is not executable." >&2
+  echo "      lipo writes a new file; if it did not inherit the mode, macOS" >&2
+  echo "      cannot exec it and says the application cannot be opened." >&2
+  ls -l "$BIN" >&2
+  exit 1
+fi
+echo "  executable bit: set"
+
+# EVERY LINKED LIBRARY MUST EXIST ON SOMEBODY ELSE'S MACHINE.
+#
+# A dependency resolved from the build tree — a cmake output directory, a
+# Homebrew prefix — loads perfectly on the runner that built it and is missing
+# everywhere else. The app then fails to launch with exactly the dialog above
+# and no other symptom. This is the single most likely way for compiling
+# whisper.cpp in to have broken a build that previously worked.
+BAD="$(otool -L "$BIN" | tail -n +2 | awk '{print $1}'         | grep -v '^/usr/lib/' | grep -v '^/System/Library/' || true)"
+if [ -n "$BAD" ]; then
+  echo "FAIL: the binary depends on libraries that will not exist elsewhere:" >&2
+  echo "$BAD" | sed 's/^/        /' >&2
+  exit 1
+fi
+echo "  linked libraries: all from /usr/lib or /System/Library"
+
+# AND FINALLY, RUN IT. Three seconds is enough for dyld to fail.
+#
+# The runner is headless, so the app cannot open a window and will exit or hang
+# — either is fine and neither is checked. What IS checked is the class of
+# failure dyld reports before any of that: a missing library, a missing symbol,
+# a rejected signature. Those are the ones that reach a user as "cannot be
+# opened", and they are invisible to every other check in this file.
+echo "  trying to run it"
+LAUNCH="$(mktemp)"
+( "$BIN" >"$LAUNCH" 2>&1 & echo $! >"$LAUNCH.pid" ) || true
+sleep 3
+kill "$(cat "$LAUNCH.pid" 2>/dev/null)" 2>/dev/null || true
+if grep -qE "Library not loaded|Symbol not found|code signature|no suitable image|Abort trap" "$LAUNCH"; then
+  echo "FAIL: the binary will not load:" >&2
+  sed 's/^/        /' "$LAUNCH" >&2
+  exit 1
+fi
+echo "  it loads (no dyld or signature failure)"
+sed 's/^/        /' "$LAUNCH" | head -5
+echo
+
 # ------------------------------------------------------------ usage strings --
 PLIST="$APP/Contents/Info.plist"
 for key in NSMicrophoneUsageDescription NSAppleEventsUsageDescription LSUIElement; do

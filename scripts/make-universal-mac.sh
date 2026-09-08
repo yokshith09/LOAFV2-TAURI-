@@ -57,6 +57,12 @@ lipo -create \
   "$X64/Contents/MacOS/Loaf" \
   -output "$OUT/stage/Loaf.app/Contents/MacOS/Loaf"
 
+# lipo WRITES A NEW FILE. It happens to inherit the mode when it truncates one
+# that already exists, which is the case here — but "happens to" is not a thing
+# to rest a launchable app on. Without the execute bit macOS cannot exec the
+# binary and says "The application Loaf can't be opened", with no other clue.
+chmod 755 "$OUT/stage/Loaf.app/Contents/MacOS/Loaf"
+
 ARCHS="$(lipo -archs "$OUT/stage/Loaf.app/Contents/MacOS/Loaf")"
 echo "  now holds: $ARCHS"
 case "$ARCHS" in
