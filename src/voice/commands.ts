@@ -90,9 +90,87 @@ export const DEFAULT_SESSION_MINUTES = 25;
  * The apostrophe is deliberately KEPT. Stripping it turns "don't" into "don t",
  * which breaks more than it fixes.
  */
+/**
+ * Words that carry no meaning and only stop a rule matching.
+ *
+ * "Could you please start a focus timer" and "start focus" are the same
+ * request, and only the second one worked. Politeness is the single most
+ * common reason a command was heard perfectly and then did nothing.
+ *
+ * Removed as WHOLE WORDS and only where they are unambiguous: "can" is here as
+ * part of "can you", never on its own, because "can" is a noun.
+ */
+const FILLER: readonly RegExp[] = [
+  /\b(?:could|would|can|will) you (?:please )?/g,
+  /\bplease\b/g,
+  /\bi (?:want|need) (?:you )?to\b/g,
+  /\bi(?:'| woul)d like (?:you )?to\b/g,
+  /\blet(?:'s| us)\b/g,
+  /\bgo ahead and\b/g,
+  /\bfor me\b/g,
+  /\b(?:um+|uh+|er+|hmm+)\b/g,
+  /\bjust\b/g,
+  /\bkindly\b/g,
+];
+
+/**
+ * Different words for the same act.
+ *
+ * The intent rules already accept a handful of verbs each; this maps the rest
+ * onto them rather than growing every rule. One list is one place to add a word
+ * somebody actually said, instead of finding which of nine regexes to edit.
+ *
+ * Deliberately NOT fuzzy matching. A near-miss that runs the wrong command is
+ * worse than a miss that says it did not understand — the same rule
+ * `best_match` follows for program names.
+ */
+const SYNONYMS: readonly (readonly [RegExp, string])[] = [
+  [/\b(?:kick off|fire up|spin up|get going with|kick start|boot up)\b/g, "start"],
+  [/\b(?:knock off|shut down|shut off|kill|halt|quit|scrap|drop|bin)\b/g, "stop"],
+  [/\b(?:pull up|bring up|show me|open up|launch)\b/g, "open"],
+  [/\b(?:chuck out|throw away|get rid of|bin off)\b/g, "delete"],
+  [/\b(?:turn (?:it )?up|crank)\b/g, "increase"],
+  [/\bpomodoro\b/g, "focus"],
+];
+
+// NOT HERE, AND THE REASON IS THE POINT OF THIS LAYER.
+//
+// "how long have i been" and "where did my time go" were both in this list,
+// mapped to "screen time" on the reasoning that no rule looked for them. Rules
+// already did, and rewriting the sentence stopped those rules matching — four
+// passing tests went red immediately.
+//
+// The claim above is that widening cannot change what an existing rule means,
+// and that only holds if this list stays away from phrases the rules already
+// handle. A synonym is for words NO rule knows. Anything else belongs in the
+// rule itself, where it can be read next to what it competes with.
+
+/**
+ * Fold a spoken sentence down to the words the rules look for.
+ *
+ * WHY THIS EXISTS AND WHY IT IS NOT A MODEL. Every intent rule below is a
+ * regex over a handful of verbs, so a sentence has to be phrased almost the way
+ * somebody wrote it down months ago or nothing happens at all — which is the
+ * single loudest complaint about Loaf's voice. The scoped fix for that was an
+ * instruct model emitting constrained JSON. That is still the right answer and
+ * it is still M4's stage four.
+ *
+ * This is the part of the value that does not need a model, does not need a
+ * download, works identically on both platforms, and can be tested here rather
+ * than only on a runner: strip the politeness, fold the synonyms, and let the
+ * rules that already exist see the sentence underneath. It widens what is
+ * understood without loosening what any rule matches — every rule is unchanged,
+ * so nothing that worked can start meaning something else.
+ */
+export function widen(raw: string): string {
+  let t = raw.toLowerCase();
+  for (const [pattern, word] of SYNONYMS) t = t.replace(pattern, word);
+  for (const pattern of FILLER) t = t.replace(pattern, " ");
+  return t;
+}
+
 function normalise(raw: string): string {
-  return raw
-    .toLowerCase()
+  return widen(raw)
     .replace(/[.,!?;:"“”]+/g, " ")
     // Dashes become spaces rather than vanishing, or "twenty-five" would
     // collapse to the single unknown word "twentyfive".
@@ -330,8 +408,14 @@ export function parseIntent(raw: string, now: Date = new Date()): Intent | null 
   // a thing rather than an action, and it used to return null — no note, no
   // reply that made sense, just nothing. "to" is for things you will do and
   // "about"/"of" for things that will happen, and both are reminders.
+  // THE PHRASINGS LIVE HERE, NOT IN THE SYNONYM LIST, and the reason is
+  // specific: this rule is tested against `raw` rather than the widened text,
+  // because the title after it has to keep its capitals. So a synonym mapping
+  // "jot down" to "note down" could never reach it — the fold happens on a
+  // string this branch never looks at. Adding them here is also what the note
+  // above SYNONYMS asks for: a phrase a rule already owns belongs in the rule.
   const taskMarker =
-    /\b(?:add(?: a)?(?: new)? (?:task|note|reminder)|remind me (?:to|about|of)|note down|task)\b:?\s*/i;
+    /\b(?:add(?: a)?(?: new)? (?:task|note|reminder)|remind me (?:to|about|of)|note down|jot down|write down|make a note of|take a note|task)\b:?\s*/i;
   if (taskMarker.test(raw)) {
     const title = titleAfter(raw, taskMarker);
     if (title === null) return null;
@@ -464,7 +548,14 @@ export function parseIntent(raw: string, now: Date = new Date()): Intent | null 
 
   // --- Reports
   if (/\b(recap|wrapped|my week|week card|share card)\b/.test(t)) return { kind: "recap" };
-  if (/\b(how (?:long|much)|what did i do|how am i doing|summar(?:y|ise|ize))\b/.test(t)) {
+  if (
+    /\b(how (?:long|much)|what did i do|how am i doing|summar(?:y|ise|ize))\b/.test(t) ||
+    // The plainest way anybody asks this, and it returned nothing at all. Put
+    // in the rule rather than folded into a synonym: rewriting a phrase that a
+    // rule already competes for is how four passing tests went red — see the
+    // note above SYNONYMS.
+    /\bwhere (?:did|has) my time (?:go|gone)\b/.test(t)
+  ) {
     return { kind: "report.today" };
   }
 

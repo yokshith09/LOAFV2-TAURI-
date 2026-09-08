@@ -750,7 +750,7 @@ mod imp {
             let ptr = symbol("DisplayServicesGetBrightness").ok_or(MISSING)?;
             // SAFETY: the symbol exists in DisplayServices with this signature,
             // and `level` is a valid, aligned, initialised f32 for the call.
-            let f: GetFn = unsafe { std::mem::transmute(ptr) };
+            let f = unsafe { std::mem::transmute::<*mut c_void, GetFn>(ptr) };
             let mut level: f32 = 0.0;
             let rc = unsafe { f(CGMainDisplayID(), &mut level) };
             if rc != 0 {
@@ -763,7 +763,7 @@ mod imp {
             let ptr = symbol("DisplayServicesSetBrightness").ok_or(MISSING)?;
             // SAFETY: as above. The level is clamped into 0.0..=1.0 first, so
             // no out-of-range float reaches the framework.
-            let f: SetFn = unsafe { std::mem::transmute(ptr) };
+            let f = unsafe { std::mem::transmute::<*mut c_void, SetFn>(ptr) };
             let level = (percent.min(100) as f32 / 100.0).clamp(0.0, 1.0);
             let rc = unsafe { f(CGMainDisplayID(), level) };
             if rc != 0 {

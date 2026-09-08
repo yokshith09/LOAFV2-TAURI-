@@ -70,9 +70,27 @@ jobs:
       # be fixed before pushing — that is no longer true, and the codebase is
       # clean, so a warning should stop a merge rather than be reported into a
       # summary nobody opens.
+      # THE SAME READABLE-FAILURE TRICK THE BUNDLE JOB GETS, and it should have
+      # been here from the start. macOS clippy failed once with nothing but
+      # "exit code 101" reachable from the machine this project is developed on
+      # — which is exactly the blindness the bundle job's version was added to
+      # cure. A lint that only fires on the platform you cannot compile for is
+      # the one that most needs its message readable.
       - name: Clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/clippy.log"
+
+      - name: Say what clippy said, somewhere readable
+        if: failure()
+        shell: bash
+        run: |
+          LOG="$RUNNER_TEMP/clippy.log"
+          [ -f "$LOG" ] || { echo "::error title=clippy failed::no log was captured"; exit 0; }
+          MSG=$(tail -80 "$LOG" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=clippy failed on ${{ matrix.os }}::$MSG"
 
       - name: Tests
         working-directory: src-tauri
