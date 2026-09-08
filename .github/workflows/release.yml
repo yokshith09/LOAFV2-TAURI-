@@ -154,8 +154,15 @@ jobs:
             Screen-time tracking with a full history, eighteen characters with
             outfits and pixel art, the closet, the focus timer, speech bubbles,
             ambient behaviour, the privacy radar, meeting recording with local
-            transcription, a notes board, a memory panel, and Connections —
-            attaching another program over MCP.
+            transcription, a notes board, a memory panel, Connections, and a
+            Search tab that finds a phrase you said in a meeting weeks ago.
+
+            **New in 0.5.0 — voice works on a Mac.** Whisper is compiled into
+            Loaf now instead of being downloaded, so meeting transcription,
+            dictation and the wake word all work on macOS for the first time.
+            Loaf can also answer out loud on both platforms, and it is much
+            better at telling when you have stopped talking — it learns how
+            loud your room is instead of using one fixed number.
 
             ## Privacy
 
@@ -190,8 +197,12 @@ jobs:
               openable at all, but there is no Apple Developer ID behind it — so
               macOS still asks before the first launch, and Windows still shows
               SmartScreen. Both need a paid certificate.
-            - **No voice on macOS.** The wake word, spoken commands and dictation
-              are Windows-only. Meeting recording and transcription work on both.
+            - **Voice is not equally good on both.** Windows listens for its
+              name with a closed word list, so nothing outside that list can be
+              recognised at all. macOS has no equivalent, so it uses the voice
+              detector and only transcribes utterances short enough to *be* a
+              wake word — a sentence of conversation is thrown away without
+              being looked at. Local either way, weaker on a Mac.
             - **macOS is lightly tested.** It compiles, its platform code is
               tested, and CI checks the bundle is signed and declares what it
               touches. It is still the least-used half. Please say what breaks.
