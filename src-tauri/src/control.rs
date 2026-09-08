@@ -435,21 +435,87 @@ mod imp {
 mod imp {
     const ELSEWHERE: &str = "That is Windows-only for now.";
 
+    /// Ask macOS a one-line question and get the answer back.
+    #[cfg(target_os = "macos")]
+    fn ask(script: &str) -> Result<String, String> {
+        let out = std::process::Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(script)
+            .output()
+            .map_err(|e| format!("could not run osascript: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Volume on macOS, through the one API that has always been there.
+    ///
+    /// `osascript` rather than CoreAudio: setting a level exactly is what "set
+    /// the volume to forty" needs, AppleScript's `set volume output volume` does
+    /// exactly that, and it needs no permission and no linked framework. The
+    /// in-process route would be a lot of unsafe for the same number.
+    #[cfg(target_os = "macos")]
+    pub fn volume() -> Result<u8, String> {
+        let raw = ask("output volume of (get volume settings)")?;
+        raw.parse::<i32>()
+            .map(|v| v.clamp(0, 100) as u8)
+            // "missing value" is what macOS answers when the output device does
+            // not report a level — a few USB and Bluetooth devices do this.
+            .map_err(|_| "This output device does not report its volume.".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn set_volume(percent: u8) -> Result<(), String> {
+        ask(&format!("set volume output volume {}", percent.min(100))).map(|_| ())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn set_muted(on: bool) -> Result<(), String> {
+        ask(&format!(
+            "set volume output muted {}",
+            if on { "true" } else { "false" }
+        ))
+        .map(|_| ())
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn volume() -> Result<u8, String> {
         Err(ELSEWHERE.into())
     }
+    #[cfg(not(target_os = "macos"))]
     pub fn set_volume(_percent: u8) -> Result<(), String> {
         Err(ELSEWHERE.into())
     }
+    #[cfg(not(target_os = "macos"))]
     pub fn set_muted(_on: bool) -> Result<(), String> {
         Err(ELSEWHERE.into())
     }
+
+    /// BRIGHTNESS IS NOT AVAILABLE ON macOS AND THIS IS NOT AN OVERSIGHT.
+    ///
+    /// There is no public API for reading or setting display brightness. The
+    /// ones that work — DisplayServices, CoreDisplay — are private frameworks,
+    /// and calling a private framework in an app that is going to be notarised
+    /// is a bet on Apple not changing it. The key codes for the brightness keys
+    /// can be sent, but they only nudge up and down; "set brightness to forty"
+    /// cannot be honoured by pressing a key twice and hoping.
+    ///
+    /// So it says so, rather than half-working. A companion that moves the
+    /// brightness to roughly what you asked for is worse than one that says it
+    /// cannot.
     pub fn brightness() -> Result<u8, String> {
-        Err(ELSEWHERE.into())
+        Err(NO_BRIGHTNESS.into())
     }
     pub fn set_brightness(_percent: u8) -> Result<(), String> {
-        Err(ELSEWHERE.into())
+        Err(NO_BRIGHTNESS.into())
     }
+
+    #[cfg(target_os = "macos")]
+    const NO_BRIGHTNESS: &str =
+        "macOS has no way to let an app set the screen brightness. Use the keys on your keyboard.";
+    #[cfg(not(target_os = "macos"))]
+    const NO_BRIGHTNESS: &str = ELSEWHERE;
     pub fn type_text(_text: &str) -> Result<(), String> {
         Err(ELSEWHERE.into())
     }

@@ -29,6 +29,11 @@
 pub mod apps;
 pub mod audio;
 pub mod browser;
+// NOT gated to macOS. Only the `osascript` call inside it is; the script text
+// and the escaping are pure string work, and gating them would mean the one
+// place a mistake is an injection could never be tested on the machine this is
+// developed on. See the note at the top of the file.
+pub mod browser_macos;
 #[cfg(windows)]
 pub mod browser_windows;
 pub mod connections;
@@ -1455,7 +1460,11 @@ fn list_tabs() -> Vec<String> {
     {
         browser_windows::list_tabs()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        browser_macos::list_tabs()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         Vec::new()
     }
@@ -1468,10 +1477,14 @@ fn close_tab(title: String) -> Result<bool, String> {
     {
         browser_windows::close_tab(&title)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        Ok(browser_macos::close_tab(&title))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = title;
-        Err("Closing tabs is Windows-only for now.".into())
+        Err("Closing tabs is not supported on this platform.".into())
     }
 }
 

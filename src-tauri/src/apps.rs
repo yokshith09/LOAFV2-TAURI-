@@ -18,14 +18,41 @@
 //! `PROTECTED`. Closing the shell or the session manager by accident is not a
 //! recoverable mistake, and no phrasing makes it one.
 
-/// Executables Loaf will never close, whatever it thinks it heard.
+/// Programs Loaf will never close, whatever it thinks it heard.
 ///
-/// `explorer` is the desktop itself; the rest end the session or take the
-/// machine down with them. Loaf is on the list because a pet that can be told
-/// to kill itself mid-sentence is a bug report nobody can describe.
+/// ONE LIST FOR BOTH PLATFORMS, not two. A misheard word is a misheard word
+/// wherever it happens, the list is short, and nothing on either platform is
+/// called by the other's names — so splitting it would only create a second
+/// place to forget to add something.
+///
+/// Windows: `explorer` is the desktop itself; the rest end the session or take
+/// the machine down with them. macOS: `finder` is the desktop, `dock` and
+/// `systemuiserver` are the menu bar and the Dock, `loginwindow` ends the
+/// session, and `windowserver` takes the display with it.
+///
+/// Loaf is on the list because a pet that can be told to kill itself
+/// mid-sentence is a bug report nobody can describe.
 pub const PROTECTED: &[&str] = &[
-    "explorer", "csrss", "winlogon", "wininit", "services", "lsass", "smss", "svchost", "dwm",
-    "system", "loaf",
+    // Windows
+    "explorer",
+    "csrss",
+    "winlogon",
+    "wininit",
+    "services",
+    "lsass",
+    "smss",
+    "svchost",
+    "dwm",
+    "system",
+    // macOS
+    "finder",
+    "dock",
+    "systemuiserver",
+    "loginwindow",
+    "windowserver",
+    "coreservicesuiagent",
+    // Always
+    "loaf",
 ];
 
 /// One program Loaf can start.
@@ -66,7 +93,9 @@ pub fn is_protected(exe: &str) -> bool {
         .next()
         .unwrap_or(exe)
         .trim_end_matches(".exe")
-        .trim_end_matches(".EXE");
+        .trim_end_matches(".EXE")
+        .trim_end_matches(".app")
+        .trim_end_matches(".APP");
     let stem = normalise(stem);
     PROTECTED.iter().any(|p| stem == *p)
 }
@@ -127,8 +156,11 @@ pub fn open(path: &str) -> Result<(), String> {
 /// say so rather than reporting a failure.
 pub fn close(name: &str) -> Result<usize, String> {
     if is_protected(name) {
+        // Named by what it is rather than by which OS it belongs to: the
+        // sentence has to be true on both, and "part of Windows" read as a bug
+        // on a Mac.
         return Err(format!(
-            "{name} is part of Windows, so Loaf will not close it."
+            "{name} is part of the operating system, so Loaf will not close it."
         ));
     }
     imp::close(name)
@@ -358,6 +390,56 @@ mod imp {
 mod imp {
     use super::App;
 
+    /// The folders macOS keeps applications in.
+    ///
+    /// Not recursive beyond one level. Utilities sits inside
+    /// /System/Applications and is worth having, but walking the whole tree
+    /// finds every helper bundled inside every app — dozens of "Updater" and
+    /// "Crash Reporter" entries nobody would ever say out loud, in a list whose
+    /// entire job is to be things people say out loud.
+    #[cfg(target_os = "macos")]
+    fn roots() -> Vec<std::path::PathBuf> {
+        let mut out = vec![
+            std::path::PathBuf::from("/Applications"),
+            std::path::PathBuf::from("/Applications/Utilities"),
+            std::path::PathBuf::from("/System/Applications"),
+            std::path::PathBuf::from("/System/Applications/Utilities"),
+        ];
+        if let Some(home) = std::env::var_os("HOME") {
+            out.push(std::path::Path::new(&home).join("Applications"));
+        }
+        out
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn installed() -> Vec<App> {
+        let mut found: Vec<App> = Vec::new();
+        for root in roots() {
+            let Ok(entries) = std::fs::read_dir(&root) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("app") {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                found.push(App {
+                    name: stem.to_string(),
+                    path: path.to_string_lossy().into_owned(),
+                });
+            }
+        }
+        // Two copies of the same app — one in /Applications and one in
+        // ~/Applications — are one app as far as anybody speaking is concerned.
+        found.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        found.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
+        found
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn installed() -> Vec<App> {
         Vec::new()
     }
@@ -370,9 +452,61 @@ mod imp {
             .map_err(|e| e.to_string())
     }
 
-    pub fn close(_name: &str) -> Result<usize, String> {
-        Err("Closing programs by voice is Windows-only for now.".into())
+    /// Ask an application to quit, the way the user pressing Cmd-Q would.
+    ///
+    /// `quit`, never `kill`. A quit lets the app save and close its documents;
+    /// killing it loses whatever was unsaved. A companion that can be asked to
+    /// close a program must not be a companion that can lose your work, and the
+    /// difference between the two is one AppleScript verb.
+    #[cfg(target_os = "macos")]
+    pub fn close(name: &str) -> Result<usize, String> {
+        let safe = super::applescript_name(name);
+        if safe.is_empty() {
+            return Err("That is not a program name Loaf can use.".into());
+        }
+        let script = format!(
+            r#"tell application "System Events"
+    if not (exists process "{safe}") then return "0"
+end tell
+tell application "{safe}" to quit
+return "1""#
+        );
+        let out = std::process::Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(script)
+            .output()
+            .map_err(|e| format!("could not run osascript: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(if String::from_utf8_lossy(&out.stdout).trim() == "1" {
+            1
+        } else {
+            0
+        })
     }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn close(_name: &str) -> Result<usize, String> {
+        Err("Closing programs by voice is not supported on this platform.".into())
+    }
+}
+
+/// Keep only what can safely sit inside an AppleScript string literal.
+///
+/// A REJECT LIST WOULD BE THE WRONG SHAPE HERE. The name reaching this function
+/// came from a spoken command, and it is about to be pasted into a script that
+/// will be executed — so it is filtered down to the characters a real
+/// application name is made of rather than having dangerous ones removed. There
+/// is no application called `Mail" & (do shell script "...")`, so nothing is
+/// lost, and anything that would end the literal early cannot survive.
+pub fn applescript_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '+'))
+        .take(60)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -384,6 +518,72 @@ mod tests {
             name: name.into(),
             path: format!(r"C:\{name}.lnk"),
         }
+    }
+
+    // The name came from a spoken command and is about to be pasted into a
+    // script that will be executed. Filtered down to what an application name
+    // is made of, rather than having dangerous characters removed — there is no
+    // app called `Mail" & (do shell script "...")`, so nothing real is lost.
+    #[test]
+    fn refuses_to_close_the_desktop_on_either_platform() {
+        for name in [
+            "explorer.exe",
+            "Finder",
+            "Finder.app",
+            "Dock",
+            "loginwindow",
+        ] {
+            assert!(is_protected(name), "{name} should be protected");
+        }
+    }
+
+    #[test]
+    fn refuses_to_close_itself() {
+        assert!(is_protected("Loaf"));
+        assert!(is_protected("Loaf.app"));
+        assert!(is_protected("loaf.exe"));
+    }
+
+    #[test]
+    fn ordinary_programs_are_not_protected() {
+        for name in ["Google Chrome", "Notepad.exe", "Slack.app", "Spotify"] {
+            assert!(!is_protected(name), "{name} should not be protected");
+        }
+    }
+
+    #[test]
+    fn an_app_name_cannot_carry_applescript_with_it() {
+        let nasty = r#"Mail" & (do shell script "rm -rf /") & ""#;
+        let safe = applescript_name(nasty);
+        assert!(!safe.contains('"'), "{safe}");
+        assert!(!safe.contains('&'), "{safe}");
+        assert!(!safe.contains('('), "{safe}");
+    }
+
+    #[test]
+    fn ordinary_app_names_survive_intact() {
+        for name in [
+            "Google Chrome",
+            "Visual Studio Code",
+            "Microsoft Word",
+            "IINA",
+            "Adobe Photoshop 2024",
+            "iTerm2",
+        ] {
+            assert_eq!(applescript_name(name), name);
+        }
+    }
+
+    #[test]
+    fn names_that_are_only_punctuation_come_back_empty() {
+        assert_eq!(applescript_name(r#""""#), "");
+        assert_eq!(applescript_name("   "), "");
+        assert_eq!(applescript_name(""), "");
+    }
+
+    #[test]
+    fn a_very_long_name_is_cut_rather_than_passed_on() {
+        assert!(applescript_name(&"a".repeat(500)).len() <= 60);
     }
 
     #[test]
