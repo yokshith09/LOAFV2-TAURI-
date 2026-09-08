@@ -79,7 +79,7 @@ jobs:
         run: cargo test --all
 
   bundle:
-    name: Bundle (${{ matrix.os }})
+    name: Bundle (${{ matrix.label }})
     # Deliberately does NOT depend on the `rust` job. That job runs
     # `clippy -D warnings`, and a single pedantic lint would otherwise block the
     # installers — including the macOS build that testers are waiting on. This
@@ -111,21 +111,14 @@ jobs:
             label: macos-x64
             target: x86_64-apple-darwin
             rustTargets: x86_64-apple-darwin
-          # UNIVERSAL, ON TRIAL. One Mac download instead of two is what a
-          # tester should get, and the universal build failed on v0.3.0, v0.4.0
-          # and v0.4.1 while the plain builds passed every time. It was worked
-          # around, never diagnosed, and the workaround is the reason there are
-          # two Mac files today.
-          #
-          # This row is how that gets settled instead of guessed at. It runs on
-          # every push, so either it is green and the release switches to one
-          # file, or it fails HERE with a log to read rather than in a release.
+          # UNIVERSAL, BUILT BY HAND. Tauri's own --target
+          # universal-apple-darwin has now failed four times — v0.3.0, v0.4.0,
+          # v0.4.1, and the trial row this replaces — while the two plain
+          # builds pass every time. So this row builds both and joins them
+          # itself with lipo. See scripts/make-universal-mac.sh.
           - os: macos-latest
             label: macos-universal
-            target: universal-apple-darwin
-            # NOT `rustup target add universal-apple-darwin` — no such target
-            # exists. It is a Tauri instruction to build both real ones and lipo
-            # the result, so both real ones have to be installed.
+            universal: "yes"
             rustTargets: aarch64-apple-darwin x86_64-apple-darwin
           - os: windows-latest
             label: windows
@@ -152,7 +145,40 @@ jobs:
         run: rustup target add ${{ matrix.rustTargets }}
 
       - name: Build application
-        run: npm run tauri:build ${{ matrix.target != '' && format('-- --target {0}', matrix.target) || '' }}
+        if: matrix.universal == ''
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run tauri:build ${{ matrix.target != '' && format('-- --target {0}', matrix.target) || '' }} 2>&1             | tee "$RUNNER_TEMP/build.log"
+
+      - name: Build both Macs and join them
+        if: matrix.universal != ''
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            npm run tauri:build -- --target aarch64-apple-darwin
+            npm run tauri:build -- --target x86_64-apple-darwin
+            bash scripts/make-universal-mac.sh universal
+          } 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # SO A FAILURE CAN BE READ WITHOUT A GITHUB LOGIN.
+      #
+      # Job logs need an authenticated request. The machine this project is
+      # developed on has no GitHub CLI and no token, so for four releases the
+      # only thing knowable about a failed macOS build was "exit code 1" — which
+      # is why the universal build was worked around three times instead of
+      # being fixed once. Annotations ARE public, and `::error::` writes one.
+      - name: Say what went wrong, somewhere readable
+        if: failure()
+        shell: bash
+        run: |
+          LOG="$RUNNER_TEMP/build.log"
+          [ -f "$LOG" ] || { echo "::error title=build failed::no log was captured"; exit 0; }
+          # Percent first, or it would escape the escapes. Newlines become %0A,
+          # which is how a workflow command carries a multi-line message.
+          MSG=$(tail -60 "$LOG" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=${{ matrix.label }} build failed::$MSG"
 
       # THE CHECK THAT WOULD HAVE CAUGHT THE "DAMAGED" BUG. Every gate we had
       # was a compile gate, and the macOS bundle was broken in a way that
@@ -162,7 +188,7 @@ jobs:
       # tag cannot be cut on a commit that would ship another one.
       - name: Verify the macOS bundle
         if: startsWith(matrix.os, 'macos')
-        run: bash scripts/verify-macos-bundle.sh
+        run: bash scripts/verify-macos-bundle.sh ${{ matrix.universal != '' && 'universal/stage/Loaf.app' || '' }}
 
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
@@ -171,6 +197,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: |
+            universal/*.dmg
             src-tauri/target/*/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.app
