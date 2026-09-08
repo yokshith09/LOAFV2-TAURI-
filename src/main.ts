@@ -2220,14 +2220,29 @@ const meetingWatch = new MeetingWatch();
  * the transcripts are, because a graph that outlived the notes it was built
  * from would make "delete it" a promise only half kept.
  */
-// `let`, because the durable copy arrives from the store a moment after this
-// runs and replaces it. See adoptTheStoredGraph below.
-let memory = KnowledgeGraph.fromJSON(readGraph(browserStore()));
+// THESE TWO KEYS MUST BE DECLARED BEFORE `memory`, AND THAT IS NOT A STYLE
+// PREFERENCE — IT IS THE BUG THAT MADE THE PET INVISIBLE.
+//
+// `readGraph` is a function declaration, so it hoists and can be CALLED from
+// above. Its body reads `K_GRAPH`, which is a `const` — and a `const` read
+// before its declaration line has run is a ReferenceError, not undefined:
+//
+//     ReferenceError: Cannot access 'K_GRAPH' before initialization
+//
+// `memory` used to sit two lines above `K_GRAPH` and call `readGraph` while
+// initialising, so main.ts threw right here on every launch, on every platform.
+// Everything below never ran: no drag handler, no render loop, no cat — just a
+// transparent window that looked exactly like an app that had failed to start.
+// It survived because a hoisted function makes the call LOOK fine and nothing
+// reads a temporal dead zone until it runs.
+const K_GRAPH = "memory.graph";
 
 /** Where the graph lives in the store's key/value table. */
 const STORE_GRAPH = "graph";
 
-const K_GRAPH = "memory.graph";
+// `let`, because the durable copy arrives from the store a moment after this
+// runs and replaces it. See adoptTheStoredGraph below.
+let memory = KnowledgeGraph.fromJSON(readGraph(browserStore()));
 
 function readGraph(store: ReturnType<typeof browserStore>): unknown {
   const raw = store.getItem(K_GRAPH);
