@@ -28,15 +28,35 @@
 //! Microsoft's own listening dialog, which would sit over the top of a desktop
 //! pet whose whole point is being unobtrusive.
 //!
-//! macOS is NOT implemented, and that is a deliberate stop rather than an
-//! oversight. `SFSpeechRecognizer` sends audio to Apple's servers unless
-//! `requiresOnDeviceRecognition` is set, it needs Objective-C FFI that cannot
-//! be compiled or tested from the Windows machine this was written on, and this
-//! codebase has already shipped one syntax error into macOS-only code that no
-//! local check could see. Writing a second, larger piece of unverifiable native
-//! code that decides whether audio leaves the machine is not a risk worth
-//! taking blind. It reports "not supported here", which the caller already
-//! handles, so a Mac gets the command box and no microphone button.
+//! EVERYWHERE ELSE, WHISPER TAKES THE TURN, and the reason this file used to
+//! say otherwise is worth keeping. It argued that macOS was a deliberate stop:
+//! `SFSpeechRecognizer` sends audio to Apple unless `requiresOnDeviceRecognition`
+//! is set, it needs Objective-C FFI that cannot be compiled or tested from the
+//! Windows machine this was written on, and writing unverifiable native code to
+//! decide whether audio leaves the machine is not a risk worth taking blind.
+//!
+//! ALL OF THAT IS STILL TRUE ABOUT `SFSpeechRecognizer`, AND NONE OF IT IS A
+//! REASON TO HAVE NO RECOGNISER. Whisper is compiled into this binary on both
+//! platforms and `wake.rs` has already been using it on macOS to hear the wake
+//! word. So the shape of the bug was: a Mac heard "hey loaf", answered "Mm?",
+//! and then told the person that speaking to Loaf is Windows-only. The wake
+//! word worked and led nowhere. This module now finishes the sentence it
+//! started, with the engine that was already there.
+//!
+//! THE TWO PATHS ARE NOT THE SAME BARGAIN AND THAT IS SAID OUT LOUD. Windows
+//! uses a closed grammar because free-form Windows recognition IS the online
+//! one — the phrase list is the only thing keeping it local. Whisper has no
+//! such coupling: it is a local model, so free speech costs nothing in privacy
+//! and the phrase list is not load-bearing there. It is still required, so that
+//! one caller cannot accidentally get a different guarantee on a different
+//! machine, and so the refusal above stays a single rule rather than a pair.
+//!
+//! What is worse on this path is latency and accuracy, not privacy: Whisper is
+//! a batch transcriber, so it answers when the sentence is over rather than as
+//! it goes. `voice/engine.ts` argued from that that Whisper should never be a
+//! command engine. That argument holds where there is an OS recogniser to
+//! prefer, and collapses where there is none — a reply half a second late is
+//! not worse than no reply at all.
 
 /// What came back from one attempt to listen.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -55,18 +75,23 @@ pub enum Heard {
 const NO_PHRASES: &str = "Loaf had no list of phrases to listen for, so it did not listen. \
      Listening without one would mean using Windows' online recogniser.";
 
-pub fn listen_once(phrases: Vec<String>) -> Heard {
+/// Take one turn.
+///
+/// `setup` is where the local Whisper model lives. Windows has an OS recogniser
+/// and ignores it; everywhere else it IS the recogniser, so a caller that
+/// cannot supply one gets an honest refusal rather than silence.
+pub fn listen_once(setup: &crate::transcribe::WhisperSetup, phrases: Vec<String>) -> Heard {
     if phrases.is_empty() {
         return Heard::Unavailable {
             why: NO_PHRASES.into(),
         };
     }
-    imp::listen_once(phrases)
+    imp::listen_once(setup, phrases)
 }
 
 /// Whether a microphone button is worth showing at all.
-pub fn available() -> bool {
-    imp::available()
+pub fn available(setup: &crate::transcribe::WhisperSetup) -> bool {
+    imp::available(setup)
 }
 
 #[cfg(windows)]
@@ -131,7 +156,10 @@ mod imp {
         Ok(recognizer)
     }
 
-    pub fn available() -> bool {
+    /// The setup is unused here: Windows has its own recogniser and never
+    /// reaches for the model. It is in the signature so both platforms answer
+    /// the same question through the same call.
+    pub fn available(_setup: &crate::transcribe::WhisperSetup) -> bool {
         let _apartment = Apartment::enter();
         // Compiling a real constraint, not merely constructing a recogniser.
         // Construction succeeds on machines where the offline recogniser then
@@ -150,7 +178,7 @@ mod imp {
         }
     }
 
-    pub fn listen_once(phrases: Vec<String>) -> Heard {
+    pub fn listen_once(_setup: &crate::transcribe::WhisperSetup, phrases: Vec<String>) -> Heard {
         let _apartment = Apartment::enter();
         let recognizer = match local_recognizer(&phrases) {
             Ok(r) => r,
@@ -203,15 +231,111 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
     use super::Heard;
+    use crate::transcribe::WhisperSetup;
+    use crate::turn::{Outcome, Turn};
+    use crate::vad::FRAME;
 
-    pub fn available() -> bool {
-        false
+    /// How long to sleep between reads of the capture buffer.
+    ///
+    /// One frame's worth. Shorter spins the CPU for nothing; longer makes the
+    /// reply late by exactly the amount it saves.
+    const POLL_MS: u64 = 20;
+
+    /// The longest one turn may take in wall-clock time, whatever the frames say.
+    ///
+    /// Comfortably longer than the lead-in plus the longest answer `Turn` will
+    /// keep, so it never cuts anybody off; it exists only for a capture that
+    /// has stopped producing audio without saying so.
+    const MAX_TURN: std::time::Duration = std::time::Duration::from_secs(45);
+
+    /// A microphone is only worth offering if something can listen to it.
+    ///
+    /// Both halves are checked, because the two failures need different
+    /// sentences: no model is "download it in the Voice tab", no input device
+    /// is "plug something in", and a button that fails either way is the thing
+    /// this is meant to avoid.
+    pub fn available(setup: &WhisperSetup) -> bool {
+        crate::transcribe::missing(setup).is_none() && crate::audio::has_input()
     }
 
-    pub fn listen_once(_phrases: Vec<String>) -> Heard {
-        Heard::Unavailable {
-            why: "Speaking to Loaf is Windows-only for now. The command box works everywhere."
-                .into(),
+    /// `phrases` is deliberately unused. See the module note: on Windows the
+    /// list is what keeps the recogniser off the network, and here there is no
+    /// network to keep it off — Whisper is a file on this disk. It stays in the
+    /// signature so that the refusal of an empty list is one rule for both
+    /// platforms rather than a Windows quirk a future caller could route around
+    /// by testing on a Mac.
+    pub fn listen_once(setup: &WhisperSetup, _phrases: Vec<String>) -> Heard {
+        // BEFORE THE MICROPHONE OPENS, never after. Refusing afterwards means
+        // having recorded somebody for a transcription that was never going to
+        // run — the same rule `dictate_once` and `wake.rs` follow.
+        if let Some(what) = crate::transcribe::missing(setup) {
+            return Heard::Unavailable {
+                why: crate::transcribe::missing_reason(&what),
+            };
+        }
+
+        let mut recording = match crate::audio::start() {
+            Ok(r) => r,
+            Err(why) => return Heard::Unavailable { why },
+        };
+
+        let mut turn = Turn::default();
+        let mut read_from = 0usize;
+        let mut pending: Vec<i16> = Vec::new();
+        let mut outcome = Outcome::Nothing;
+        let began = std::time::Instant::now();
+
+        'listening: loop {
+            // A CLOCK AS WELL AS THE FRAME COUNT, because `Turn` only ends when
+            // it is fed. A capture that stops delivering samples — the device
+            // unplugged, the stream dropped by the OS on a sleep — feeds it
+            // nothing, and without this the loop would hold that microphone and
+            // one thread of Tauri's pool open forever, with the indicator
+            // saying Loaf was listening. The turn's own limits are the normal
+            // way out; this is the one for when the audio stops arriving.
+            if began.elapsed() > MAX_TURN {
+                break 'listening;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
+            let (fresh, next) = recording.samples_since(read_from);
+            read_from = next;
+            pending.extend_from_slice(&fresh);
+
+            while pending.len() >= FRAME {
+                let frame: Vec<i16> = pending.drain(..FRAME).collect();
+                if let Some(done) = turn.push(&frame) {
+                    outcome = done;
+                    break 'listening;
+                }
+            }
+        }
+
+        // The audio goes before anything else happens to it, on every path.
+        // Loaf keeps words, not voices.
+        crate::audio::discard(recording);
+
+        let Outcome::Heard(samples) = outcome else {
+            return Heard::Nothing;
+        };
+
+        let audio: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
+        let text = match crate::transcribe::transcribe_samples(setup, &audio) {
+            Ok(t) => crate::transcribe::clean(&t),
+            Err(why) => return Heard::Unavailable { why },
+        };
+        if text.trim().is_empty() {
+            return Heard::Nothing;
+        }
+
+        Heard::Text {
+            text,
+            // NEVER "high", and this is load-bearing rather than modest. The
+            // Windows path's confidence comes from a recogniser scoring itself
+            // against a closed grammar; there is no equivalent number here, and
+            // inventing a high one would let a free-text transcription through
+            // a caller that only trusts a graded result. `wake.rs` reports its
+            // own Whisper matches the same way and for the same reason.
+            confidence: "weak".to_string(),
         }
     }
 }
@@ -233,9 +357,20 @@ mod tests {
     #[test]
     #[ignore]
     fn local_recogniser_compiles_here() {
-        let ok = available();
+        let ok = available(&nowhere());
         println!("offline speech available on this machine: {ok}");
         assert!(ok, "the offline list-constraint recogniser did not compile");
+    }
+
+    /// A model path that is definitely not a model.
+    ///
+    /// The refusal below happens before any engine is touched, on either
+    /// platform, so the setup only has to exist. Pointing it at a real model
+    /// would make the test pass for a second reason and hide the first.
+    fn nowhere() -> crate::transcribe::WhisperSetup {
+        crate::transcribe::WhisperSetup {
+            model: "no-such-model.bin".into(),
+        }
     }
 
     /// The one rule in this file that can be checked on any platform: no
@@ -243,7 +378,7 @@ mod tests {
     /// anyway — is the Windows dictation grammar, which is the cloud.
     #[test]
     fn refuses_to_listen_without_a_phrase_list() {
-        match listen_once(Vec::new()) {
+        match listen_once(&nowhere(), Vec::new()) {
             Heard::Unavailable { why } => {
                 assert!(why.contains("online"), "the reason should say why: {why}")
             }

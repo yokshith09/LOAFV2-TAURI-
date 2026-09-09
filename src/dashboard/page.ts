@@ -950,7 +950,15 @@ async function listenOnce(): Promise<void> {
     // The vocabulary goes WITH the request. Windows recognises free
     // speech only through its online recogniser, so the phrase list is
     // what keeps this on the machine — see voice/phrases.ts.
-    const heard = await invoke<Heard>("listen_once", { phrases: spokenPhrases(programNames) });
+    //
+    // An empty model means "the one the downloader installs", which is the
+    // only one there has ever been: nothing in the app writes a custom path.
+    // It is reached only where there is no OS recogniser, and this window has
+    // no copy of the habits to read a path from anyway.
+    const heard = await invoke<Heard>("listen_once", {
+      model: "",
+      phrases: spokenPhrases(programNames),
+    });
     if (heard.kind === "text") {
       // Straight to the companion, exactly as a typed sentence would go. The
       // parser does not know or care which way the words arrived.
@@ -997,11 +1005,12 @@ void invoke<{ name: string }[]>("list_apps")
 // with Whisper installed and no Windows speech pack got no microphone button
 // at all — while the mode picker cheerfully offered "when I press the
 // microphone button", naming a button that was not on the screen.
-void invoke<boolean>("speech_available")
+void invoke<boolean>("speech_available", { model: "" })
   .then((ok) => {
-    // Windows speech is what the button uses, so it is what decides whether
-    // the button exists. Whisper no longer takes dictation — see
-    // PICKABLE_ENGINES.
+    // Whichever recogniser this machine has is what the button uses, so that
+    // is what decides whether the button exists: the OS one on Windows, the
+    // local Whisper model everywhere else. Asking about only one of them is
+    // what left a Mac with no button at all.
     micUsable = ok;
     if (micUsable) {
       document.getElementById("ask-mic")?.removeAttribute("hidden");

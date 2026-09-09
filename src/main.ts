@@ -683,12 +683,13 @@ function runIntent(intent: Intent): void {
       void reportLevel(intent.what);
       break;
     case "dictate":
-      // WHICHEVER RECOGNISER WAS ACTUALLY CHOSEN.
+      // WHICHEVER RECOGNISER THIS MACHINE ACTUALLY HAS.
       //
-      // This used to be unconditionally Win+H — Windows' own voice-typing bar
-      // — which meant asking for dictation opened Microsoft's recogniser even
-      // with Whisper selected and installed. Two dictation features that
-      // ignore the engine setting is one too many.
+      // This comment used to claim the choice was already being made and the
+      // function below was still unconditionally Win+H, so asking a Mac to take
+      // dictation answered "not here yet" — a comment describing an intention
+      // rather than the code under it. Now Windows uses Win+H and everywhere
+      // else uses Whisper, which is compiled into this build on both platforms.
       //
       // The outcome is deliberately the same either way: the words are typed
       // into whatever has focus. Only the thing that heard them changes.
@@ -1792,6 +1793,9 @@ async function listenOnce(): Promise<void> {
     // time you speak the front window will be a different one.
     const onScreen = (await invoke<string[]>("clickables").catch(() => [])) ?? [];
     const heard = await invoke<{ kind: string; text?: string; why?: string }>("listen_once", {
+      // Only reached where there is no OS recogniser, but always sent: which
+      // engine answers is not something this call should have to know.
+      model: behaviour.whisperModel,
       phrases: spokenPhrases(programNames, onScreen),
     });
     if (heard.kind === "text" && heard.text) {
@@ -1839,6 +1843,7 @@ async function dictateAfterWake(): Promise<void> {
     for (let turn = 0; turn < MAX_TURNS_PER_WAKE; turn++) {
       const onScreen = (await invoke<string[]>("clickables").catch(() => [])) ?? [];
       const heard = await invoke<{ kind: string; text?: string; why?: string }>("listen_once", {
+        model: behaviour.whisperModel,
         phrases: spokenPhrases(programNames, onScreen),
       });
       if (heard.kind === "unavailable" && heard.why) {
@@ -1898,15 +1903,11 @@ async function dictateIntoFocusedApp(): Promise<void> {
   if (!hasTauriHost()) return;
   // Win+H is a WINDOWS shortcut. Sending it on a Mac presses nothing useful
   // and leaves someone waiting for a dictation bar that is never going to
-  // appear, which is a worse answer than "not here yet".
+  // appear, so everywhere else takes the dictation itself.
   const { invoke } = await import("@tauri-apps/api/core");
   const os = await invoke<string>("platform_name").catch(() => "");
   if (os !== "windows") {
-    say({
-      kind: "speech",
-      text: "Dictation uses Windows voice typing, which this machine does not have.",
-      seconds: 9,
-    });
+    await dictateWithWhisper();
     return;
   }
   say({
@@ -1917,6 +1918,53 @@ async function dictateIntoFocusedApp(): Promise<void> {
     seconds: 10,
   });
   void machine("press_keys", { combo: "win+h" });
+}
+
+/**
+ * Take dictation with Whisper and type it where the cursor is.
+ *
+ * `dictate_once` HAS EXISTED IN RUST THE WHOLE TIME AND NOTHING EVER CALLED IT.
+ * Its own doc comment says it is "the path that makes choosing Whisper mean
+ * anything" and that until it existed, picking Whisper changed the label and
+ * nothing else — which stayed exactly as true after it was written, because the
+ * only route to dictation went to Win+H. A registered command with no call site
+ * is not a feature, and nothing in the type system or the tests says so.
+ *
+ * Announced before the microphone opens rather than after: the recorder stops
+ * at the pause, so somebody who does not know it has started says nothing, and
+ * silence is what ends it.
+ */
+async function dictateWithWhisper(): Promise<void> {
+  if (!hasTauriHost() || listeningOnce) return;
+  if (!whisperReady) {
+    say({
+      kind: "speech",
+      text: "Dictation here needs the Whisper download — it is in the Voice tab.",
+      seconds: 10,
+    });
+    return;
+  }
+  listeningOnce = true;
+  micOpen = true;
+  updateStatusBadge();
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    say({ kind: "speech", text: "Go ahead — I'll type it when you stop.", seconds: 6 });
+    const text = await invoke<string>("dictate_once", { model: behaviour.whisperModel });
+    if (!text.trim()) {
+      say({ kind: "speech", text: "I didn't catch anything.", seconds: 5 });
+      return;
+    }
+    await machine("type_text", { text });
+  } catch (e) {
+    // Out loud, for the same reason as dictateAfterWake: silence here cannot
+    // be told apart from a dead microphone.
+    say({ kind: "speech", text: String(e), seconds: 8 });
+  } finally {
+    listeningOnce = false;
+    micOpen = false;
+    updateStatusBadge();
+  }
 }
 
 /** Whether a microphone is open right now, for the indicator. */
@@ -2166,6 +2214,13 @@ async function refreshWhisperReady(): Promise<void> {
   const ready = (await invokeSafe<boolean>("whisper_installed")) ?? false;
   if (ready === whisperReady) return;
   whisperReady = ready;
+  // OFF WINDOWS, THE MODEL IS THE RECOGNISER. So the answer to "is there a
+  // microphone button" changes the moment a download finishes, and asking once
+  // at startup would leave a Mac saying no until the next restart.
+  void invokeSafe<boolean>("speech_available", { model: behaviour.whisperModel }).then((ok) => {
+    speechAvailable = ok === true;
+    announceCloset();
+  });
   // Now that it can run, honour the choice that was made when it could not.
   const resolved = resolveEngine(wantedEngine, engineAvailability());
   if (resolved !== behaviour.engine) {
@@ -3397,7 +3452,7 @@ if (hasTauriHost()) {
   // The program list first, then listening: starting a wake session before the
   // names arrive would compile a grammar that cannot hear "open Notepad", and
   // the grammar is fixed for the life of the session.
-  void invokeSafe<boolean>("speech_available").then((ok) => {
+  void invokeSafe<boolean>("speech_available", { model: behaviour.whisperModel }).then((ok) => {
     speechAvailable = ok === true;
     announceCloset();
   });

@@ -50,6 +50,19 @@ export const DEFAULT_ENGINE: EngineId = "builtin";
  * Whisper is still downloaded, still local, still shown — it just lives under
  * Meetings, where it does its work, instead of in a picker for a job it was
  * never suited to.
+ *
+ * WHERE THIS ARGUMENT STOPS, AND IT DOES STOP. It assumes there is an OS
+ * recogniser to prefer. On macOS there is not: `SFSpeechRecognizer` is a
+ * network recogniser unless driven through Objective-C, so the choice there is
+ * not "Windows speech or Whisper", it is "Whisper or nothing at all". Loaf now
+ * takes commands and dictation with Whisper wherever there is no OS
+ * recogniser — see the note at the top of `speech.rs`. A reply half a second
+ * late beats the wake word answering "Mm?" and then saying that speaking to
+ * Loaf is Windows-only, which is what a Mac used to get.
+ *
+ * That is a platform decision rather than a setting, which is why the list
+ * below does not change: nobody should be asked to pick an engine whose only
+ * alternative is silence.
  */
 export const PICKABLE_ENGINES: readonly EngineId[] = ENGINES.filter(
   (e) => e !== "whisper",

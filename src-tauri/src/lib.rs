@@ -49,6 +49,7 @@ pub mod speech;
 pub mod storage;
 pub mod store;
 pub mod transcribe;
+pub mod turn;
 pub mod vad;
 pub mod wake;
 pub mod whisper_setup;
@@ -1047,9 +1048,17 @@ fn save_recap(app: tauri::AppHandle, png: Vec<u8>, name: String) -> Result<Strin
 /// you compile no constraints — by sending the audio to Microsoft. The phrase
 /// list is what keeps this local, so an empty one is refused rather than
 /// quietly becoming the other thing.
+///
+/// `model` is only reached on platforms with no OS recogniser, where Whisper
+/// takes the turn instead. It is resolved here rather than inside `speech` so
+/// that a missing model is refused before a microphone opens.
 #[tauri::command(async)]
-fn listen_once(phrases: Vec<String>) -> speech::Heard {
-    speech::listen_once(phrases)
+fn listen_once(app: tauri::AppHandle, model: String, phrases: Vec<String>) -> speech::Heard {
+    let setup = match resolved_whisper_setup(&app, model) {
+        Ok(s) => s,
+        Err(why) => return speech::Heard::Unavailable { why },
+    };
+    speech::listen_once(&setup, phrases)
 }
 
 /// Every program on this machine Loaf could be asked to open.
@@ -1506,8 +1515,11 @@ fn notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), Stri
 /// only honest test of the offline recogniser and far too slow for the main
 /// thread.
 #[tauri::command(async)]
-fn speech_available() -> bool {
-    speech::available()
+fn speech_available(app: tauri::AppHandle, model: String) -> bool {
+    let Ok(setup) = resolved_whisper_setup(&app, model) else {
+        return false;
+    };
+    speech::available(&setup)
 }
 
 /// The running build's version.
