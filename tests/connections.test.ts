@@ -9,6 +9,9 @@ import {
   EMPTY_CONNECTIONS,
   type ConnectionsState,
   type ServerView,
+  watchFor,
+  isWatch,
+  type Watch,
 } from "../src/connections/connections";
 
 const NOW = 1_700_000_000_000;
@@ -429,5 +432,135 @@ describe("running a tool", () => {
       NOW,
     );
     expect(html).toMatch(/class="mcp-tool on"[^>]*data-mcp-tool="get_notes"/);
+  });
+});
+
+/**
+ * Watches — Loaf checking something on its own.
+ *
+ * The panel half. The rules that make this not-a-nuisance (first run silent,
+ * minimum interval, only changes speak) live in watch.rs and are tested there;
+ * these are the ones about not lying to the user in the UI.
+ */
+describe("having Loaf check a tool for you", () => {
+  const withTool = (over: Partial<ConnectionsState> = {}) =>
+    state({
+      servers: [server()],
+      tools: { granola: ["list_meetings"] },
+      picked: { server: "granola", tool: "list_meetings" },
+      ...over,
+    });
+
+  const aWatch = (over: Partial<Watch> = {}): Watch => ({
+    server: "granola",
+    tool: "list_meetings",
+    arguments: "{}",
+    every_seconds: 300,
+    say: "New meeting notes.",
+    enabled: true,
+    ...over,
+  });
+
+  it("offers to watch a tool the user has opened", () => {
+    const html = connectionsPanel(withTool(), NOW);
+    expect(html).toContain("data-mcp-watch-on");
+    expect(html).toContain("watch-every");
+  });
+
+  it("offers nothing until a tool is opened", () => {
+    expect(connectionsPanel(state({ servers: [server()] }), NOW)).not.toContain("data-mcp-watch-on");
+  });
+
+  // Saying "the first check is silent" in the panel matters: otherwise adding
+  // a watch and hearing nothing reads as the feature being broken.
+  it("says the first check is silent, so silence is not read as failure", () => {
+    expect(connectionsPanel(withTool(), NOW).toLowerCase()).toContain("first check is silent");
+  });
+
+  it("says every check is logged, where the user can see it", () => {
+    expect(connectionsPanel(withTool(), NOW).toLowerCase()).toContain("log");
+  });
+
+  it("fills in the wording and interval of a watch that already exists", () => {
+    const html = connectionsPanel(withTool({ watches: [aWatch()] }), NOW);
+    expect(html).toContain("New meeting notes.");
+    expect(html).toContain('value="300" selected');
+  });
+
+  it("offers to stop only when there is something to stop", () => {
+    expect(connectionsPanel(withTool(), NOW)).not.toContain("data-mcp-watch-off");
+    expect(connectionsPanel(withTool({ watches: [aWatch()] }), NOW)).toContain("data-mcp-watch-off");
+  });
+
+  it("does not show another tool's watch on this one", () => {
+    const html = connectionsPanel(withTool({ watches: [aWatch({ tool: "get_notes" })] }), NOW);
+    expect(html).not.toContain("data-mcp-watch-off");
+    expect(html).not.toContain("New meeting notes.");
+  });
+
+  it("never lets the user's own wording become HTML", () => {
+    const html = connectionsPanel(
+      withTool({ watches: [aWatch({ say: '"><img src=x onerror=alert(1)>' })] }),
+      NOW,
+    );
+    expect(html).not.toContain("<img");
+  });
+});
+
+describe("watchFor", () => {
+  const w = (server: string, tool: string): Watch => ({
+    server,
+    tool,
+    arguments: "{}",
+    every_seconds: 60,
+    say: "",
+    enabled: true,
+  });
+
+  it("finds the watch on this exact tool", () => {
+    expect(watchFor([w("a", "one"), w("a", "two")], "a", "two")?.tool).toBe("two");
+  });
+
+  it("does not match the same tool name on another server", () => {
+    expect(watchFor([w("a", "one")], "b", "one")).toBe(null);
+  });
+
+  it("returns null rather than undefined when there is none", () => {
+    expect(watchFor([], "a", "one")).toBe(null);
+  });
+});
+
+describe("isWatch", () => {
+  const good = {
+    server: "a",
+    tool: "b",
+    arguments: "{}",
+    every_seconds: 60,
+    say: "",
+    enabled: true,
+  };
+
+  it("accepts a well-formed watch", () => {
+    expect(isWatch(good)).toBe(true);
+  });
+
+  // A watch starts a program on a timer. A malformed one is dropped whole
+  // rather than half-trusted, the same rule the server list follows.
+  it("rejects one missing a field", () => {
+    for (const key of Object.keys(good)) {
+      const bad: Record<string, unknown> = { ...good };
+      delete bad[key];
+      expect(isWatch(bad)).toBe(false);
+    }
+  });
+
+  it("rejects a nonsense interval", () => {
+    expect(isWatch({ ...good, every_seconds: NaN })).toBe(false);
+    expect(isWatch({ ...good, every_seconds: "60" })).toBe(false);
+  });
+
+  it("rejects things that are not objects", () => {
+    expect(isWatch(null)).toBe(false);
+    expect(isWatch("watch")).toBe(false);
   });
 });

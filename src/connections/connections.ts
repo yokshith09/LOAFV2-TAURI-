@@ -26,6 +26,58 @@ export interface ServerView {
   readonly env_keys: readonly string[];
 }
 
+/**
+ * One thing Loaf checks on its own. Mirrors `watch.rs`.
+ *
+ * `enabled` is separate from existing so a watch can be paused without being
+ * described again — the interval and the wording are the fiddly part to retype.
+ */
+export interface Watch {
+  readonly server: string;
+  readonly tool: string;
+  readonly arguments: string;
+  readonly every_seconds: number;
+  readonly say: string;
+  readonly enabled: boolean;
+}
+
+/**
+ * Checked on the way in, like every other shape that crosses the bridge.
+ *
+ * A watch decides that Loaf starts a program on a timer, so a malformed one is
+ * dropped rather than half-trusted — the same rule the server list follows.
+ */
+export function isWatch(v: unknown): v is Watch {
+  if (typeof v !== "object" || v === null) return false;
+  const w = v as Record<string, unknown>;
+  return (
+    typeof w.server === "string" &&
+    typeof w.tool === "string" &&
+    typeof w.arguments === "string" &&
+    typeof w.every_seconds === "number" &&
+    Number.isFinite(w.every_seconds) &&
+    typeof w.say === "string" &&
+    typeof w.enabled === "boolean"
+  );
+}
+
+/** How often a watch may run, offered as the few intervals anyone wants. */
+export const WATCH_INTERVALS: readonly { readonly seconds: number; readonly label: string }[] = [
+  { seconds: 60, label: "every minute" },
+  { seconds: 300, label: "every 5 minutes" },
+  { seconds: 900, label: "every 15 minutes" },
+  { seconds: 3600, label: "every hour" },
+];
+
+/** The watch on this tool, if there is one. */
+export function watchFor(
+  watches: readonly Watch[],
+  server: string,
+  tool: string,
+): Watch | null {
+  return watches.find((w) => w.server === server && w.tool === tool) ?? null;
+}
+
 /** One thing Loaf sent to a server. */
 export interface CallRecord {
   readonly server: string;
@@ -45,6 +97,8 @@ export interface ConnectionsState {
   /** What went wrong last, by server name. */
   readonly errors: Readonly<Record<string, string>>;
   readonly calls: readonly CallRecord[];
+  /** What Loaf checks on its own. Empty until the user makes one. */
+  readonly watches: readonly Watch[];
   /** Whether the add form is open. */
   readonly adding: boolean;
   /**
@@ -77,6 +131,7 @@ export const EMPTY_CONNECTIONS: ConnectionsState = {
   tools: {},
   errors: {},
   calls: [],
+  watches: [],
   adding: false,
   picked: null,
   argsDraft: "{}",
@@ -251,8 +306,58 @@ function runBlock(name: string, state: ConnectionsState): string {
     `<button class="mcp-btn" data-mcp-cancel="1">Close</button>` +
     `</div>` +
     (state.result ? `<pre class="mcp-result">${escapeHTML(state.result)}</pre>` : "") +
+    watchBlock(name, tool, state) +
     `</div>`
   );
+}
+
+/**
+ * Turning one call into something Loaf does on its own.
+ *
+ * Deliberately attached to a tool the user has just RUN, rather than being its
+ * own screen. Watching a tool you have never called is how you end up with a
+ * watch whose arguments were wrong from the start, failing quietly every
+ * minute — and the arguments box directly above is the one that was proven to
+ * work seconds ago.
+ *
+ * The wording is the user's because Loaf cannot summarise what came back. It
+ * knows the bytes differ, and inventing "you have 3 new emails" from that
+ * would be exactly the guessing this project keeps refusing.
+ */
+function watchBlock(server: string, tool: string, state: ConnectionsState): string {
+  const existing = watchFor(state.watches, server, tool);
+  const options = WATCH_INTERVALS.map(
+    (i) =>
+      `<option value="${i.seconds}"${
+        existing && existing.every_seconds === i.seconds ? " selected" : ""
+      }>${escapeHTML(i.label)}</option>`,
+  ).join("");
+
+  return (
+    `<div class="mcp-watch">` +
+    `<h4 class="mcp-watch-head">Have Loaf check this for you</h4>` +
+    `<p class="mcp-watch-note">Loaf calls it on a timer and says something only when the ` +
+    `answer changes. Every check is in the log below. The first check is silent — it is ` +
+    `what the rest are compared against.</p>` +
+    `<label class="mcp-run-label" for="watch-say">What Loaf should say</label>` +
+    `<input id="watch-say" class="mcp-args" type="text" placeholder="You have new mail." ` +
+    `value="${escapeHTML(existing?.say ?? "")}">` +
+    `<div class="mcp-actions">` +
+    `<select id="watch-every" class="mcp-every">${options}</select>` +
+    (existing
+      ? `<button class="mcp-btn" data-mcp-watch-off="1">Stop checking</button>`
+      : "") +
+    `<button class="mcp-btn" data-mcp-watch-on="1">` +
+    (existing ? "Save changes" : "Start checking") +
+    `</button>` +
+    `</div>` +
+    (existing?.enabled ? `<p class="mcp-watch-on">Checking ${escapeHTML(intervalLabel(existing.every_seconds))}.</p>` : "") +
+    `</div>`
+  );
+}
+
+function intervalLabel(seconds: number): string {
+  return WATCH_INTERVALS.find((i) => i.seconds === seconds)?.label ?? `every ${seconds}s`;
 }
 
 function serverCard(server: ServerView, state: ConnectionsState): string {
@@ -390,6 +495,11 @@ export const CONNECTIONS_CSS = `
 .mcp-run-label{display:block;font-size:12px;margin-bottom:4px}
 .mcp-args{width:100%;font-family:ui-monospace,monospace;font-size:12px}
 .mcp-result{white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;font-size:12px;margin-top:8px}
+.mcp-watch{margin-top:10px;padding-top:10px;border-top:1px dashed currentColor}
+.mcp-watch-head{margin:0 0 4px;font-size:13px}
+.mcp-watch-note{margin:0 0 8px;font-size:12px;opacity:.8}
+.mcp-watch-on{margin:6px 0 0;font-size:12px;font-weight:600}
+.mcp-every{font-size:12px}
 .mcp-tool{font-size:11px;padding:3px 7px;border-radius:20px;border:1px solid var(--line);opacity:.85}
 .mcp-error{margin:8px 0 0;font-size:12px;color:#d05353}
 .mcp-empty{font-size:12px;opacity:.7;margin:8px 0}

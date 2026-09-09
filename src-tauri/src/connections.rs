@@ -120,7 +120,14 @@ pub fn apply(stored: &Config, incoming: Vec<ServerView>, secrets: &SecretsIn) ->
         })
         .collect();
 
-    Config { servers }
+    // WATCHES ARE CARRIED THROUGH, and this line is load-bearing. This
+    // function rebuilds the config from what the window sent, and the window
+    // is never told about watches — so building a fresh `Config` here would
+    // delete every one of them the next time somebody renamed a server.
+    Config {
+        servers,
+        watches: stored.watches.clone(),
+    }
 }
 
 /// New secret values, if the user typed any, keyed by server then variable.
@@ -255,10 +262,38 @@ mod tests {
         }
     }
 
+    // The window never sees watches, so a rebuild from what it sent would
+    // delete them. Renaming a server would have silently thrown away every
+    // watch the user had made.
+    #[test]
+    fn editing_servers_does_not_throw_away_the_watches() {
+        let stored = Config {
+            servers: vec![spec("gmail", &[])],
+            watches: vec![crate::watch::Watch {
+                server: "gmail".into(),
+                tool: "list_unread".into(),
+                arguments: "{}".into(),
+                every_seconds: 300,
+                say: "New mail.".into(),
+                enabled: true,
+            }],
+        };
+        let incoming = vec![ServerView {
+            name: "gmail".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "gmail-mcp".into()],
+            note: String::new(),
+            env_keys: Vec::new(),
+        }];
+        let out = apply(&stored, incoming, &SecretsIn::default());
+        assert_eq!(out.watches, stored.watches);
+    }
+
     #[test]
     fn the_window_is_told_the_keys_and_never_the_values() {
         let config = Config {
             servers: vec![spec("slack", &[("SLACK_TOKEN", "xoxb-the-actual-secret")])],
+            watches: Vec::new(),
         };
         let view = redact(&config);
         assert_eq!(view[0].env_keys, vec!["SLACK_TOKEN".to_string()]);
@@ -273,6 +308,7 @@ mod tests {
     fn saving_a_form_that_could_not_see_a_key_does_not_erase_it() {
         let stored = Config {
             servers: vec![spec("slack", &[("SLACK_TOKEN", "xoxb-secret")])],
+            watches: Vec::new(),
         };
         // What comes back from a window that rendered the key as "set" and had
         // nothing typed into it.
@@ -285,6 +321,7 @@ mod tests {
     fn a_typed_value_replaces_the_stored_one() {
         let stored = Config {
             servers: vec![spec("slack", &[("SLACK_TOKEN", "old")])],
+            watches: Vec::new(),
         };
         let mut secrets = BTreeMap::new();
         secrets.insert(
@@ -299,6 +336,7 @@ mod tests {
     fn dropping_a_key_from_the_list_deletes_it() {
         let stored = Config {
             servers: vec![spec("slack", &[("A", "1"), ("B", "2")])],
+            watches: Vec::new(),
         };
         let mut view = redact(&stored);
         view[0].env_keys.retain(|k| k != "B");
@@ -329,6 +367,7 @@ mod tests {
         // guessing wrong moves a credential to a program it was not issued for.
         let stored = Config {
             servers: vec![spec("slack", &[("SLACK_TOKEN", "secret")])],
+            watches: Vec::new(),
         };
         let mut view = redact(&stored);
         view[0].name = "slack-work".into();
@@ -349,6 +388,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let config = Config {
             servers: vec![spec("granola", &[("KEY", "v")])],
+            watches: Vec::new(),
         };
         save(&dir, &config).unwrap();
         let back = load(&dir).unwrap();

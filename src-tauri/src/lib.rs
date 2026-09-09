@@ -52,6 +52,7 @@ pub mod transcribe;
 pub mod turn;
 pub mod vad;
 pub mod wake;
+pub mod watch;
 pub mod whisper_setup;
 
 use platform::{ForegroundApp, PlatformProbe};
@@ -1797,6 +1798,109 @@ fn mcp_call(
     outcome
 }
 
+/// The things Loaf checks on its own.
+#[tauri::command(async)]
+fn watches_list(app: tauri::AppHandle) -> Result<Vec<watch::Watch>, String> {
+    Ok(connections::load(&data_dir(&app)?)?.watches)
+}
+
+/// Replace the whole list, which is how the Connections screen saves it.
+///
+/// Whole-list rather than per-item for the same reason the server list is:
+/// one writer, one shape, and no way for the window and the file to disagree
+/// about what exists.
+#[tauri::command(async)]
+fn watches_save(app: tauri::AppHandle, watches: Vec<watch::Watch>) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    let mut config = connections::load(&dir)?;
+    config.watches = watches;
+    connections::save(&dir, &config)
+}
+
+/// What the poller has seen: when each watch last ran, and what it said then.
+#[derive(Default)]
+pub struct Seen(pub std::sync::Mutex<std::collections::BTreeMap<(String, String), (u64, String)>>);
+
+/// Check every watch that is due, and say so when one changes.
+///
+/// IN MEMORY, NOT ON DISK, and that is a decision rather than laziness. The
+/// baseline is what a watch looked like last time Loaf ran; keeping it across
+/// a restart would mean announcing everything that happened while Loaf was
+/// closed, which for a mailbox is the whole mailbox. A restart starts quiet.
+///
+/// One thread waking often and usually doing nothing, rather than a timer per
+/// watch: a dozen sleeping threads to make one call a minute is a lot of
+/// machinery for a pet.
+fn poll_watches(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    use tauri::Manager;
+
+    let Ok(dir) = data_dir(app) else { return };
+    let Ok(config) = connections::load(&dir) else {
+        return;
+    };
+    let now = connections::now();
+    // Bound once. `app.state::<Seen>()` is a temporary, and locking it inline
+    // borrows something that is dropped at the end of the statement.
+    let seen_state = app.state::<Seen>();
+
+    for w in &config.watches {
+        let key = (w.server.clone(), w.tool.clone());
+        let last = {
+            let Ok(seen) = seen_state.0.lock() else {
+                return;
+            };
+            seen.get(&key).cloned()
+        };
+        if !watch::due(w, now, last.as_ref().map(|(at, _)| *at)) {
+            continue;
+        }
+
+        // The same path a person pressing the button takes, so a watch and a
+        // press are logged identically and neither can drift from the other.
+        let parsed: serde_json::Value = if w.arguments.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            match serde_json::from_str(&w.arguments) {
+                Ok(v) => v,
+                // A watch with broken arguments is disabled in effect rather
+                // than retried every minute forever.
+                Err(_) => continue,
+            }
+        };
+        let pool = app.state::<connections::Pool>();
+        let outcome = connections::with_connection(&pool, &config, &w.server, |conn| {
+            conn.call(&w.tool, parsed.clone())
+        });
+        let _ = mcp_client::record(
+            &dir,
+            &mcp_client::CallRecord {
+                server: w.server.clone(),
+                tool: w.tool.clone(),
+                arguments: parsed.to_string(),
+                at: now,
+                ok: outcome.is_ok(),
+            },
+        );
+
+        let Ok(answer) = outcome else {
+            // A server that is down is not news. The failure is already in the
+            // call log, and a bubble every minute about a broken watch is what
+            // gets the whole feature switched off.
+            continue;
+        };
+
+        let digest = watch::digest(&answer);
+        let verdict = watch::compare(last.as_ref().map(|(_, d)| d.as_str()), &digest);
+        if let Ok(mut seen) = seen_state.0.lock() {
+            seen.insert(key, (now, digest));
+        }
+        if verdict == watch::Outcome::Changed {
+            let _ = app.emit("loaf://watch/changed", watch::bubble_line(w, &answer));
+        }
+    }
+}
+
 /// Everything Loaf has sent to a server, oldest first.
 #[tauri::command(async)]
 fn mcp_calls(app: tauri::AppHandle) -> Result<Vec<mcp_client::CallRecord>, String> {
@@ -2161,6 +2265,10 @@ pub fn run() {
         // Empty at launch and it stays empty: a server appears in here
         // only because something asked it a question.
         .manage(connections::Pool::default())
+        // What each watch last returned. Empty at launch on purpose — see
+        // poll_watches: a restart starts quiet rather than announcing
+        // everything that happened while Loaf was closed.
+        .manage(Seen::default())
         // Opened on first use, not at launch: see with_store.
         .manage(Store::default())
         .setup(|app| {
@@ -2173,6 +2281,22 @@ pub fn run() {
 
             // Windows needs a listener running; macOS polls and this is a no-op.
             scroll::start();
+
+            // THE ONLY THING IN LOAF THAT REACHES OUT ON ITS OWN SCHEDULE.
+            //
+            // It does nothing at all until the user makes a watch — the list
+            // ships empty, there is no discovery and nothing is suggested. The
+            // thread exists regardless because starting it later would mean a
+            // watch made now not running until the next launch.
+            //
+            // Fifteen seconds is the heartbeat, not the poll rate: watch::due
+            // decides what actually runs, and it will not let anything run more
+            // than once a minute however the config is written.
+            let ticker = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                poll_watches(&ticker);
+            });
 
             build_tray(app.handle())?;
             build_bubble_window(app.handle())?;
@@ -2264,6 +2388,8 @@ pub fn run() {
             mcp_tools,
             mcp_call,
             mcp_calls,
+            watches_list,
+            watches_save,
             mcp_connected,
             mcp_disconnect,
             open_mcp_config,

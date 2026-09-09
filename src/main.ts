@@ -3558,6 +3558,23 @@ if (hasTauriHost()) {
     console.error("bubble answers unavailable");
   });
 
+  // THE FIRST THING LOAF SAYS THAT NOBODY ASKED FOR AT THAT MOMENT.
+  //
+  // Everything else the companion says is a reply, a timer finishing, or a
+  // nudge built from its own measurements. This one comes from another
+  // program. It only happens because the user made a watch, it only fires when
+  // the answer actually changed, and every check is in the call log — see
+  // watch.rs for why each of those three is load-bearing.
+  void listen<string>("loaf://watch/changed", (e) => {
+    const text = typeof e.payload === "string" ? e.payload.trim() : "";
+    if (!text) return;
+    say({ kind: "speech", text, seconds: 12 });
+  }).catch(() => {
+    // Without this a watch fires and nothing is ever said, which is the
+    // feature silently not existing.
+    console.error("watch notifications unavailable");
+  });
+
   void listen(TASK_COMMAND_EVENT, (e) => applyTaskCommand(e.payload)).catch(() => {
     // Without this the notetaker has no front door, which is how it shipped.
   });

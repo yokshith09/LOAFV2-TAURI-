@@ -32,11 +32,13 @@ import {
 import {
   isServerView,
   isCallRecord,
+  isWatch,
   parseArgs,
   EMPTY_CONNECTIONS,
   type ConnectionsState,
   type ServerView,
   type CallRecord,
+  type Watch,
 } from "../connections/connections";
 import {
   COMMAND_EVENT,
@@ -206,16 +208,18 @@ async function runSearch(): Promise<void> {
  * Tools appear only when the button that says it will start it is pressed.
  */
 async function refreshConnections(keep = true): Promise<void> {
-  const [servers, running, calls] = await Promise.all([
+  const [servers, running, calls, watches] = await Promise.all([
     invoke<unknown[]>("mcp_servers").catch(() => []),
     invoke<unknown[]>("mcp_connected").catch(() => []),
     invoke<unknown[]>("mcp_calls").catch(() => []),
+    invoke<unknown[]>("watches_list").catch(() => []),
   ]);
   connections = {
     ...connections,
     servers: servers.filter(isServerView) as ServerView[],
     running: (running as unknown[]).filter((r): r is string => typeof r === "string"),
     calls: calls.filter(isCallRecord) as CallRecord[],
+    watches: watches.filter(isWatch) as Watch[],
     // A tools list survives a refresh; it is what the user just asked for.
     // Errors do not: the point of pressing again is to find out if it still
     // fails, and a stale red line under a server that now works is a lie.
@@ -522,6 +526,44 @@ root.addEventListener("click", (ev) => {
       }
       // The log gained a row either way — see the note on mcp_call in Rust.
       await refreshConnections();
+    })();
+    return;
+  }
+
+  if (target.closest("[data-mcp-watch-on]") || target.closest("[data-mcp-watch-off]")) {
+    const picked = connections.picked;
+    if (!picked) return;
+    const off = target.closest("[data-mcp-watch-off]") !== null;
+    const sayBox = document.getElementById("watch-say") as HTMLInputElement | null;
+    const everyBox = document.getElementById("watch-every") as HTMLSelectElement | null;
+    // Every OTHER watch, unchanged. A watch is identified by its server and
+    // tool, so saving one must not disturb the rest of the list.
+    const others = connections.watches.filter(
+      (w) => !(w.server === picked.server && w.tool === picked.tool),
+    );
+    const next = off
+      ? others
+      : [
+          ...others,
+          {
+            server: picked.server,
+            tool: picked.tool,
+            // The arguments that were just proven to work in the box above,
+            // not a fresh empty object.
+            arguments: connections.argsDraft,
+            every_seconds: Number(everyBox?.value ?? 300) || 300,
+            say: sayBox?.value ?? "",
+            enabled: true,
+          },
+        ];
+    connections = { ...connections, watches: next };
+    void (async () => {
+      try {
+        await invoke("watches_save", { watches: next });
+      } catch (err) {
+        connections = { ...connections, result: String(err) };
+      }
+      await refreshConnections(false);
     })();
     return;
   }

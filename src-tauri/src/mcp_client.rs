@@ -53,6 +53,10 @@ pub struct ServerSpec {
 pub struct Config {
     #[serde(default)]
     pub servers: Vec<ServerSpec>,
+    /// Things Loaf checks on its own. Empty unless the user made one — there
+    /// is no built-in list and nothing is suggested. See `watch.rs`.
+    #[serde(default)]
+    pub watches: Vec<crate::watch::Watch>,
 }
 
 /// Parse a config, refusing anything that is not clearly a server list.
