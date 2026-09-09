@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { CATALOG, MANUAL_ONLY, catalogEntry, commandLineOf } from "../src/connections/catalog";
 import {
   connectionsPanel,
   parseArgs,
@@ -562,5 +563,77 @@ describe("isWatch", () => {
   it("rejects things that are not objects", () => {
     expect(isWatch(null)).toBe(false);
     expect(isWatch("watch")).toBe(false);
+  });
+});
+
+/**
+ * The catalog — what Loaf will fill in for you, and what it refuses to.
+ *
+ * The rule these tests hold: a row here is Loaf saying "this is safe to run",
+ * and Loaf can only honestly say that about a server published by whoever owns
+ * the thing being connected. Verified against npm, not remembered.
+ */
+describe("the server catalog", () => {
+  it("offers something to start from", () => {
+    expect(CATALOG.length).toBeGreaterThan(0);
+  });
+
+  it("names who publishes every entry, because that is the whole basis for it being listed", () => {
+    for (const e of CATALOG) {
+      expect(e.publisher.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  // The two that guides point at are marked no longer supported on npm.
+  // A button for either would be Loaf recommending abandoned code.
+  it("lists no deprecated server", () => {
+    const commands = CATALOG.map((e) => [e.command, ...e.args].join(" "));
+    expect(commands.join(" ")).not.toContain("server-github");
+    expect(commands.join(" ")).not.toContain("server-slack");
+  });
+
+  // The finding that shaped this file: ten community Gmail servers, no
+  // first-party one, and each would receive the user's whole mailbox.
+  it("offers no one-press Gmail, and says why instead of leaving a gap", () => {
+    expect(CATALOG.map((e) => e.id)).not.toContain("gmail");
+    const explained = MANUAL_ONLY.map((m) => m.label.toLowerCase()).join(" ");
+    expect(explained).toContain("gmail");
+  });
+
+  it("explains every manual-only entry rather than just naming it", () => {
+    for (const m of MANUAL_ONLY) {
+      expect(m.why.trim().length).toBeGreaterThan(30);
+    }
+  });
+
+  it("has unique ids so a pick is unambiguous", () => {
+    expect(new Set(CATALOG.map((e) => e.id)).size).toBe(CATALOG.length);
+  });
+
+  it("finds an entry by id, and nothing for one that is not there", () => {
+    expect(catalogEntry(CATALOG[0]!.id)?.id).toBe(CATALOG[0]!.id);
+    expect(catalogEntry("gmail")).toBe(null);
+  });
+
+  it("shows the command that will actually run", () => {
+    const e = CATALOG[0]!;
+    expect(commandLineOf(e)).toBe([e.command, ...e.args].join(" "));
+  });
+});
+
+describe("the add form", () => {
+  it("shows what can be started from, and what cannot", () => {
+    const html = connectionsPanel(state({ adding: true }), NOW);
+    expect(html).toContain("data-mcp-pick-server");
+    expect(html.toLowerCase()).toContain("gmail");
+  });
+
+  it("shows none of it until the form is open", () => {
+    expect(connectionsPanel(state(), NOW)).not.toContain("data-mcp-pick-server");
+  });
+
+  it("says pressing one does not start anything", () => {
+    const html = connectionsPanel(state({ adding: true }), NOW).toLowerCase();
+    expect(html).toContain("nothing runs until");
   });
 });

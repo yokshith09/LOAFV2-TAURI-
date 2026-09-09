@@ -15,6 +15,7 @@
  */
 
 import { escapeHTML } from "../dashboard/html";
+import { CATALOG, MANUAL_ONLY, commandLineOf } from "./catalog";
 
 /** A server as Rust is willing to describe it. Never carries a secret. */
 export interface ServerView {
@@ -405,6 +406,7 @@ function addForm(open: boolean): string {
   }
   return (
     `<div class="mcp-form">` +
+    pickList() +
     `<label>What to call it<input id="mcp-new-name" placeholder="granola" maxlength="40"></label>` +
     `<label>Program to run<input id="mcp-new-cmd" placeholder="npx" maxlength="200"></label>` +
     `<label>Arguments<input id="mcp-new-args" placeholder="-y granola-mcp" maxlength="400"></label>` +
@@ -415,6 +417,48 @@ function addForm(open: boolean): string {
     `<button class="mcp-btn primary" data-mcp-add-save="1">Add it</button>` +
     `<button class="mcp-btn" data-mcp-add-cancel="1">Cancel</button>` +
     `</div></div>`
+  );
+}
+
+/**
+ * The few servers Loaf will fill in for you, and an honest note about the rest.
+ *
+ * Pressing one fills the boxes below rather than adding it — the user still
+ * sees the exact command before anything is saved, and can change it. A list
+ * that added a server on one press would be Loaf running somebody else's
+ * program because a name was clicked.
+ *
+ * The "not on this list" part is shown rather than omitted. An absence explains
+ * nothing, and the next thing anyone concludes from a missing Gmail row is that
+ * Loaf cannot do Gmail at all — when the real answer is that Loaf will not pick
+ * a mail server on your behalf. See catalog.ts.
+ */
+function pickList(): string {
+  const rows = CATALOG.map(
+    (e) =>
+      `<button class="mcp-pick" data-mcp-pick-server="${escapeHTML(e.id)}">` +
+      `<span class="mcp-pick-name">${escapeHTML(e.label)}</span>` +
+      `<span class="mcp-pick-by">by ${escapeHTML(e.publisher)}</span>` +
+      `<code>${escapeHTML(commandLineOf(e))}</code>` +
+      (e.setup ? `<span class="mcp-pick-setup">${escapeHTML(e.setup)}</span>` : "") +
+      `</button>`,
+  ).join("");
+
+  const manual = MANUAL_ONLY.map(
+    (m) =>
+      `<li><b>${escapeHTML(m.label)}</b> &mdash; ${escapeHTML(m.why)}</li>`,
+  ).join("");
+
+  return (
+    `<div class="mcp-picks">` +
+    `<h4 class="mcp-watch-head">Start from one of these</h4>` +
+    `<p class="mcp-watch-note">Only servers published by the people who own the ` +
+    `thing being connected. Pressing one fills in the boxes; nothing runs until ` +
+    `you add it.</p>` +
+    `<div class="mcp-pick-row">${rows}</div>` +
+    `<p class="mcp-watch-note">Not on this list, on purpose:</p>` +
+    `<ul class="mcp-manual">${manual}</ul>` +
+    `</div>`
   );
 }
 
@@ -500,6 +544,13 @@ export const CONNECTIONS_CSS = `
 .mcp-watch-note{margin:0 0 8px;font-size:12px;opacity:.8}
 .mcp-watch-on{margin:6px 0 0;font-size:12px;font-weight:600}
 .mcp-every{font-size:12px}
+.mcp-picks{margin-bottom:12px}
+.mcp-pick-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.mcp-pick{display:flex;flex-direction:column;gap:3px;text-align:left;cursor:pointer;padding:8px 10px;max-width:280px}
+.mcp-pick-name{font-weight:600}
+.mcp-pick-by,.mcp-pick-setup{font-size:11px;opacity:.8}
+.mcp-manual{margin:0;padding-left:18px;font-size:12px;opacity:.85}
+.mcp-manual li{margin-bottom:4px}
 .mcp-tool{font-size:11px;padding:3px 7px;border-radius:20px;border:1px solid var(--line);opacity:.85}
 .mcp-error{margin:8px 0 0;font-size:12px;color:#d05353}
 .mcp-empty{font-size:12px;opacity:.7;margin:8px 0}

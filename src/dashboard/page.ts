@@ -29,6 +29,7 @@ import {
   type SearchState,
   type Hit,
 } from "../search/search";
+import { catalogEntry } from "../connections/catalog";
 import {
   isServerView,
   isCallRecord,
@@ -589,6 +590,25 @@ root.addEventListener("click", (ev) => {
       );
       await refreshConnections(false);
     })();
+    return;
+  }
+
+  // Fills the boxes; never adds. The user sees the exact command that will
+  // run, and can change it, before anything is saved.
+  const pickServer = target.closest<HTMLElement>("[data-mcp-pick-server]");
+  if (pickServer) {
+    const entry = catalogEntry(pickServer.dataset.mcpPickServer!);
+    if (entry) {
+      const set = (id: string, value: string): void => {
+        const el = document.getElementById(id) as HTMLInputElement | null;
+        if (el) el.value = value;
+      };
+      set("mcp-new-name", entry.id);
+      set("mcp-new-cmd", entry.command);
+      set("mcp-new-args", entry.args.join(" "));
+      set("mcp-new-note", entry.note);
+      (document.getElementById("mcp-new-name") as HTMLInputElement | null)?.focus();
+    }
     return;
   }
 
