@@ -1844,6 +1844,41 @@ fn can_speak() -> bool {
 /// terminal sees it immediately, and nothing is written to their disk for a
 /// problem that only matters while somebody is looking. See src/boot.ts for the
 /// other half, and for why an invisible pet is otherwise undiagnosable from a PC.
+/// Where voice actually got to, written somewhere it can be sent back.
+///
+/// WHY THIS IS SEPARATE FROM `report_error`. That one fires once per run and
+/// posts a notification, because it means something broke. This means nothing
+/// broke — it is the state of a feature that has now been reported as "not
+/// working" three times running, with no way to tell which of six cases it was:
+/// listening switched off, no microphone, no model, the OS refusing the wake
+/// session, wake running and mishearing, or the frontend never reaching this
+/// code at all. Those need different fixes and look identical from outside.
+///
+/// Overwritten each time rather than appended: the current state is the whole
+/// question, and a growing file is one more thing to explain over a screenshot.
+#[tauri::command]
+fn voice_report(app: tauri::AppHandle, detail: String) {
+    let detail: String = detail.chars().take(2000).collect();
+    eprintln!("loaf/voice {detail}");
+    if let Ok(dir) = data_dir(&app) {
+        let dir = dir.join("LoafPlus");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let _ = std::fs::write(
+                dir.join("voice.txt"),
+                format!(
+                    "Loaf {}
+{} (seconds since 1970)
+
+{detail}
+",
+                    env!("CARGO_PKG_VERSION"),
+                    connections::now()
+                ),
+            );
+        }
+    }
+}
+
 #[tauri::command]
 fn report_error(app: tauri::AppHandle, what: String, detail: String) {
     // Truncated on the way in as well as on the way out: this is reachable from
@@ -2233,6 +2268,7 @@ pub fn run() {
             mcp_disconnect,
             open_mcp_config,
             report_error,
+            voice_report,
             speak,
             stop_speaking,
             can_speak,

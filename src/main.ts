@@ -2097,10 +2097,46 @@ export function setListenMode(mode: ListenMode): void {
   void syncListening();
 }
 
+/**
+ * Say where voice got to, in a file somebody can send back.
+ *
+ * "Voice is not working" has arrived three times and described three different
+ * machines, and there was no way to tell listening being switched off from a
+ * refused microphone from a wake session that starts and mishears. The mode is
+ * the one that matters most, because `off` is the DEFAULT and nothing in
+ * onboarding mentions voice: a new install genuinely cannot hear you, and that
+ * is working as designed, which is the hardest kind of "broken" to diagnose
+ * over a screenshot.
+ */
+function reportVoice(what: string): void {
+  if (!hasTauriHost()) return;
+  void import("@tauri-apps/api/core")
+    .then(({ invoke }) =>
+      invoke("voice_report", {
+        detail: [
+          what,
+          `listen mode: ${behaviour.listenMode}${
+            behaviour.listenMode === "off" ? "  <- the microphone is never opened in this mode" : ""
+          }`,
+          `wake word: ${behaviour.wakeWord ?? "(default) hey loaf"}`,
+          `wake session running: ${wakeRunning}`,
+          `recogniser available: ${speechAvailable}`,
+          `whisper model: ${behaviour.whisperModel === "" ? "(the downloaded one)" : behaviour.whisperModel}`,
+        ].join("\n"),
+      }),
+    )
+    .catch(() => {
+      // A diagnostic that can raise is worse than no diagnostic.
+    });
+}
+
 async function syncListening(): Promise<void> {
   if (!hasTauriHost()) return;
   const want = usesWakeWord(behaviour.listenMode);
-  if (want === wakeRunning) return;
+  if (want === wakeRunning) {
+    reportVoice(want ? "already listening" : "not listening, and not asked to");
+    return;
+  }
   const { invoke } = await import("@tauri-apps/api/core");
   if (want) {
     // The gate and the grammar must agree, or Loaf would listen for one word
@@ -2133,6 +2169,7 @@ async function syncListening(): Promise<void> {
       await invoke("start_wake", { phrases });
       wakeRunning = true;
       updateStatusBadge();
+      reportVoice("wake session started");
       const word = wakeGate.words[0] ?? "hey loaf";
       say({ kind: "speech", text: `Listening. Say \u201c${word}\u201d.`, seconds: 6 });
     } catch (e) {
@@ -2140,6 +2177,7 @@ async function syncListening(): Promise<void> {
       behaviour.listenMode = "off";
       announceCloset();
       updateStatusBadge();
+      reportVoice(`start_wake refused: ${String(e)}`);
       say({ kind: "speech", text: String(e), seconds: 10 });
     }
   } else {
