@@ -69,12 +69,6 @@ const NOT_WIRED_YET: Record<string, string> = {
   store_add_line: "M3 write path — nothing puts transcript lines in the store yet",
   store_preview_range: "M3 — the delete-range screen shows its own count instead",
 
-  // The MCP client half: Loaf calling out to another app's server. The
-  // connections screen manages servers and reads the call log, and nothing
-  // ever makes a call — which is the "MCP client: no triggers" line in the
-  // status table, found again from the other direction.
-  mcp_call: "MCP client has no trigger; either build one or drop the feature",
-
   // Status the frontend keeps for itself instead of asking Rust, which is fine
   // until the two disagree — and the wake session can be stopped by the OS
   // without the frontend hearing about it, which is exactly that case.

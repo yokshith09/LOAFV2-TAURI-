@@ -314,3 +314,120 @@ describe("commandLine", () => {
     expect(commandLine(server({ args: [] }))).toBe("npx");
   });
 });
+
+/**
+ * Calling a tool — the half that was built and then never reached.
+ *
+ * Everything below this line covers code that existed for two milestones with
+ * no way to run it: the client could connect, list tools and make a call, and
+ * a tool name was rendered as a label. These are the tests for turning that
+ * label into the button that sends something to another program.
+ */
+/** Read an escaped value back, so a test asserts the value and not the encoding. */
+function unescapeHTML(s: string): string {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+describe("running a tool", () => {
+  const withTools = (over: Partial<ConnectionsState> = {}) =>
+    state({ servers: [server()], tools: { granola: ["list_meetings", "get_notes"] }, ...over });
+
+  it("makes every tool something you can press", () => {
+    const html = connectionsPanel(withTools(), NOW);
+    expect(html).toContain('data-mcp-pick="granola"');
+    expect(html).toContain('data-mcp-tool="list_meetings"');
+    expect(html).toContain('data-mcp-tool="get_notes"');
+  });
+
+  it("shows no arguments box until a tool is picked", () => {
+    expect(connectionsPanel(withTools(), NOW)).not.toContain("mcp-args");
+  });
+
+  it("opens an arguments box for the tool that was picked", () => {
+    const html = connectionsPanel(
+      withTools({ picked: { server: "granola", tool: "get_notes" } }),
+      NOW,
+    );
+    expect(html).toContain("mcp-args");
+    expect(html).toContain("get_notes");
+    expect(html).toContain("data-mcp-run");
+  });
+
+  it("opens it on the right card when two servers are connected", () => {
+    const html = connectionsPanel(
+      state({
+        servers: [server(), server({ name: "other" })],
+        tools: { granola: ["a"], other: ["b"] },
+        picked: { server: "other", tool: "b" },
+      }),
+      NOW,
+    );
+    // Exactly one box, and it is on `other`'s card rather than granola's.
+    expect(html.match(/<textarea/g)?.length).toBe(1);
+    const otherCard = html.slice(html.indexOf('data-mcp-server="other"'));
+    expect(otherCard).toContain("<textarea");
+  });
+
+  // Asserted by reading the box back rather than by looking for the raw text:
+  // the quotes are HTML-escaped on the way in, which is correct, and a
+  // substring check would fail on working code. That mistake has been made
+  // three times in this repo now.
+  it("keeps what the user typed across a re-render", () => {
+    const draft = '{"id":7,"note":"a & b"}';
+    const html = connectionsPanel(
+      withTools({ picked: { server: "granola", tool: "get_notes" }, argsDraft: draft }),
+      NOW,
+    );
+    const inBox = /<textarea[^>]*>([\s\S]*?)<\/textarea>/.exec(html)?.[1] ?? "";
+    expect(unescapeHTML(inBox)).toBe(draft);
+  });
+
+  it("says it is sending, and cannot be pressed twice", () => {
+    const html = connectionsPanel(
+      withTools({ picked: { server: "granola", tool: "get_notes" }, calling: true }),
+      NOW,
+    );
+    expect(html).toContain("Sending…");
+    expect(html).toContain("disabled");
+  });
+
+  it("shows what came back", () => {
+    const html = connectionsPanel(
+      withTools({ picked: { server: "granola", tool: "get_notes" }, result: "three meetings" }),
+      NOW,
+    );
+    expect(html).toContain("three meetings");
+  });
+
+  // The result comes from a program Loaf did not write. That is the entire
+  // point of this panel and exactly why its output does not get to pick markup.
+  it("never lets a server's answer become HTML", () => {
+    const html = connectionsPanel(
+      withTools({
+        picked: { server: "granola", tool: "get_notes" },
+        result: '<img src=x onerror="alert(1)">',
+      }),
+      NOW,
+    );
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+  });
+
+  it("never lets a tool name become HTML either", () => {
+    const html = connectionsPanel(state({ servers: [server()], tools: { granola: ["<b>x</b>"] } }), NOW);
+    expect(html).not.toContain("<b>x</b>");
+  });
+
+  it("marks the picked tool so you can see which one is open", () => {
+    const html = connectionsPanel(
+      withTools({ picked: { server: "granola", tool: "get_notes" } }),
+      NOW,
+    );
+    expect(html).toMatch(/class="mcp-tool on"[^>]*data-mcp-tool="get_notes"/);
+  });
+});

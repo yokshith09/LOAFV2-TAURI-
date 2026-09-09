@@ -472,6 +472,60 @@ root.addEventListener("click", (ev) => {
     return;
   }
 
+  // The one place Loaf sends something to a program it did not write. Every
+  // other button on this card manages the connection; this is the connection
+  // being used, and until now nothing in the app reached it at all.
+  const pickTool = target.closest<HTMLElement>("[data-mcp-pick]");
+  if (pickTool) {
+    const server = pickTool.dataset.mcpPick!;
+    const tool = pickTool.dataset.mcpTool!;
+    const same = connections.picked?.server === server && connections.picked.tool === tool;
+    connections = {
+      ...connections,
+      // Clicking the open one closes it, which is what a second click on a
+      // toggle should do.
+      picked: same ? null : { server, tool },
+      // A result belongs to the call that produced it, not to the panel.
+      result: "",
+      argsDraft: same ? connections.argsDraft : "{}",
+    };
+    void refreshConnections(false);
+    return;
+  }
+
+  if (target.closest("[data-mcp-cancel]")) {
+    connections = { ...connections, picked: null, result: "" };
+    void refreshConnections(false);
+    return;
+  }
+
+  if (target.closest("[data-mcp-run]")) {
+    const picked = connections.picked;
+    if (!picked || connections.calling) return;
+    const box = document.getElementById("mcp-args") as HTMLTextAreaElement | null;
+    const args = box?.value ?? connections.argsDraft;
+    connections = { ...connections, argsDraft: args, calling: true, result: "" };
+    void refreshConnections(false);
+    void (async () => {
+      try {
+        const out = await invoke<string>("mcp_call", {
+          name: picked.server,
+          tool: picked.tool,
+          arguments: args,
+        });
+        connections = { ...connections, calling: false, result: out };
+      } catch (err) {
+        // Shown, not swallowed. A call that failed still sent its arguments,
+        // and the reason is the only way to tell a bad argument from a server
+        // that died.
+        connections = { ...connections, calling: false, result: String(err) };
+      }
+      // The log gained a row either way — see the note on mcp_call in Rust.
+      await refreshConnections();
+    })();
+    return;
+  }
+
   const stopIt = target.closest<HTMLElement>("[data-mcp-stop]");
   if (stopIt) {
     const name = stopIt.dataset.mcpStop!;

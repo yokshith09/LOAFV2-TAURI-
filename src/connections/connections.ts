@@ -47,6 +47,28 @@ export interface ConnectionsState {
   readonly calls: readonly CallRecord[];
   /** Whether the add form is open. */
   readonly adding: boolean;
+  /**
+   * The tool the user has opened, if any.
+   *
+   * WHY THIS EXISTS AT ALL. Every piece of the MCP client was built and
+   * finished — connect, list the tools, call one, write down what was sent —
+   * and then nothing in the app ever called it, so the whole half was dead.
+   * A tool name was a label. This makes it a button, which is the smallest
+   * thing that turns a client nobody can reach into one somebody can.
+   */
+  readonly picked: { readonly server: string; readonly tool: string } | null;
+  /**
+   * What is in the arguments box.
+   *
+   * Kept in state rather than read off the textarea, because the panel
+   * re-renders on every change and a re-render would otherwise wipe what the
+   * user had typed.
+   */
+  readonly argsDraft: string;
+  /** What came back from the last call, or the reason it failed. */
+  readonly result: string;
+  /** True while a call is in flight, so the button cannot be pressed twice. */
+  readonly calling: boolean;
 }
 
 export const EMPTY_CONNECTIONS: ConnectionsState = {
@@ -56,6 +78,10 @@ export const EMPTY_CONNECTIONS: ConnectionsState = {
   errors: {},
   calls: [],
   adding: false,
+  picked: null,
+  argsDraft: "{}",
+  result: "",
+  calling: false,
 };
 
 /**
@@ -184,9 +210,49 @@ function toolsBlock(name: string, state: ConnectionsState): string {
     return `<p class="mcp-empty">It started, and offers no tools.</p>`;
   }
   const chips = tools
-    .map((t) => `<span class="mcp-tool">${escapeHTML(t)}</span>`)
+    .map((t) => {
+      const on = state.picked?.server === name && state.picked.tool === t;
+      return (
+        `<button class="mcp-tool${on ? " on" : ""}" ` +
+        `data-mcp-pick="${escapeHTML(name)}" data-mcp-tool="${escapeHTML(t)}">` +
+        `${escapeHTML(t)}</button>`
+      );
+    })
     .join("");
-  return `<div class="mcp-tools">${chips}</div>`;
+  return `<div class="mcp-tools">${chips}</div>${runBlock(name, state)}`;
+}
+
+/**
+ * The form that actually sends something to another program.
+ *
+ * ARGUMENTS ARE TYPED AS JSON, ON PURPOSE. A tool's arguments are whatever its
+ * author decided, and MCP does not promise a shape Loaf could build a form
+ * from. Guessing one would be wrong for most servers and would quietly stop
+ * working when a server changed. A text box is honest about what this is: the
+ * raw call, for someone who has read that server's documentation.
+ *
+ * The result is shown as text and never as HTML. It comes from a program Loaf
+ * did not write, which is the whole point of the panel and exactly why its
+ * output does not get to choose markup.
+ */
+function runBlock(name: string, state: ConnectionsState): string {
+  if (state.picked?.server !== name) return "";
+  const tool = state.picked.tool;
+  return (
+    `<div class="mcp-run">` +
+    `<label class="mcp-run-label" for="mcp-args">Arguments for <code>${escapeHTML(tool)}</code>, as JSON</label>` +
+    `<textarea id="mcp-args" class="mcp-args" rows="3" spellcheck="false">${escapeHTML(
+      state.argsDraft,
+    )}</textarea>` +
+    `<div class="mcp-actions">` +
+    `<button class="mcp-btn" data-mcp-run="1"${state.calling ? " disabled" : ""}>` +
+    (state.calling ? "Sending…" : "Send it") +
+    `</button>` +
+    `<button class="mcp-btn" data-mcp-cancel="1">Close</button>` +
+    `</div>` +
+    (state.result ? `<pre class="mcp-result">${escapeHTML(state.result)}</pre>` : "") +
+    `</div>`
+  );
 }
 
 function serverCard(server: ServerView, state: ConnectionsState): string {
@@ -318,6 +384,12 @@ export const CONNECTIONS_CSS = `
 .mcp-btn.danger{opacity:.7}
 .mcp-btn.primary{border-color:#c9822f}
 .mcp-tools{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.mcp-tool{cursor:pointer}
+.mcp-tool.on{outline:2px solid currentColor}
+.mcp-run{margin-top:8px}
+.mcp-run-label{display:block;font-size:12px;margin-bottom:4px}
+.mcp-args{width:100%;font-family:ui-monospace,monospace;font-size:12px}
+.mcp-result{white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;font-size:12px;margin-top:8px}
 .mcp-tool{font-size:11px;padding:3px 7px;border-radius:20px;border:1px solid var(--line);opacity:.85}
 .mcp-error{margin:8px 0 0;font-size:12px;color:#d05353}
 .mcp-empty{font-size:12px;opacity:.7;margin:8px 0}
