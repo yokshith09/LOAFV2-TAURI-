@@ -92,6 +92,21 @@ jobs:
             Mac reports simply came in first. Nothing you did caused it and
             nothing you saved was lost.
 
+            ## Also fixed in 0.5.2 — talking to Loaf
+
+            Voice had never actually run. The same single fault stopped the
+            code that opens the microphone and the code that listens for what
+            you said, so on every build so far nothing was listening, on
+            Windows and on Mac alike. If you tried the wake word and gave up,
+            it is worth another go.
+
+            On a Mac two more things were missing and are now here: saying
+            "hey loaf" used to answer *"Mm?"* and then tell you that speaking
+            to Loaf is Windows-only, and dictation said it was not available
+            at all. Both now use Whisper, which runs on your machine — so
+            **the Voice tab download is needed for either to work on a Mac**.
+            Nothing is sent anywhere.
+
             ## Download
 
             | | |
