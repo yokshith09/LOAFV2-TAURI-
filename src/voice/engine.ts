@@ -213,3 +213,28 @@ export function resolveEngine(
   if (isAvailable(wanted, have)) return wanted;
   return "builtin";
 }
+
+/**
+ * Which way dictation goes: Loaf's own recogniser, or Windows' voice-typing bar.
+ *
+ * A five-line decision that has now been wrong twice in a row, which is why it
+ * is a named function with tests rather than a condition inside an async
+ * handler nothing can reach. First it was Win+H unconditionally. Then it was
+ * routed by PLATFORM, which meant a Windows machine with Whisper downloaded and
+ * selected still got Microsoft's bar — the fix worked only on the platform
+ * nobody was testing on, under a comment claiming it worked everywhere.
+ *
+ * The question is which recogniser EXISTS, not which OS this is. Win+H is the
+ * fallback for a Windows machine with no model, and it is weaker twice over:
+ * Windows decides whether that audio leaves the machine, and Loaf never gets
+ * the text back, so it cannot fill in a task or a note.
+ */
+export type DictationRoute = "whisper" | "windows-voice-typing";
+
+export function dictationRoute(whisperReady: boolean, os: string): DictationRoute {
+  if (whisperReady) return "whisper";
+  // Win+H is a Windows shortcut. Pressing it anywhere else does nothing and
+  // leaves somebody waiting for a bar that is never going to appear, so every
+  // other platform goes to Whisper and gets told to download it.
+  return os === "windows" ? "windows-voice-typing" : "whisper";
+}

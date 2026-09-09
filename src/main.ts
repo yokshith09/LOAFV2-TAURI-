@@ -46,6 +46,7 @@ import { spokenPhrases } from "./voice/phrases";
 import { usesWakeWord, NEEDS_MICROPHONE, type ListenMode } from "./voice/mode";
 import {
   resolveEngine,
+  dictationRoute,
   leavesMachine,
   audioLine,
   unavailableReason,
@@ -1901,12 +1902,23 @@ function escapeForBadge(s: string): string {
  */
 async function dictateIntoFocusedApp(): Promise<void> {
   if (!hasTauriHost()) return;
-  // Win+H is a WINDOWS shortcut. Sending it on a Mac presses nothing useful
-  // and leaves someone waiting for a dictation bar that is never going to
-  // appear, so everywhere else takes the dictation itself.
+  // WHISPER FIRST WHEREVER IT IS INSTALLED, AND THIS IS THE SECOND TIME THIS
+  // LINE HAS BEEN WRONG.
+  //
+  // The first version sent Win+H unconditionally. The fix routed by PLATFORM —
+  // Whisper off Windows, Win+H on it — which left Windows doing exactly what
+  // the bug report said: downloading Whisper, selecting it, and still getting
+  // Microsoft's voice-typing bar. A comment two lines above claimed that was
+  // already fixed. It was fixed on the one platform nobody was testing on.
+  //
+  // The question is not which OS this is, it is which recogniser exists. Win+H
+  // is the fallback for a Windows machine with no model, not the default for
+  // every Windows machine — and it is the weaker one twice over: Windows
+  // decides whether that audio goes to Microsoft, and Loaf never sees the text,
+  // so it cannot go into a task or a note.
   const { invoke } = await import("@tauri-apps/api/core");
   const os = await invoke<string>("platform_name").catch(() => "");
-  if (os !== "windows") {
+  if (dictationRoute(whisperReady, os) === "whisper") {
     await dictateWithWhisper();
     return;
   }

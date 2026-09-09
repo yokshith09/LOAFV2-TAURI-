@@ -13,6 +13,7 @@ import {
   isAvailable,
   resolveEngine,
   type EngineAvailability,
+  dictationRoute,
 } from "../src/voice/engine";
 
 const ALL: EngineAvailability = {
@@ -127,6 +128,37 @@ describe("resolving what to actually run", () => {
     expect(resolveEngine("hosted", NONE)).toBe("builtin");
     for (const id of ENGINES) {
       expect(leavesMachine(resolveEngine(id, NONE))).toBe(false);
+    }
+  });
+});
+
+/**
+ * The routing that has been wrong twice. Both failures shipped, and both
+ * looked correct in review because the comment beside them described the
+ * intended behaviour rather than the code's.
+ */
+describe("which way dictation goes", () => {
+  it("uses Whisper on Windows once the model is downloaded — the reported bug", () => {
+    expect(dictationRoute(true, "windows")).toBe("whisper");
+  });
+
+  it("falls back to Windows voice typing only when there is no model", () => {
+    expect(dictationRoute(false, "windows")).toBe("windows-voice-typing");
+  });
+
+  it("never presses a Windows shortcut on a Mac", () => {
+    expect(dictationRoute(false, "macos")).toBe("whisper");
+    expect(dictationRoute(true, "macos")).toBe("whisper");
+  });
+
+  it("treats an unknown platform as not-Windows rather than guessing", () => {
+    // platform_name returns "" when the call fails.
+    expect(dictationRoute(false, "")).toBe("whisper");
+  });
+
+  it("prefers the local recogniser on every platform when it is there", () => {
+    for (const os of ["windows", "macos", "linux", ""]) {
+      expect(dictationRoute(true, os)).toBe("whisper");
     }
   });
 });
