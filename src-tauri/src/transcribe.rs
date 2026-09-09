@@ -122,9 +122,46 @@ pub fn clean(raw: &str) -> String {
 /// for — one core is held back only so the desktop stays answerable while a
 /// long meeting is transcribed.
 fn threads() -> usize {
+    // An override, so the number can be MEASURED rather than argued about.
+    // The comment this replaced asserted "every core but one" was right
+    // because a four-thread default had once been wrong, which is not the same
+    // as fifteen being right.
+    if let Ok(n) = std::env::var("LOAF_WHISPER_THREADS") {
+        if let Ok(n) = n.parse::<usize>() {
+            if n >= 1 {
+                return n;
+            }
+        }
+    }
     std::thread::available_parallelism()
         .map(|n| n.get().saturating_sub(1).max(1))
         .unwrap_or(4)
+}
+
+/// How much of whisper's thirty-second window this many samples actually need.
+///
+/// 1500 encoder frames cover thirty seconds, so a second costs 50. Anything
+/// longer than the window gets the whole thing; anything shorter gets its own
+/// length plus two seconds of headroom, because a word ending exactly on the
+/// boundary is a word whisper does not finish.
+///
+/// The floor is deliberate. Below about four seconds of context the model
+/// starts inventing, and the saving between a 200-frame context and a
+/// 400-frame one is not worth finding that out in a user's transcript.
+fn audio_ctx(samples: usize) -> i32 {
+    const FULL: i32 = 1500;
+    const FRAMES_PER_SECOND: i32 = 50;
+    const HEADROOM_SECONDS: i32 = 2;
+    const FLOOR: i32 = 400;
+
+    // Counted in usize and clamped BEFORE the cast. `samples as i32` truncates,
+    // and a truncated large number can come out negative and land on the floor
+    // — the smallest possible window for the longest possible recording, which
+    // is the exact opposite of what this function is for. No real recording is
+    // anywhere near that big; the test that found it is not.
+    let seconds = samples / 16_000;
+    let needed = seconds.saturating_add(HEADROOM_SECONDS as usize) * FRAMES_PER_SECOND as usize;
+    needed.clamp(FLOOR as usize, FULL as usize) as i32
 }
 
 /// Read a 16 kHz mono 16-bit WAV into the floats whisper wants.
@@ -199,6 +236,23 @@ pub fn transcribe_samples(setup: &WhisperSetup, audio: &[f32]) -> Result<String,
     // it idle and turned 5.7 seconds of speech into 83 seconds of waiting —
     // measured, not guessed.
     params.set_n_threads(threads() as i32);
+    // ONLY ENCODE AS MUCH AUDIO AS THERE IS.
+    //
+    // This is the whole reason dictation felt broken. Whisper's encoder always
+    // runs over a THIRTY SECOND window: hand it a four second sentence and it
+    // pads the other twenty-six with silence and encodes that too, at full
+    // price. Measured on this machine, a 4.4 second clip took 45 seconds —
+    // and so would a 29 second one.
+    //
+    // `audio_ctx` shortens the encoder input to match. 1500 frames is the full
+    // thirty seconds, so 50 frames buys a second. The headroom matters: cut it
+    // exactly to length and the last word lands on the boundary and is dropped.
+    //
+    // Kept generous rather than minimal. This is a speed knob that can silently
+    // cost accuracy, and a transcript that is fast and wrong is worse than one
+    // that is slow and right — which is the failure this whole file has already
+    // had once, with a fixed loudness threshold.
+    params.set_audio_ctx(audio_ctx(audio.len()));
     params.set_language(Some("en"));
     params.set_translate(false);
     // Nothing is printed. This is a library call inside a desktop app now, and
@@ -328,5 +382,98 @@ mod tests {
         let path = scratch_wav();
         assert!(path.starts_with(std::env::temp_dir()));
         assert!(path.extension().is_some_and(|e| e == "wav"));
+    }
+}
+
+#[cfg(test)]
+mod window {
+    use super::audio_ctx;
+
+    const SECOND: usize = 16_000;
+
+    #[test]
+    fn a_short_sentence_does_not_pay_for_thirty_seconds() {
+        // The measured case: 4.4s of speech took 45s at the full window and
+        // 11.7s at this one, with an identical transcript.
+        assert!(audio_ctx(4 * SECOND) < 1500);
+    }
+
+    #[test]
+    fn a_long_recording_still_gets_the_whole_window() {
+        // Meetings must be untouched by this. Anything at or past the window
+        // gets all of it, so the only thing that changed is short clips.
+        assert_eq!(audio_ctx(30 * SECOND), 1500);
+        assert_eq!(audio_ctx(120 * SECOND), 1500);
+    }
+
+    #[test]
+    fn there_is_headroom_so_the_last_word_is_not_cut_off() {
+        // Ten seconds of audio needs 500 frames; it must ask for more.
+        assert!(audio_ctx(10 * SECOND) > 10 * 50);
+    }
+
+    #[test]
+    fn never_below_the_floor_however_short_the_clip() {
+        assert_eq!(audio_ctx(0), 400);
+        assert_eq!(audio_ctx(SECOND / 2), 400);
+    }
+
+    #[test]
+    fn never_above_the_window_however_long_the_clip() {
+        assert_eq!(audio_ctx(usize::MAX / 2), 1500);
+    }
+
+    #[test]
+    fn grows_with_the_audio() {
+        assert!(audio_ctx(20 * SECOND) > audio_ctx(10 * SECOND));
+    }
+}
+
+#[cfg(test)]
+mod probe {
+    //! The end-to-end check that needs no microphone.
+    //!
+    //! "Dictation is not working" was reported three times and could not be
+    //! answered, because every test in this crate stops at the edge of
+    //! whisper.cpp: they check that a missing model is refused and that the
+    //! output is tidied, and none of them ever transcribes anything. So a
+    //! Whisper path that was completely broken would have passed all of them.
+    //!
+    //! This one runs the real model over real speech. The speech is synthesised
+    //! rather than recorded, so it needs nobody to say anything and it produces
+    //! the same words every run. It is `#[ignore]`d because it needs the 190 MB
+    //! model that CI does not download:
+    //!
+    //!     cargo test --release -- --ignored --nocapture whisper_hears
+    //!
+    //! with LOAF_PROBE_WAV and LOAF_PROBE_MODEL set.
+
+    #[test]
+    #[ignore = "needs the downloaded model and a wav; see the module note"]
+    fn whisper_hears_synthesised_speech() {
+        let wav = std::env::var("LOAF_PROBE_WAV").expect("set LOAF_PROBE_WAV");
+        let model = std::env::var("LOAF_PROBE_MODEL").expect("set LOAF_PROBE_MODEL");
+        let setup = super::WhisperSetup { model };
+        assert!(
+            super::missing(&setup).is_none(),
+            "the model is not where the test was told it is"
+        );
+
+        let started = std::time::Instant::now();
+        let text = super::transcribe(&setup, std::path::Path::new(&wav))
+            .expect("whisper refused to transcribe");
+        let took = started.elapsed();
+
+        println!("heard: {text:?}");
+        println!("took: {:.1}s", took.as_secs_f32());
+
+        let lower = text.to_lowercase();
+        // Not an exact match: a transcriber is allowed to differ on
+        // punctuation and casing, and asserting the whole sentence would make
+        // this a test of the synthesiser's diction. These are the words that
+        // prove it heard the actual audio rather than returning something.
+        for word in ["notepad", "meeting", "thursday"] {
+            assert!(lower.contains(word), "expected {word:?} in {text:?}");
+        }
     }
 }

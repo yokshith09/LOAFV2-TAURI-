@@ -1918,7 +1918,13 @@ async function dictateIntoFocusedApp(): Promise<void> {
   // so it cannot go into a task or a note.
   const { invoke } = await import("@tauri-apps/api/core");
   const os = await invoke<string>("platform_name").catch(() => "");
-  if (dictationRoute(whisperReady, os) === "whisper") {
+  const route = dictationRoute(whisperReady, os);
+  // Written down every time, because "dictation is not working" has now been
+  // reported against three different causes and they are indistinguishable
+  // from the outside: the wrong route chosen, the right route with no model,
+  // and the right route failing inside Whisper.
+  reportVoice(`dictation asked for; route=${route}; os=${os}; whisper installed=${whisperReady}`);
+  if (route === "whisper") {
     await dictateWithWhisper();
     return;
   }
@@ -1949,6 +1955,7 @@ async function dictateIntoFocusedApp(): Promise<void> {
 async function dictateWithWhisper(): Promise<void> {
   if (!hasTauriHost() || listeningOnce) return;
   if (!whisperReady) {
+    reportVoice("dictation refused: Loaf believes the Whisper model is not downloaded");
     say({
       kind: "speech",
       text: "Dictation here needs the Whisper download — it is in the Voice tab.",
@@ -1964,13 +1971,16 @@ async function dictateWithWhisper(): Promise<void> {
     say({ kind: "speech", text: "Go ahead — I'll type it when you stop.", seconds: 6 });
     const text = await invoke<string>("dictate_once", { model: behaviour.whisperModel });
     if (!text.trim()) {
+      reportVoice("dictation ran and heard nothing — the microphone opened and no speech was detected");
       say({ kind: "speech", text: "I didn't catch anything.", seconds: 5 });
       return;
     }
+    reportVoice(`dictation heard ${text.trim().length} characters and is typing them`);
     await machine("type_text", { text });
   } catch (e) {
     // Out loud, for the same reason as dictateAfterWake: silence here cannot
     // be told apart from a dead microphone.
+    reportVoice(`dictation failed: ${String(e)}`);
     say({ kind: "speech", text: String(e), seconds: 8 });
   } finally {
     listeningOnce = false;
@@ -2133,7 +2143,8 @@ function reportVoice(what: string): void {
           `wake word: ${behaviour.wakeWord ?? "(default) hey loaf"}`,
           `wake session running: ${wakeRunning}`,
           `recogniser available: ${speechAvailable}`,
-          `whisper model: ${behaviour.whisperModel === "" ? "(the downloaded one)" : behaviour.whisperModel}`,
+          `whisper model downloaded: ${whisperReady}`,
+          `whisper model path: ${behaviour.whisperModel === "" ? "(the default one)" : behaviour.whisperModel}`,
         ].join("\n"),
       }),
     )
