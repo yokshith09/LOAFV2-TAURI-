@@ -274,7 +274,10 @@ mod imp {
             };
         }
 
-        let mut recording = match crate::audio::start() {
+        // Not `mut`: `wake.rs` restarts its capture every minute to bound
+        // memory over an all-day session, and this was copied from there. One
+        // turn is seconds long and never restarts.
+        let recording = match crate::audio::start() {
             Ok(r) => r,
             Err(why) => return Heard::Unavailable { why },
         };
