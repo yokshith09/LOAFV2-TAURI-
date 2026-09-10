@@ -56,7 +56,23 @@ export interface SearchState {
   readonly pending: PendingDelete | null;
   /** What the last finished action did, for the line under the buttons. */
   readonly lastAction: string;
+  /**
+   * What the pending delete would actually remove, once Rust has counted it.
+   *
+   * M3 asked for "a delete screen that says exactly what will go, and asks
+   * once". It asked once and said nothing: the count only appeared AFTERWARDS,
+   * in the past tense, which is the wrong order for the one action in this app
+   * that cannot be undone. `store_preview_range` had been written to answer
+   * this and had no caller.
+   *
+   * Null while counting, or when the kind of delete cannot be counted cheaply.
+   */
+  readonly preview: Removal | null;
+  /** The range boxes. Kept in state so a re-render does not clear them. */
+  readonly from: string;
+  readonly to: string;
 }
+
 
 export type PendingDelete =
   | { readonly kind: "everything" }
@@ -70,6 +86,9 @@ export const EMPTY_SEARCH: SearchState = {
   error: "",
   pending: null,
   lastAction: "",
+  preview: null,
+  from: "",
+  to: "",
 };
 
 export function isHit(v: unknown): v is Hit {
@@ -183,7 +202,7 @@ function resultsBlock(state: SearchState, now: number): string {
   );
 }
 
-function confirmBlock(pending: PendingDelete | null): string {
+function confirmBlock(pending: PendingDelete | null, preview: Removal | null): string {
   if (!pending) return "";
   let what: string;
   if (pending.kind === "everything") {
@@ -193,13 +212,61 @@ function confirmBlock(pending: PendingDelete | null): string {
   } else {
     what = `everything between <b>${escapeHTML(pending.from)}</b> and <b>${escapeHTML(pending.to)}</b>`;
   }
+
+  // THE COUNT, BEFORE rather than after. A range typed a month wrong looks
+  // exactly like a range typed right until something says how much is in it.
+  let counted = "";
+  if (pending.kind === "range") {
+    if (preview === null) {
+      counted = `<p class="sr-count">Counting what is in that range…</p>`;
+    } else {
+      const empty = preview.meetings === 0 && preview.lines === 0 && preview.days === 0;
+      counted = empty
+        ? `<p class="sr-count"><b>There is nothing in that range.</b> Nothing would be deleted.</p>`
+        : `<p class="sr-count">That is <b>${escapeHTML(describeRemoval(preview))}</b>.</p>`;
+    }
+  }
+
   return (
     `<div class="sr-confirm">` +
     `<p>This will delete ${what}. It cannot be undone, and Loaf keeps no copy.</p>` +
+    counted +
     `<div class="sr-actions">` +
     `<button class="sr-btn danger" data-search-confirm="1">Yes, delete it</button>` +
     `<button class="sr-btn" data-search-cancel="1">Cancel</button>` +
     `</div></div>`
+  );
+}
+
+/**
+ * Forgetting a stretch of time.
+ *
+ * M3 promised deleting "one meeting, a date range, everything, or everything
+ * mentioning one person". Three of those four shipped. The range existed as a
+ * case in the type, a branch in the confirm handler and a Rust command that
+ * deleted it — with **no way to ask for it**, which is why the command that
+ * counts a range first had no caller either. A feature reachable only from the
+ * type system is not a feature.
+ *
+ * Dates rather than a free-text range: the two inputs are the whole interface,
+ * the browser validates them, and there is nothing to parse or misparse. Empty
+ * boxes disable the button rather than defaulting to anything — a delete whose
+ * range Loaf guessed is the worst button in the app.
+ */
+function rangeBlock(state: SearchState): string {
+  const ready = state.from.trim() !== "" && state.to.trim() !== "";
+  return (
+    `<div class="sr-range">` +
+    `<label for="sr-from">Forget a stretch of time</label>` +
+    `<div class="sr-range-row">` +
+    `<input id="sr-from" type="date" value="${escapeHTML(state.from)}" aria-label="from">` +
+    `<span class="sr-to-word">to</span>` +
+    `<input id="sr-to" type="date" value="${escapeHTML(state.to)}" aria-label="to">` +
+    `<button class="sr-btn" data-search-forget-range="1"${ready ? "" : " disabled"}>` +
+    `Forget that range</button>` +
+    `</div>` +
+    `<p class="sr-fine">Loaf counts what is in there and shows you before anything goes.</p>` +
+    `</div>`
   );
 }
 
@@ -216,7 +283,8 @@ export function searchPanel(state: SearchState, now: number): string {
     `<p class="sr-fine">Everything Loaf keeps is in one file on this computer. ` +
     `You can take it with you, and you can make it stop existing.</p>` +
     (state.lastAction ? `<p class="sr-done">${escapeHTML(state.lastAction)}</p>` : "") +
-    confirmBlock(state.pending) +
+    confirmBlock(state.pending, state.preview) +
+    rangeBlock(state) +
     `<div class="sr-actions">` +
     `<button class="sr-btn" data-search-export="1">Export everything</button>` +
     (state.phrase.trim()

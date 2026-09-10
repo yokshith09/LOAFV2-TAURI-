@@ -393,6 +393,49 @@ root.addEventListener("click", (ev) => {
   // NOTHING IS DELETED BY ONE CLICK. The first press only asks; the confirm
   // block that appears names exactly what will go. Deleting somebody's recorded
   // life should take two deliberate actions.
+  // The range delete, which had no way to be asked for until now. Pressing it
+  // only asks — and it asks Rust to COUNT first, so the confirmation names the
+  // damage instead of describing it afterwards.
+  if (target.closest("[data-search-forget-range]")) {
+    const from = (document.getElementById("sr-from") as HTMLInputElement | null)?.value ?? "";
+    const to = (document.getElementById("sr-to") as HTMLInputElement | null)?.value ?? "";
+    if (!from || !to) return;
+    // Swapped dates are a typo, not an error worth a message. Rust would count
+    // an inverted range as empty and the screen would say "nothing in there",
+    // which is true of the range as typed and useless to the person who typed
+    // it backwards.
+    const [lo, hi] = from <= to ? [from, to] : [to, from];
+    search = {
+      ...search,
+      from: lo,
+      to: hi,
+      pending: { kind: "range", from: lo, to: hi },
+      preview: null,
+      error: "",
+    };
+    void render();
+    void (async () => {
+      try {
+        const counted = await invoke<unknown>("store_preview_range", { from: lo, to: hi });
+        // Only if the user is still looking at the same question. They may have
+        // cancelled or picked another range while Rust was counting.
+        if (
+          search.pending?.kind === "range" &&
+          search.pending.from === lo &&
+          search.pending.to === hi &&
+          isRemoval(counted)
+        ) {
+          search = { ...search, preview: counted };
+          await render();
+        }
+      } catch (err) {
+        search = { ...search, pending: null, preview: null, error: String(err) };
+        await render();
+      }
+    })();
+    return;
+  }
+
   if (target.closest("[data-search-forget-matching]")) {
     readSearchBox();
     if (!search.phrase.trim()) return;
@@ -408,7 +451,7 @@ root.addEventListener("click", (ev) => {
   }
 
   if (target.closest("[data-search-cancel]")) {
-    search = { ...search, pending: null };
+    search = { ...search, pending: null, preview: null };
     void render();
     return;
   }
@@ -434,9 +477,9 @@ root.addEventListener("click", (ev) => {
           });
           said = isRemoval(gone) ? `Deleted ${describeRemoval(gone)}.` : said;
         }
-        search = { ...search, pending: null, lastAction: said, error: "" };
+        search = { ...search, pending: null, preview: null, lastAction: said, error: "" };
       } catch (err) {
-        search = { ...search, pending: null, error: String(err) };
+        search = { ...search, pending: null, preview: null, error: String(err) };
       }
       void emit(STORE_DELETED_EVENT, {});
       await runSearch();

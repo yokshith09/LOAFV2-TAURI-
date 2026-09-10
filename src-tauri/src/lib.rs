@@ -2147,17 +2147,6 @@ fn store_delete_everything(app: tauri::AppHandle) -> Result<(), String> {
     with_store(&app, store::delete_everything)
 }
 
-/// Remember one line — a transcript line, or a note taken outside a meeting.
-#[tauri::command(async)]
-fn store_add_line(
-    app: tauri::AppHandle,
-    meeting: Option<String>,
-    text: String,
-) -> Result<i64, String> {
-    let at = connections::now() as i64;
-    with_store(&app, |c| store::add_line(c, meeting.as_deref(), at, &text))
-}
-
 /// Every line still in the store, newest first.
 ///
 /// EXISTS SO MEMORY CAN BE REBUILT AFTER A DELETE. The knowledge graph is
@@ -2405,7 +2394,6 @@ pub fn run() {
             store_delete_meeting,
             store_delete_matching,
             store_delete_everything,
-            store_add_line,
             store_get,
             store_set,
             store_all_lines,

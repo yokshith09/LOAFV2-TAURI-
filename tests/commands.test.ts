@@ -61,13 +61,6 @@ const NOT_WIRED_YET: Record<string, string> = {
   stop_speaking: "same as speak",
   can_speak: "same as speak",
 
-  // M3 built the SQLite store and wired the parts the dashboard reads —
-  // searching, deleting, exporting. These three are the write and preview half
-  // and have no caller: meetings and lines still go to browser storage, which
-  // is the thing M3 existed to stop.
-  store_meetings: "M3 write path — the dashboard still reads meetings from browser storage",
-  store_add_line: "M3 write path — nothing puts transcript lines in the store yet",
-  store_preview_range: "M3 — the delete-range screen shows its own count instead",
 
   // Status the frontend keeps for itself instead of asking Rust, which is fine
   // until the two disagree — and the wake session can be stopped by the OS

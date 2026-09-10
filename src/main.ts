@@ -1458,6 +1458,37 @@ function entitySummary(e: { id: string; name: string; mentions: number; lastSeen
   };
 }
 
+/**
+ * Forget, in here, whatever the store was told to forget.
+ *
+ * THE INCONSISTENCY THIS FIXES. Deleting a date range removed the meetings from
+ * the store and left this window's copy untouched, so the Meetings panel went
+ * on listing them until the next launch. The user pressed delete, was told it
+ * was deleted, and could still see it — which reads as the delete not working
+ * and is much worse than a slow delete.
+ *
+ * THE STORE IS THE AUTHORITY ON WHAT EXISTS; this window keeps the content.
+ * `store_meetings` returns ids, places and durations but not the transcript
+ * lines, so replacing the list with it wholesale would silently drop everyone's
+ * notes. Filtering by it instead takes exactly the fact the store is the
+ * authority on — whether a meeting is still there — and keeps the rest.
+ *
+ * Does nothing if the store cannot be read. A store that is unavailable is not
+ * a store that is empty, and treating the two the same would delete the lot.
+ */
+async function dropMeetingsTheStoreNoLongerHas(): Promise<void> {
+  if (!hasTauriHost()) return;
+  const kept = await invokeSafe<{ id: string }[]>("store_meetings");
+  if (!Array.isArray(kept)) return;
+  const alive = new Set(kept.map((m) => m.id));
+  const before = meetings.length;
+  meetings = meetings.filter((m) => alive.has(m.id));
+  if (meetings.length === before) return;
+  saveMeetings(browserStore(), meetings);
+  void invokeSafe("save_meetings", { json: JSON.stringify(meetings) });
+  announceMeetings();
+}
+
 function announceMeetings(): void {
   if (!hasTauriHost()) return;
   const blocked = whisperReady
@@ -3412,6 +3443,7 @@ if (hasTauriHost()) {
   // learned from transcripts that no longer exist.
   void listen(STORE_DELETED_EVENT, () => {
     void rebuildMemoryFromTheStore();
+    void dropMeetingsTheStoreNoLongerHas();
   });
 
   void listen<string>(MEETING_FORGET_EVENT, (e) => {

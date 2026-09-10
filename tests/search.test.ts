@@ -240,3 +240,94 @@ describe("escaping the panel itself", () => {
     expect(html).not.toContain('"><img');
   });
 });
+
+/**
+ * Forgetting a stretch of time — the quarter of M3's delete promise that
+ * shipped as a type and nothing else.
+ *
+ * `store_delete_range` deleted it, `store_preview_range` counted it, the state
+ * had a `range` case and the confirm handler had a branch for it. Nothing could
+ * ask for one. These tests cover the entry point and, more importantly, the
+ * count appearing BEFORE the delete rather than after.
+ */
+describe("forgetting a date range", () => {
+  it("offers the two boxes and the button", () => {
+    const html = searchPanel(EMPTY_SEARCH, NOW);
+    expect(html).toContain('id="sr-from"');
+    expect(html).toContain('id="sr-to"');
+    expect(html).toContain("data-search-forget-range");
+  });
+
+  // A delete whose range Loaf guessed is the worst button in the app.
+  it("will not offer to delete until both dates are given", () => {
+    expect(searchPanel(EMPTY_SEARCH, NOW)).toContain("disabled");
+    const half = { ...EMPTY_SEARCH, from: "2026-09-01" };
+    expect(searchPanel(half, NOW)).toContain("disabled");
+    const both = { ...EMPTY_SEARCH, from: "2026-09-01", to: "2026-09-08" };
+    expect(searchPanel(both, NOW)).not.toContain("disabled");
+  });
+
+  it("keeps the dates through a re-render", () => {
+    const html = searchPanel({ ...EMPTY_SEARCH, from: "2026-09-01", to: "2026-09-08" }, NOW);
+    expect(html).toContain("2026-09-01");
+    expect(html).toContain("2026-09-08");
+  });
+
+  it("says it is counting while it counts", () => {
+    const html = searchPanel(
+      { ...EMPTY_SEARCH, pending: { kind: "range", from: "2026-09-01", to: "2026-09-08" } },
+      NOW,
+    );
+    expect(html.toLowerCase()).toContain("counting");
+  });
+
+  // The whole point: the damage is named before it is done.
+  it("names what will go once it has counted", () => {
+    const html = searchPanel(
+      {
+        ...EMPTY_SEARCH,
+        pending: { kind: "range", from: "2026-09-01", to: "2026-09-08" },
+        preview: { meetings: 3, lines: 214, days: 7 },
+      },
+      NOW,
+    );
+    expect(html).toContain("3 meetings");
+    expect(html).toContain("214 lines");
+    expect(html).toContain("7 days");
+  });
+
+  it("says an empty range is empty rather than counting zeros", () => {
+    const html = searchPanel(
+      {
+        ...EMPTY_SEARCH,
+        pending: { kind: "range", from: "2020-01-01", to: "2020-01-02" },
+        preview: { meetings: 0, lines: 0, days: 0 },
+      },
+      NOW,
+    );
+    expect(html.toLowerCase()).toContain("nothing in that range");
+    expect(html).not.toContain("0 meetings");
+  });
+
+  it("counts only for a range — the other two deletes have nothing cheap to count", () => {
+    const everything = searchPanel({ ...EMPTY_SEARCH, pending: { kind: "everything" } }, NOW);
+    expect(everything.toLowerCase()).not.toContain("counting");
+    const matching = searchPanel(
+      { ...EMPTY_SEARCH, pending: { kind: "matching", phrase: "priya" } },
+      NOW,
+    );
+    expect(matching.toLowerCase()).not.toContain("counting");
+  });
+
+  it("still says it cannot be undone", () => {
+    const html = searchPanel(
+      {
+        ...EMPTY_SEARCH,
+        pending: { kind: "range", from: "2026-09-01", to: "2026-09-08" },
+        preview: { meetings: 1, lines: 2, days: 0 },
+      },
+      NOW,
+    );
+    expect(html).toContain("cannot be undone");
+  });
+});
