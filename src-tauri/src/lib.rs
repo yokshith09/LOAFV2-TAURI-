@@ -42,6 +42,7 @@ pub mod mcp;
 pub mod mcp_client;
 pub mod packs;
 pub mod platform;
+pub mod remote;
 pub mod scroll;
 pub mod sounds;
 pub mod speak;

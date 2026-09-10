@@ -672,20 +672,31 @@ root.addEventListener("click", (ev) => {
       (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? "";
     const name = value("mcp-new-name");
     const command = value("mcp-new-cmd");
-    // Nothing is saved without both. Rust refuses this config too — the check
-    // is here as well so the answer is immediate rather than an error string.
-    if (!name || !command) return;
+    const url = value("mcp-new-url");
+    const token = value("mcp-new-token");
+    // A name, and then EITHER a program to run OR an address. Rust refuses a
+    // config with neither too; the check is here as well so the answer is
+    // immediate rather than an error string after a round trip.
+    if (!name || (!command && !url)) return;
     const server: ServerView = {
       name,
       command,
       args: parseArgs(value("mcp-new-args")),
       note: value("mcp-new-note"),
       env_keys: [],
+      url,
+      has_token: token !== "",
     };
     void (async () => {
       const servers = [...connections.servers, server];
       try {
-        await invoke("mcp_save_servers", { servers });
+        // The token goes in `secrets`, the one-way channel, never in the server
+        // list — so it reaches Rust without ever being something the window can
+        // be asked to hand back. Same path the env values already use.
+        await invoke("mcp_save_servers", {
+          servers,
+          ...(token ? { secrets: { [name]: { __token: token } } } : {}),
+        });
         connections = { ...connections, adding: false };
       } catch (err) {
         connections = { ...connections, errors: { ...connections.errors, [name]: String(err) } };

@@ -36,10 +36,23 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 pub struct ServerSpec {
     /// What the user calls it. Used to address it from the app.
     pub name: String,
-    /// The program to run.
+    /// The program to run, for a local server. Empty when `url` is set.
+    #[serde(default)]
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    /// The address of a REMOTE server. When this is set, nothing is installed
+    /// and no process is started — see `remote.rs` for why that is the only
+    /// shape an ordinary person can set up.
+    #[serde(default)]
+    pub url: String,
+    /// A bearer token for a remote server, if it wants one.
+    ///
+    /// A secret, and handled like the `env` values: it lives in the config Rust
+    /// owns and is never sent to a window. The panel is told whether one is set,
+    /// never what it is.
+    #[serde(default)]
+    pub token: String,
     /// Extra environment for the child, e.g. an API key the user supplies.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -73,8 +86,20 @@ pub fn parse_config(json: &str) -> Result<Config, String> {
         if server.name.trim().is_empty() {
             return Err("A server has no name.".into());
         }
-        if server.command.trim().is_empty() {
-            return Err(format!("Server {} has no command to run.", server.name));
+        // EITHER a program to run OR an address to reach. This used to demand a
+        // command, which would have refused every remote server on the way in —
+        // the config would have been rejected by the same function that was
+        // added to keep it honest.
+        let has_command = !server.command.trim().is_empty();
+        let has_url = crate::remote::is_remote(&server.url);
+        if !has_command && !has_url {
+            return Err(format!(
+                "Server {} has neither a program to run nor an address.",
+                server.name
+            ));
+        }
+        if has_url {
+            crate::remote::check_url(&server.url)?;
         }
     }
     let mut names: Vec<&str> = config.servers.iter().map(|s| s.name.as_str()).collect();
@@ -99,17 +124,77 @@ pub struct CallRecord {
     pub ok: bool,
 }
 
-/// A running server and the pipes to it.
+/// How a connection carries messages.
+///
+/// Two transports, because MCP defines two and they are not interchangeable
+/// from the user's side: a local one has to be installed and a remote one has
+/// to be signed into. Everything above this enum — initialise, list the tools,
+/// call one — is identical for both, which is why only `request` and `notify`
+/// know which is which.
+enum Wire {
+    /// A program on this machine, talking over its own stdin and stdout.
+    Local {
+        child: Child,
+        stdin: ChildStdin,
+        stdout: BufReader<ChildStdout>,
+    },
+    /// An address, one POST per message.
+    Remote {
+        agent: ureq::Agent,
+        url: String,
+        token: String,
+        /// Handed back by the server on the first call and required on every
+        /// call after it. Without this a server treats each request as a brand
+        /// new client and nothing that depends on state works.
+        session: Option<String>,
+    },
+}
+
+/// A live connection to a server, local or remote.
 pub struct Connection {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    wire: Wire,
     next_id: i64,
 }
 
 impl Connection {
     /// Start a server. Does not happen until something actually calls it.
     pub fn open(spec: &ServerSpec) -> Result<Self, String> {
+        // A URL wins over a command. See the note on `is_remote`: a config with
+        // both was edited by hand, and choosing the remote one is the guess that
+        // cannot start a process on somebody's machine.
+        if crate::remote::is_remote(&spec.url) {
+            return Self::open_remote(spec);
+        }
+        Self::open_local(spec)
+    }
+
+    /// A remote server: no install, no child process, one address.
+    fn open_remote(spec: &ServerSpec) -> Result<Self, String> {
+        crate::remote::check_url(&spec.url)?;
+        // Timeouts rather than none. A remote call happens on a Tauri worker
+        // thread, and a server that accepts the connection and never answers
+        // would hold that thread for as long as the app runs.
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(10))
+            .timeout_read(std::time::Duration::from_secs(60))
+            .build();
+        let mut conn = Connection {
+            wire: Wire::Remote {
+                agent,
+                url: spec.url.trim().to_string(),
+                token: spec.token.clone(),
+                session: None,
+            },
+            next_id: 1,
+        };
+        conn.handshake()?;
+        Ok(conn)
+    }
+
+    fn open_local(spec: &ServerSpec) -> Result<Self, String> {
+        if spec.command.trim().is_empty() {
+            return Err("This connection has neither a program to run nor an address.".into());
+        }
         let mut command = Command::new(&spec.command);
         command
             .args(&spec.args)
@@ -136,14 +221,24 @@ impl Connection {
         let stdout = child.stdout.take().ok_or("no stdout on the server")?;
 
         let mut conn = Connection {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
+            wire: Wire::Local {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+            },
             next_id: 1,
         };
-        // Handshake first. A server that will not initialise is not usable, and
-        // finding that out now is better than on the user's first real call.
-        conn.request(
+        conn.handshake()?;
+        Ok(conn)
+    }
+
+    /// Introduce ourselves, and refuse to go on if that fails.
+    ///
+    /// Shared by both transports: a server that will not initialise is not
+    /// usable, and finding that out now is better than on the user's first real
+    /// call. Identical for local and remote, which is the point of the split.
+    fn handshake(&mut self) -> Result<(), String> {
+        self.request(
             "initialize",
             serde_json::json!({
                 "protocolVersion": "2024-11-05",
@@ -151,16 +246,78 @@ impl Connection {
                 "clientInfo": { "name": "loaf", "version": env!("CARGO_PKG_VERSION") }
             }),
         )?;
-        conn.notify("notifications/initialized", serde_json::json!({}));
-        Ok(conn)
+        self.notify("notifications/initialized", serde_json::json!({}));
+        Ok(())
     }
 
     fn notify(&mut self, method: &str, params: serde_json::Value) {
         let payload = serde_json::json!({
             "jsonrpc": "2.0", "method": method, "params": params
         });
-        let _ = writeln!(self.stdin, "{payload}");
-        let _ = self.stdin.flush();
+        match &mut self.wire {
+            Wire::Local { stdin, .. } => {
+                let _ = writeln!(stdin, "{payload}");
+                let _ = stdin.flush();
+            }
+            Wire::Remote { .. } => {
+                // A notification has no reply to wait for, and whatever the
+                // server answers with is of no interest — but the POST still has
+                // to happen, or the server never learns we finished initialising.
+                let _ = self.post(&payload.to_string());
+            }
+        }
+    }
+
+    /// One POST to a remote server, returning the body and its content type.
+    ///
+    /// Captures the session id the first time the server offers one. That is not
+    /// optional bookkeeping: without it every subsequent request looks like a new
+    /// client, and a server that keeps any state per session behaves as though
+    /// nothing was ever initialised.
+    fn post(&mut self, body: &str) -> Result<(String, Option<String>), String> {
+        let Wire::Remote {
+            agent,
+            url,
+            token,
+            session,
+        } = &mut self.wire
+        else {
+            return Err("that connection is not a remote one".into());
+        };
+
+        let mut request = agent
+            .post(url)
+            .set("Content-Type", "application/json")
+            .set("Accept", crate::remote::ACCEPT);
+        if !token.trim().is_empty() {
+            request = request.set("Authorization", &format!("Bearer {}", token.trim()));
+        }
+        if let Some(id) = session.as_deref() {
+            request = request.set(crate::remote::SESSION_HEADER, id);
+        }
+
+        match request.send_string(body) {
+            Ok(response) => {
+                if let Some(id) = response.header(crate::remote::SESSION_HEADER) {
+                    if session.is_none() {
+                        *session = Some(id.to_string());
+                    }
+                }
+                let kind = response.header("Content-Type").map(str::to_string);
+                let text = response
+                    .into_string()
+                    .map_err(|e| format!("Could not read the answer: {e}"))?;
+                Ok((text, kind))
+            }
+            // A refusal WITH a body is the useful case: the server usually says
+            // why, and "401" on its own has sent people looking in the wrong
+            // place. See `http_failure`.
+            Err(ureq::Error::Status(code, response)) => {
+                let text = response.into_string().unwrap_or_default();
+                Err(crate::remote::http_failure(code, &text))
+            }
+            Err(e) => Err(format!("Could not reach that server: {e}")),
+        }
     }
 
     /// Send one request and read until its answer comes back.
@@ -179,16 +336,28 @@ impl Connection {
         let payload = serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": method, "params": params
         });
-        writeln!(self.stdin, "{payload}").map_err(|e| e.to_string())?;
-        self.stdin.flush().map_err(|e| e.to_string())?;
+
+        if matches!(self.wire, Wire::Remote { .. }) {
+            let (body, kind) = self.post(&payload.to_string())?;
+            return match crate::remote::reply_with_id(&body, kind.as_deref(), id)? {
+                Some(result) => Ok(result),
+                // Answered, but not with this. Named differently from a timeout
+                // on purpose: one means the server is talking to somebody else's
+                // request, the other means it is not talking at all.
+                None => Err("That server answered without answering the question.".into()),
+            };
+        }
+
+        let Wire::Local { stdin, stdout, .. } = &mut self.wire else {
+            return Err("that connection has no pipes".into());
+        };
+        writeln!(stdin, "{payload}").map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
 
         // Bounded so a chatty or broken server cannot hang the caller forever.
         for _ in 0..200 {
             let mut line = String::new();
-            let read = self
-                .stdout
-                .read_line(&mut line)
-                .map_err(|e| e.to_string())?;
+            let read = stdout.read_line(&mut line).map_err(|e| e.to_string())?;
             if read == 0 {
                 return Err("The server stopped talking.".into());
             }
@@ -236,10 +405,13 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        // Asked to stop rather than left running: a server Loaf started should
-        // not outlive the app that started it.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Only a local server has anything to stop. Loaf started that process,
+        // so it should not outlive the app that started it. A remote server is
+        // somebody else's and closing the connection is the whole of goodbye.
+        if let Wire::Local { child, .. } = &mut self.wire {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
@@ -320,6 +492,80 @@ mod tests {
     }
 
     #[test]
+    fn accepts_a_remote_server_with_no_command() {
+        // The rule this replaced demanded a command, which would have refused
+        // every remote connection at the moment of saving it.
+        let json = r#"{"servers":[{"name":"gmail","url":"https://example.com/mcp"}]}"#;
+        let config = parse_config(json).expect("a remote server is a valid server");
+        assert_eq!(config.servers[0].url, "https://example.com/mcp");
+        assert!(config.servers[0].command.is_empty());
+    }
+
+    #[test]
+    fn refuses_a_server_with_neither_a_command_nor_an_address() {
+        let json = r#"{"servers":[{"name":"nothing"}]}"#;
+        let err = parse_config(json).unwrap_err();
+        assert!(err.contains("neither"));
+    }
+
+    #[test]
+    fn refuses_an_address_that_is_not_one() {
+        let json = r#"{"servers":[{"name":"x","url":"ftp://nope"}]}"#;
+        // Not a URL we handle, and no command either, so it has neither.
+        assert!(parse_config(json).is_err());
+    }
+
+    #[test]
+    fn a_token_is_read_but_never_part_of_the_view() {
+        let json =
+            r#"{"servers":[{"name":"g","url":"https://a.example/mcp","token":"secret-xyz"}]}"#;
+        let config = parse_config(json).unwrap();
+        assert_eq!(config.servers[0].token, "secret-xyz");
+        let shown = serde_json::to_string(&crate::connections::redact(&config)).unwrap();
+        assert!(
+            !shown.contains("secret-xyz"),
+            "the token reached the window: {shown}"
+        );
+        assert!(shown.contains("has_token"));
+    }
+
+    #[test]
+    fn a_connection_with_nothing_to_connect_to_is_refused_before_anything_runs() {
+        let spec = ServerSpec {
+            name: "empty".into(),
+            command: String::new(),
+            args: vec![],
+            env: Default::default(),
+            note: String::new(),
+            url: String::new(),
+            token: String::new(),
+        };
+        // `unwrap_err` would need Connection: Debug, and a live connection is
+        // not a thing worth making printable for one test.
+        match Connection::open(&spec) {
+            Ok(_) => panic!("a connection with nothing to connect to was opened"),
+            Err(err) => assert!(err.contains("neither"), "{err}"),
+        }
+    }
+
+    #[test]
+    fn a_bad_address_is_refused_before_anything_is_sent() {
+        let spec = ServerSpec {
+            name: "bad".into(),
+            command: String::new(),
+            args: vec![],
+            env: Default::default(),
+            note: String::new(),
+            url: "https://a".into(),
+            token: String::new(),
+        };
+        assert!(
+            Connection::open(&spec).is_err(),
+            "a too-short address connected"
+        );
+    }
+
+    #[test]
     fn refuses_two_servers_with_one_name() {
         let json = r#"{"servers":[{"name":"a","command":"x"},{"name":"a","command":"y"}]}"#;
         assert!(parse_config(json).is_err());
@@ -374,6 +620,8 @@ mod tests {
             args: vec![],
             env: BTreeMap::new(),
             note: "Loaf's own server".into(),
+            url: String::new(),
+            token: String::new(),
         };
         let mut conn = Connection::open(&spec).expect("handshake");
         let tools = conn.tools().expect("tools/list");

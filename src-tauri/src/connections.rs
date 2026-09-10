@@ -43,6 +43,16 @@ pub struct ServerView {
     /// Which environment variables are set for this server. Names only.
     #[serde(default)]
     pub env_keys: Vec<String>,
+    /// The address, for a remote server. Not a secret: it is what the user typed.
+    #[serde(default)]
+    pub url: String,
+    /// Whether a bearer token is stored — never the token.
+    ///
+    /// The same rule as `env_keys`: the window is told a credential EXISTS so it
+    /// can say so, and is never handed one. There is no reveal and there will
+    /// not be. A window is one bug away from being somewhere else.
+    #[serde(default)]
+    pub has_token: bool,
 }
 
 /// Everything the window may know about the configured servers.
@@ -54,6 +64,8 @@ pub fn redact(config: &Config) -> Vec<ServerView> {
             name: s.name.clone(),
             command: s.command.clone(),
             args: s.args.clone(),
+            url: s.url.clone(),
+            has_token: !s.token.trim().is_empty(),
             note: s.note.clone(),
             env_keys: s.env.keys().cloned().collect(),
         })
@@ -110,10 +122,23 @@ pub fn apply(stored: &Config, incoming: Vec<ServerView>, secrets: &SecretsIn) ->
                 .iter()
                 .map(|k| (k.clone(), secrets.get(&view.name, k)))
                 .collect();
+            // The token travels through the same one-way channel as the env
+            // values, under a reserved key, so there is only one path for a
+            // secret into Rust and only one rule for keeping it.
+            let token = keep_or_replace(
+                &secrets.get(&view.name, TOKEN_KEY),
+                old.map(|s| s.token.as_str()).unwrap_or_default(),
+            );
             ServerSpec {
                 name: view.name,
                 command: view.command,
                 args: view.args,
+                url: view.url,
+                // The same rule as the env values: the window never receives the
+                // token, so it cannot send it back. An empty one here means
+                // "leave what is stored", not "clear it" — otherwise every save
+                // from the panel would wipe the credential it was never shown.
+                token,
                 env: merge_env(&typed, &existing),
                 note: view.note,
             }
@@ -137,6 +162,27 @@ pub fn apply(stored: &Config, incoming: Vec<ServerView>, secrets: &SecretsIn) ->
 /// no shape in which one comes back down.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct SecretsIn(#[serde(default)] BTreeMap<String, BTreeMap<String, String>>);
+
+/// Where a remote server's bearer token travels, inside `SecretsIn`.
+///
+/// A reserved key rather than a second field, so every secret the window sends
+/// uses one channel with one rule. Two channels would be two places to get the
+/// "empty means keep it" rule wrong, and getting it wrong means wiping a
+/// credential the window was never allowed to see.
+pub const TOKEN_KEY: &str = "__token";
+
+/// A typed secret, or the stored one when nothing was typed.
+///
+/// Empty means "leave it alone", NOT "clear it". The window is never given a
+/// secret, so it cannot send one back, so every save would otherwise erase the
+/// credential it was not shown. Clearing is done by removing the server.
+fn keep_or_replace(typed: &str, stored: &str) -> String {
+    if typed.trim().is_empty() {
+        stored.to_string()
+    } else {
+        typed.trim().to_string()
+    }
+}
 
 impl SecretsIn {
     fn get(&self, server: &str, key: &str) -> String {
@@ -259,6 +305,8 @@ mod tests {
                 .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
                 .collect(),
             note: String::new(),
+            url: String::new(),
+            token: String::new(),
         }
     }
 
@@ -284,6 +332,8 @@ mod tests {
             args: vec!["-y".into(), "gmail-mcp".into()],
             note: String::new(),
             env_keys: Vec::new(),
+            url: String::new(),
+            has_token: false,
         }];
         let out = apply(&stored, incoming, &SecretsIn::default());
         assert_eq!(out.watches, stored.watches);
@@ -353,6 +403,8 @@ mod tests {
             args: vec![],
             note: "meeting notes".into(),
             env_keys: vec![],
+            url: String::new(),
+            has_token: false,
         }];
         let after = apply(&stored, view, &SecretsIn::default());
         assert_eq!(after.servers.len(), 1);

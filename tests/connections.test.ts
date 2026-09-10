@@ -13,6 +13,7 @@ import {
   watchFor,
   isWatch,
   type Watch,
+  isRemote,
 } from "../src/connections/connections";
 
 const NOW = 1_700_000_000_000;
@@ -635,5 +636,76 @@ describe("the add form", () => {
   it("says pressing one does not start anything", () => {
     const html = connectionsPanel(state({ adding: true }), NOW).toLowerCase();
     expect(html).toContain("nothing runs until");
+  });
+});
+
+/**
+ * Remote servers — the transport that makes a one-click connection possible.
+ *
+ * Loaf could only ever start a program and pipe to it, which is why no ordinary
+ * person could connect Gmail: every server had to be installed and its
+ * credentials typed into a config file. A remote server is one address and a
+ * sign-in, which is what every hosted connector actually uses.
+ */
+describe("a remote server", () => {
+  const remote = (over: Partial<ServerView> = {}): ServerView => ({
+    name: "gmail",
+    command: "",
+    args: [],
+    note: "my mail",
+    env_keys: [],
+    url: "https://mail.example.com/mcp",
+    has_token: true,
+    ...over,
+  });
+
+  it("is recognised by its address", () => {
+    expect(isRemote(remote())).toBe(true);
+    expect(isRemote(remote({ url: "http://127.0.0.1:3000/mcp" }))).toBe(true);
+  });
+
+  it("is not confused with a local one", () => {
+    expect(isRemote(server())).toBe(false);
+    expect(isRemote(remote({ url: "" }))).toBe(false);
+    expect(isRemote(remote({ url: undefined }))).toBe(false);
+  });
+
+  // A card that showed an empty command line made a correctly configured
+  // remote connection look broken.
+  it("shows its address rather than an empty command line", () => {
+    const html = connectionsPanel(state({ servers: [remote()] }), NOW);
+    expect(html).toContain("mail.example.com/mcp");
+    expect(html).toContain("Remote server");
+  });
+
+  it("says a token is stored without ever showing one", () => {
+    const html = connectionsPanel(state({ servers: [remote()] }), NOW);
+    expect(html).toContain("signed in");
+  });
+
+  it("does not claim a sign-in when there is none", () => {
+    const html = connectionsPanel(state({ servers: [remote({ has_token: false })] }), NOW);
+    expect(html).not.toContain("signed in");
+  });
+
+  it("is accepted by the validator, and so is a config from an older build", () => {
+    expect(isServerView(remote())).toBe(true);
+    const { url, has_token, ...older } = remote();
+    void url;
+    void has_token;
+    expect(isServerView(older)).toBe(true);
+  });
+
+  it("is rejected when the new fields are the wrong type", () => {
+    expect(isServerView({ ...remote(), url: 7 })).toBe(false);
+    expect(isServerView({ ...remote(), has_token: "yes" })).toBe(false);
+  });
+
+  it("can be added from the form, which offers an address and a token", () => {
+    const html = connectionsPanel(state({ adding: true }), NOW);
+    expect(html).toContain('id="mcp-new-url"');
+    expect(html).toContain('id="mcp-new-token"');
+    // A token box that is not a password box is a token on somebody's screen.
+    expect(html).toContain('type="password"');
   });
 });

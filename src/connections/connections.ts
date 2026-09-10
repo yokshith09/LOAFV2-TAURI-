@@ -25,6 +25,15 @@ export interface ServerView {
   readonly note: string;
   /** Names of the environment variables set for it. Names only. */
   readonly env_keys: readonly string[];
+  /**
+   * The address, for a remote server. Empty for a local one.
+   *
+   * A remote server is the shape an ordinary person can actually set up: one
+   * address, a sign-in, nothing installed. See `remote.rs`.
+   */
+  readonly url?: string;
+  /** Whether a token is stored. Never the token — there is no reveal. */
+  readonly has_token?: boolean;
 }
 
 /**
@@ -156,7 +165,10 @@ export function isServerView(v: unknown): v is ServerView {
     s.args.every((a) => typeof a === "string") &&
     typeof s.note === "string" &&
     Array.isArray(s.env_keys) &&
-    s.env_keys.every((k) => typeof k === "string")
+    s.env_keys.every((k) => typeof k === "string") &&
+    // Optional, because a config written by an older build has neither.
+    (s.url === undefined || typeof s.url === "string") &&
+    (s.has_token === undefined || typeof s.has_token === "boolean")
   );
 }
 
@@ -230,6 +242,12 @@ export function relativeWhen(at: number, now: number): string {
 }
 
 /** The command line as it will actually be run, for the user to check. */
+/** Whether this card is a remote server. */
+export function isRemote(server: ServerView): boolean {
+  const url = server.url ?? "";
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
 export function commandLine(server: ServerView): string {
   return [server.command, ...server.args].join(" ");
 }
@@ -383,7 +401,14 @@ function serverCard(server: ServerView, state: ConnectionsState): string {
     `<span class="mcp-name">${escapeHTML(server.name)}</span>` +
     `<span class="mcp-status">${status}</span>` +
     `</div>` +
-    `<code class="mcp-cmd">${escapeHTML(commandLine(server))}</code>` +
+    // A remote server has no command line to show, and showing an empty one
+    // made a correctly configured connection look broken.
+    (isRemote(server)
+      ? `<code class="mcp-cmd">${escapeHTML(server.url ?? "")}</code>` +
+        `<p class="mcp-keys">Remote server` +
+        (server.has_token ? ` &middot; <span class="mcp-set">signed in</span>` : "") +
+        `</p>`
+      : `<code class="mcp-cmd">${escapeHTML(commandLine(server))}</code>`) +
     (server.note ? `<p class="mcp-desc">${escapeHTML(server.note)}</p>` : "") +
     keys +
     `<div class="mcp-actions">` +
@@ -410,6 +435,10 @@ function addForm(open: boolean): string {
     `<label>What to call it<input id="mcp-new-name" placeholder="granola" maxlength="40"></label>` +
     `<label>Program to run<input id="mcp-new-cmd" placeholder="npx" maxlength="200"></label>` +
     `<label>Arguments<input id="mcp-new-args" placeholder="-y granola-mcp" maxlength="400"></label>` +
+    `<p class="mcp-fine"><b>Or</b> a remote server, which installs nothing:</p>` +
+    `<label>Address<input id="mcp-new-url" placeholder="https://example.com/mcp" maxlength="400"></label>` +
+    `<label>Token, if it needs one<input id="mcp-new-token" type="password" ` +
+    `placeholder="leave empty if it does not" maxlength="400" autocomplete="off"></label>` +
     `<label>What it is for<input id="mcp-new-note" placeholder="my meeting notes" maxlength="120"></label>` +
     `<p class="mcp-fine">Nothing is started by saving this. API keys go in the config file — ` +
     `use the button below, so a key never passes through this window.</p>` +
