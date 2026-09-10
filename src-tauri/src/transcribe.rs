@@ -459,10 +459,23 @@ mod probe {
             "the model is not where the test was told it is"
         );
 
+        // Model load and inference timed apart, because they have different
+        // fixes: a slow load is solved by keeping the model in memory between
+        // utterances, a slow inference is solved by a smaller model.
+        let load_start = std::time::Instant::now();
+        {
+            use whisper_rs::{WhisperContext, WhisperContextParameters};
+            let _warm =
+                WhisperContext::new_with_params(&setup.model, WhisperContextParameters::default())
+                    .expect("model would not load");
+        }
+        let load = load_start.elapsed();
+
         let started = std::time::Instant::now();
         let text = super::transcribe(&setup, std::path::Path::new(&wav))
             .expect("whisper refused to transcribe");
         let took = started.elapsed();
+        println!("model load alone: {:.1}s", load.as_secs_f32());
 
         println!("heard: {text:?}");
         println!("took: {:.1}s", took.as_secs_f32());
