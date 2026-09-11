@@ -33,6 +33,36 @@ export const MAX_VISIBLE = 3;
 /** Longer than this and it is a document, not a task. */
 export const MAX_TITLE_LENGTH = 80;
 
+/**
+ * The colours a card can be.
+ *
+ * A FIXED PALETTE, not a colour picker. Every one of these is chosen to carry
+ * legible text in both light and dark mode — a free picker lets someone make a
+ * note they cannot read, and then the bug report is about Loaf. `default` means
+ * "no colour", which is what almost every note stays.
+ */
+export const NOTE_COLOURS = [
+  "default",
+  "butter",
+  "rose",
+  "sage",
+  "sky",
+  "lilac",
+  "clay",
+] as const;
+export type NoteColour = (typeof NOTE_COLOURS)[number];
+
+export function isNoteColour(v: unknown): v is NoteColour {
+  return typeof v === "string" && (NOTE_COLOURS as readonly string[]).includes(v);
+}
+
+/** Longer than this and the card is a document. The editor scrolls. */
+export const MAX_BODY_LENGTH = 20_000;
+
+/** More than this and the chips stop fitting on a card. */
+export const MAX_LABELS = 8;
+export const MAX_LABEL_LENGTH = 24;
+
 export interface Task {
   readonly id: string;
   readonly title: string;
@@ -42,6 +72,20 @@ export interface Task {
   readonly done: boolean;
   /** Wall-clock ms it was created, so the order is stable. */
   readonly createdAt: number;
+  /**
+   * The note itself, under the title. Empty for a plain one-line task.
+   *
+   * THIS IS WHAT MAKES IT A NOTEPAD RATHER THAN A REMINDER LIST. The old model
+   * had a single 80-character title and nothing else, so anything that did not
+   * fit in a line could not be written down at all.
+   */
+  readonly body: string;
+  readonly colour: NoteColour;
+  /** Pinned cards sort above everything else, whatever their priority. */
+  readonly pinned: boolean;
+  readonly labels: readonly string[];
+  /** Wall-clock ms of the last edit, so the grid can show recent work first. */
+  readonly updatedAt: number;
 }
 
 export interface TaskStore {
@@ -94,7 +138,82 @@ function readTask(v: unknown, fallbackNow: number): Task | null {
     dueAt,
     done: r.done === true,
     createdAt,
+    // EVERY ONE OF THESE DEFAULTS, because a file written before notes had
+    // bodies must still load. That is the same contract `stats.json` has: a
+    // missing field is a default, never a dropped row. Anyone who had tasks
+    // before this change keeps all of them, as plain uncoloured cards.
+    body: typeof r.body === "string" ? r.body.slice(0, MAX_BODY_LENGTH) : "",
+    colour: isNoteColour(r.colour) ? r.colour : "default",
+    pinned: r.pinned === true,
+    labels: readLabels(r.labels),
+    updatedAt:
+      typeof r.updatedAt === "number" && Number.isFinite(r.updatedAt)
+        ? r.updatedAt
+        : createdAt,
   };
+}
+
+/**
+ * The labels on a card, cleaned up.
+ *
+ * Deduplicated case-insensitively but stored as typed: "Work" and "work" are
+ * one label, and which capitalisation survives is whichever was written first.
+ * Anything that is not a non-empty string is dropped rather than coerced — a
+ * label reading "null" is worse than no label.
+ */
+export function readLabels(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of v) {
+    if (typeof item !== "string") continue;
+    const label = normaliseLabel(item);
+    if (label === "") continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(label);
+    if (out.length >= MAX_LABELS) break;
+  }
+  return out;
+}
+
+export function normaliseLabel(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL_LENGTH);
+}
+
+/**
+ * The order cards appear in: pinned first, then most recently touched.
+ *
+ * NOT priority order, and that is the change. The old list was three things the
+ * pet held in view, so "now" came first. A wall of notes is something you scan,
+ * and the thing you want is almost always the one you just wrote — which is why
+ * every notes app in the world sorts this way and no task list does.
+ *
+ * Priority still decides what the PET shows; see `visible`.
+ */
+export function forTheWall(tasks: readonly Task[]): Task[] {
+  return [...tasks].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return b.updatedAt - a.updatedAt;
+  });
+}
+
+/** Every label in use, for the filter strip. Most used first. */
+export function labelsInUse(tasks: readonly Task[]): string[] {
+  const counts = new Map<string, { label: string; n: number }>();
+  for (const t of tasks) {
+    for (const label of t.labels) {
+      const key = label.toLowerCase();
+      const seen = counts.get(key);
+      if (seen) seen.n += 1;
+      else counts.set(key, { label, n: 1 });
+    }
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label))
+    .map((c) => c.label);
 }
 
 /**
@@ -190,6 +309,11 @@ export class TaskList {
           : null,
       done: false,
       createdAt,
+      body: "",
+      colour: "default",
+      pinned: false,
+      labels: [],
+      updatedAt: createdAt,
     };
     this.tasks.push(task);
     this.save();
@@ -202,6 +326,72 @@ export class TaskList {
     this.tasks[i] = change(this.tasks[i]!);
     this.save();
     return true;
+  }
+
+  /**
+   * Change what a note says.
+   *
+   * Title and body together, because the editor edits both and saving them
+   * separately would write the file twice and leave a window where one had
+   * landed and the other had not.
+   *
+   * An empty title is allowed HERE and refused by `add`, which is deliberate: a
+   * note you are part way through writing often has a body and no title yet,
+   * and losing it on save because the title box is empty is the worst thing a
+   * notepad can do. `add` refuses because a blank new row is just litter.
+   */
+  edit(id: string, title: string, body: string): boolean {
+    return this.replace(id, (t) => ({
+      ...t,
+      title: normaliseTitle(title),
+      body: body.slice(0, MAX_BODY_LENGTH),
+      updatedAt: this.now(),
+    }));
+  }
+
+  setColour(id: string, colour: NoteColour): boolean {
+    return this.replace(id, (t) => ({ ...t, colour, updatedAt: this.now() }));
+  }
+
+  /** Returns the new state, so a caller does not have to look it up again. */
+  togglePin(id: string): boolean {
+    return this.replace(id, (t) => ({ ...t, pinned: !t.pinned, updatedAt: this.now() }));
+  }
+
+  addLabel(id: string, raw: string): boolean {
+    const label = normaliseLabel(raw);
+    if (label === "") return false;
+    return this.replace(id, (t) => {
+      // Already there, in any capitalisation: leave the note alone rather than
+      // bumping updatedAt and jumping the card to the front of the wall for no
+      // visible reason.
+      if (t.labels.some((l) => l.toLowerCase() === label.toLowerCase())) return t;
+      if (t.labels.length >= MAX_LABELS) return t;
+      return { ...t, labels: [...t.labels, label], updatedAt: this.now() };
+    });
+  }
+
+  removeLabel(id: string, label: string): boolean {
+    return this.replace(id, (t) => {
+      const left = t.labels.filter((l) => l.toLowerCase() !== label.toLowerCase());
+      if (left.length === t.labels.length) return t;
+      return { ...t, labels: left, updatedAt: this.now() };
+    });
+  }
+
+  /** Every note, pinned first then most recently touched. */
+  wall(): Task[] {
+    return forTheWall(this.tasks);
+  }
+
+  /** Only the notes carrying this label, in wall order. */
+  withLabel(label: string): Task[] {
+    const key = label.toLowerCase();
+    return forTheWall(this.tasks.filter((t) => t.labels.some((l) => l.toLowerCase() === key)));
+  }
+
+  labels(): string[] {
+    return labelsInUse(this.tasks);
   }
 
   complete(id: string): boolean {
