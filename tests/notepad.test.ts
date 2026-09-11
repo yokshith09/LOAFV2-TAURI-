@@ -5,6 +5,7 @@ import {
   labelsInUse,
   readLabels,
   normaliseLabel,
+  firstLineOf,
   isNoteColour,
   NOTE_COLOURS,
   MAX_BODY_LENGTH,
@@ -321,5 +322,43 @@ describe("a file written before notes had bodies", () => {
   it("ignores a body that is not a string", () => {
     const odd = JSON.stringify([{ id: "t1", title: "x", createdAt: 1, body: { not: "text" } }]);
     expect(new TaskList(fixedStore(odd)).all[0]!.body).toBe("");
+  });
+});
+
+/**
+ * A note may be just a body, with no title — the composer's title box is not
+ * required, the same way Google Keep's is not. `TaskList.add` still refuses an
+ * empty title (a blank new row is litter), so the caller — `applyTaskCommand`
+ * in main.ts — falls back to this when there is a body and no typed title.
+ */
+describe("firstLineOf: a title for a note that never got one", () => {
+  it("takes the first line", () => {
+    expect(firstLineOf("Call the bank\nabout the overdraft")).toBe("Call the bank");
+  });
+
+  it("falls through leading blank lines", () => {
+    // Pasting a body that starts with a blank line must not produce an
+    // empty-looking card sitting in the middle of the wall.
+    expect(firstLineOf("\n\n  \nActual first line\nrest")).toBe("Actual first line");
+  });
+
+  it("is empty for a body that is nothing but blank lines", () => {
+    expect(firstLineOf("\n\n   \n")).toBe("");
+  });
+
+  it("is empty for a completely empty body", () => {
+    expect(firstLineOf("")).toBe("");
+  });
+
+  it("trims the line it takes", () => {
+    expect(firstLineOf("   spaced out   \nrest")).toBe("spaced out");
+  });
+
+  it("caps at the same length as any other title", () => {
+    expect(firstLineOf("x".repeat(200))).toHaveLength(MAX_TITLE_LENGTH);
+  });
+
+  it("is a single line even when the source line has one already", () => {
+    expect(firstLineOf("just one line")).toBe("just one line");
   });
 });

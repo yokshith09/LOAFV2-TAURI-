@@ -416,19 +416,31 @@ export const MEETINGS_CSS = `
   .mt-notes li { font-size:12px; line-height:1.5; color:var(--ink-soft); }
 `;
 
-/** The notes board: a Keep-style wall of cards, plus its composer. */
+/**
+ * The notes board: a Keep-style wall of cards, its composer, colours, pinning
+ * and labels.
+ *
+ * COLOURS ARE A FIXED, NAMED PALETTE — see NOTE_COLOURS in tasks/tasks.ts —
+ * and every swatch here is chosen to keep --ink (a near-black brown)
+ * comfortably legible on top of it. There is no free colour picker anywhere in
+ * this file for exactly that reason: a picker lets someone make a note they
+ * cannot read, and the bug report that follows is about Loaf, not about their
+ * choice of colour.
+ */
 export const NOTES_CSS = `
   .nt-compose { border:1px solid var(--edge); border-radius:12px; padding:12px;
     background:var(--card,#FFFDF9); margin-bottom:16px; }
-  /* A textarea, not an input: what lands here is often several sentences, and
-     a one-line box that scrolls sideways is how you get notes nobody finishes
-     typing. */
+  /* The title is a genuine short line now — capped the same 80 characters as
+     the checklist's — so it is an input, not a textarea. The body below it is
+     the textarea: what lands there is often several sentences, and a one-line
+     box that scrolls sideways is how you get notes nobody finishes typing. */
+  .nt-title-input { font-weight:600; margin-bottom:7px; }
   .nt-input { width:100%; resize:vertical; font-family:inherit; font-size:13.5px;
     line-height:1.5; color:var(--ink); background:var(--paper);
     border:1px solid var(--edge); border-radius:9px; padding:9px 11px;
     outline:none; -webkit-user-select:text; user-select:text; }
   .nt-input:focus { border-color:var(--accent-dark); }
-  .nt-tools { display:flex; gap:8px; align-items:center; margin-top:9px; }
+  .nt-tools { display:flex; gap:8px; align-items:center; margin-top:9px; flex-wrap:wrap; }
   .nt-select, .nt-mins { font-family:inherit; font-size:12px; color:var(--ink);
     background:var(--paper); border:1px solid var(--edge); border-radius:8px;
     padding:6px 8px; }
@@ -438,6 +450,16 @@ export const NOTES_CSS = `
     background:var(--accent); border:1px solid var(--accent-dark); color:var(--accent-ink); }
   .nt-add:hover { filter:brightness(0.97); }
 
+  /* One row of chips above the grid, filtering the wall to one label at a
+     time. Only rendered once a note actually carries a label — one chip on
+     one note is not a reason to add a permanent row above every empty wall. */
+  .nt-filters { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+  .nt-filter-chip { font-family:inherit; font-size:11.5px; cursor:pointer;
+    border-radius:20px; padding:4px 11px; color:var(--ink-soft);
+    border:1px solid var(--edge); background:var(--paper); }
+  .nt-filter-chip.active { color:var(--accent-ink); background:var(--accent);
+    border-color:var(--accent-dark); font-weight:600; }
+
   /* Masonry by CSS columns rather than a grid: cards here are wildly different
      heights — a three-word reminder next to a paragraph of transcript — and a
      grid row would stretch every card in it to match the tallest. */
@@ -446,11 +468,33 @@ export const NOTES_CSS = `
   .nt-card { break-inside:avoid; display:inline-block; width:100%;
     margin:0 0 12px; border:1px solid var(--edge); border-radius:12px;
     padding:11px 13px; background:var(--card,#FFFDF9); }
+  .nt-card-top { display:flex; justify-content:flex-end; margin:-3px -5px 0 0; }
+  /* Present but faint until pinned or hovered — a pin button visible on every
+     one of forty cards all the time is a wall of pins, not a wall of notes. */
+  .nt-pin { font-family:inherit; font-size:12px; line-height:1; cursor:pointer;
+    width:22px; height:22px; border-radius:6px; border:none; background:none;
+    opacity:.25; filter:grayscale(1); }
+  .nt-card:hover .nt-pin, .nt-pin.active { opacity:1; filter:none; }
+  .nt-card.pinned { border-color:var(--accent-dark); }
+  .nt-title-line { font-size:13.5px; font-weight:700; line-height:1.4;
+    margin-bottom:3px; -webkit-user-select:text; user-select:text; }
   .nt-body { font-size:13px; line-height:1.55; white-space:pre-wrap;
     -webkit-user-select:text; user-select:text; }
+  .nt-body-empty { color:var(--ink-soft); font-style:italic; }
   /* A transcript is given room to breathe instead of being clipped to the
      height of "buy milk". */
   .nt-card.long .nt-body { max-height:260px; overflow-y:auto; }
+  /* Archived, not deleted — sunk visually the same way forTheWall sinks it in
+     the sort order, rather than disappearing from the wall entirely. */
+  .nt-card.done { opacity:.55; }
+  .nt-card.done .nt-title-line { text-decoration:line-through; }
+  .nt-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+  .nt-chip { font-size:10.5px; color:var(--ink-soft); background:var(--paper);
+    border:1px solid var(--edge); border-radius:20px; padding:2px 9px;
+    display:inline-flex; align-items:center; gap:5px; }
+  .nt-chip-x { font-family:inherit; font-size:11px; line-height:1; cursor:pointer;
+    border:none; background:none; color:var(--ink-soft); padding:0; }
+  .nt-chip-x:hover { color:var(--ink); }
   .nt-foot { display:flex; align-items:center; gap:8px; margin-top:9px;
     padding-top:8px; border-top:1px solid var(--edge); }
   .nt-pri { font-size:9.5px; text-transform:uppercase; letter-spacing:.08em;
@@ -462,10 +506,41 @@ export const NOTES_CSS = `
     border:1px solid var(--edge); background:var(--paper); }
   .nt-btn:hover { border-color:var(--accent-dark); color:var(--ink); }
   /* Priority as a stripe down the edge, so the wall is scannable without
-     reading a word of it. */
-  .nt-card.p-now { border-left:4px solid #C2410C; }
-  .nt-card.p-soon { border-left:4px solid var(--accent-dark); }
-  .nt-card.p-whenever { border-left:4px solid var(--edge); }
+     reading a word of it. Skipped on a coloured card — a stripe on top of a
+     tint reads as a fifth colour rather than as priority. */
+  .nt-card.p-now.colour-default { border-left:4px solid #C2410C; }
+  .nt-card.p-soon.colour-default { border-left:4px solid var(--accent-dark); }
+  .nt-card.p-whenever.colour-default { border-left:4px solid var(--edge); }
+
+  /* THE PALETTE. Every background here is light enough that --ink (#33261D)
+     stays comfortably readable on top of it — the property the fixed list in
+     tasks/tasks.ts exists to guarantee. */
+  .nt-card.colour-butter { background:#FBF0B7; border-color:#E4D68F; }
+  .nt-card.colour-rose   { background:#F8DADA; border-color:#E0B4B4; }
+  .nt-card.colour-sage   { background:#DCEBDB; border-color:#B9D3B7; }
+  .nt-card.colour-sky    { background:#D8E8F5; border-color:#AFCCE3; }
+  .nt-card.colour-lilac  { background:#E6DEF3; border-color:#C7B7E3; }
+  .nt-card.colour-clay   { background:#EFE0CE; border-color:#D4BB99; }
+
+  /* The editor: the same card, opened wider, with the controls that change
+     what a note IS rather than just what it says. */
+  .nt-editing { box-shadow:0 2px 10px rgba(0,0,0,.08); border-color:var(--accent-dark); }
+  .nt-colour-row { display:flex; gap:7px; margin:9px 0; }
+  .nt-swatch { width:22px; height:22px; border-radius:50%; cursor:pointer;
+    border:2px solid var(--edge); padding:0; }
+  .nt-swatch.active { border-color:var(--ink); box-shadow:0 0 0 2px var(--paper) inset; }
+  .nt-swatch-default { background:var(--paper); }
+  .nt-swatch-butter { background:#FBF0B7; }
+  .nt-swatch-rose { background:#F8DADA; }
+  .nt-swatch-sage { background:#DCEBDB; }
+  .nt-swatch-sky { background:#D8E8F5; }
+  .nt-swatch-lilac { background:#E6DEF3; }
+  .nt-swatch-clay { background:#EFE0CE; }
+  .nt-chips.edit-row { align-items:center; }
+  .nt-label-input { font-family:inherit; font-size:11.5px; width:90px;
+    border:1px solid var(--edge); border-radius:20px; padding:3px 10px;
+    background:var(--paper); color:var(--ink); outline:none; }
+  .nt-label-input:focus { border-color:var(--accent-dark); }
 `;
 
 /** The delete controls on kept meetings. */

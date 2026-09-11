@@ -45,6 +45,9 @@ import {
   COMMAND_EVENT,
   TASK_COMMAND_EVENT,
   TASKS_CHANGED_EVENT,
+  NOTES_CHANGED_EVENT,
+  isNoteViewList,
+  type NoteView,
   SPOKEN_EVENT,
   SPOKEN_REPLY_EVENT,
   STATS_CHANGED_EVENT,
@@ -105,6 +108,32 @@ let version = "";
  * notetaker's storage belongs to the companion like everything else with state.
  */
 let tasks: Array<{ title: string; priority: string; minutesLeft: number | null }> = [];
+
+/**
+ * Every note, in full — the companion's last broadcast on `NOTES_CHANGED_EVENT`.
+ *
+ * Separate from `tasks` above, which stays capped at three for the pet's
+ * checklist. This is the whole wall.
+ */
+let notes: readonly NoteView[] = [];
+
+/**
+ * The label the Notes wall is filtered to, or null for everything.
+ *
+ * VIEW STATE, held here rather than sent to the companion and back: which of
+ * your own notes happen to be on screen right now is not a fact this window
+ * needs anyone else's agreement on, and round-tripping it would mean a label
+ * click waiting on the companion before the wall visibly changes.
+ */
+let notesFilter: string | null = null;
+
+/**
+ * The id of the note currently expanded into its editor, or null.
+ *
+ * The same kind of view state as `notesFilter`, and for the same reason: which
+ * card happens to be open is a fact about this window, not the note.
+ */
+let notesEditing: string | null = null;
 
 /**
  * What the companion last said about the radar.
@@ -265,6 +294,9 @@ async function render(): Promise<void> {
       platform,
       version,
       tasks: tasks as never,
+      notes,
+      notesFilter,
+      notesEditing,
       tabs: browserTabs,
       tabsRead,
       view: activeView,
@@ -756,7 +788,18 @@ root.addEventListener("click", (ev) => {
 
   const task = target.closest<HTMLElement>("[data-loaf-task]");
   if (task) {
-    sendTask(task.dataset.loafTask!);
+    sendTask(task.dataset.loafTask!, task);
+    return;
+  }
+
+  // The label filter strip above the Notes wall. Its own attribute rather than
+  // another data-loaf-task action: filtering is view-only state this window
+  // holds for itself (see notesFilter), never something sent to the companion.
+  const filterChip = target.closest<HTMLElement>("[data-loaf-note-filter]");
+  if (filterChip) {
+    const label = filterChip.dataset.loafNoteFilter ?? "";
+    notesFilter = label === "" ? null : label;
+    void render();
     return;
   }
 
@@ -801,15 +844,24 @@ void detectPlatform()
   });
 
 /**
- * Turn a click on the task panel into a command for the companion.
+ * Turn a click on the task panel — or a click on a note card — into a command
+ * for the companion, or, for a few actions, a purely local change to what this
+ * window is showing.
  *
- * The row buttons carry an INDEX rather than an id, because the dashboard
- * renders from a broadcast list and has no business knowing about ids it did
- * not invent. The companion resolves the index against the same ordered list it
- * sent, which keeps this window a view of state rather than a second owner of
- * it.
+ * `done`/`remove` carry an INDEX rather than an id, because the dashboard
+ * renders those from a broadcast list capped at three and has no business
+ * inventing an id it was not given. The companion resolves the index against
+ * the same ordered list it sent, which keeps this window a view of state
+ * rather than a second owner of it.
+ *
+ * Every `note-*` action carries a REAL id instead, because the Notes wall
+ * broadcasts every note in full — see `NoteView`. Reflecting that id back is
+ * not inventing one; it is the one this window was handed.
+ *
+ * `note-open` and `note-close` never reach the companion at all: which card is
+ * expanded is view-only state (`notesEditing`), the same kind as `notesFilter`.
  */
-function sendTask(action: string): void {
+function sendTask(action: string, el: HTMLElement): void {
   if (action === "add") {
     const titleEl = document.getElementById("tp-title") as HTMLInputElement | null;
     const priorityEl = document.getElementById("tp-priority") as HTMLSelectElement | null;
@@ -834,6 +886,97 @@ function sendTask(action: string): void {
     return;
   }
 
+  if (action === "note-close") {
+    notesEditing = null;
+    void render();
+    return;
+  }
+
+  if (action.startsWith("note-open:")) {
+    notesEditing = action.slice("note-open:".length);
+    void render();
+    return;
+  }
+
+  if (action.startsWith("note-save:")) {
+    const id = action.slice("note-save:".length);
+    const titleEl = document.getElementById("note-edit-title") as HTMLInputElement | null;
+    const bodyEl = document.getElementById("note-edit-body") as HTMLTextAreaElement | null;
+    void emit(TASK_COMMAND_EVENT, {
+      kind: "task",
+      action: "note-edit",
+      id,
+      title: titleEl?.value ?? "",
+      body: bodyEl?.value ?? "",
+    });
+    // Closes on this click rather than waiting for the round trip. The
+    // broadcast that follows carries the saved text anyway, so there is
+    // nothing this would show a stale copy of.
+    notesEditing = null;
+    return;
+  }
+
+  if (action.startsWith("note-colour:")) {
+    const id = action.slice("note-colour:".length);
+    void emit(TASK_COMMAND_EVENT, {
+      kind: "task",
+      action: "note-colour",
+      id,
+      colour: el.dataset.colour ?? "default",
+    });
+    return;
+  }
+
+  if (action.startsWith("note-pin:")) {
+    void emit(TASK_COMMAND_EVENT, {
+      kind: "task",
+      action: "note-pin",
+      id: action.slice("note-pin:".length),
+    });
+    return;
+  }
+
+  if (action.startsWith("note-done:")) {
+    void emit(TASK_COMMAND_EVENT, {
+      kind: "task",
+      action: "note-done",
+      id: action.slice("note-done:".length),
+    });
+    return;
+  }
+
+  if (action.startsWith("note-remove:")) {
+    const id = action.slice("note-remove:".length);
+    void emit(TASK_COMMAND_EVENT, { kind: "task", action: "note-remove", id });
+    // The same reasoning as note-save: nothing left to edit once this lands,
+    // so close it now rather than a tick later when the broadcast arrives.
+    if (notesEditing === id) notesEditing = null;
+    return;
+  }
+
+  if (action.startsWith("note-label-add:")) {
+    const id = action.slice("note-label-add:".length);
+    const labelEl = document.getElementById("note-edit-label") as HTMLInputElement | null;
+    const label = labelEl?.value ?? "";
+    // Same rule as the composer: an empty box is the user not having typed
+    // anything yet, not a mistake worth reporting.
+    if (label.trim().length === 0) {
+      labelEl?.focus();
+      return;
+    }
+    void emit(TASK_COMMAND_EVENT, { kind: "task", action: "note-label-add", id, label });
+    if (labelEl) labelEl.value = "";
+    return;
+  }
+
+  if (action.startsWith("note-label-remove:")) {
+    const id = action.slice("note-label-remove:".length);
+    const label = el.dataset.label ?? "";
+    if (label.length === 0) return;
+    void emit(TASK_COMMAND_EVENT, { kind: "task", action: "note-label-remove", id, label });
+    return;
+  }
+
   const [what, index] = action.split(":", 2);
   if ((what === "done" || what === "remove") && index !== undefined) {
     void emit(TASK_COMMAND_EVENT, { kind: "task", action: what, id: index });
@@ -848,14 +991,21 @@ function sendTask(action: string): void {
  * and the note composer here are BOTH in the document at the same time — one
  * set of ids shared between them would mean `getElementById` returning
  * whichever came first in the markup, and one of the two boxes silently doing
- * nothing. The payload is identical; only the ids differ.
+ * nothing.
+ *
+ * TITLE OR BODY, NOT TITLE AND BODY — a Keep-style note may be just a body,
+ * with no title at all. Refusing only when BOTH are empty is what makes that
+ * possible; the companion falls back to the body's own first line for a title
+ * when none was typed (see `firstLineOf` in tasks/tasks.ts).
  */
 function sendNote(): void {
-  const titleEl = document.getElementById("nt-title") as HTMLTextAreaElement | null;
+  const titleEl = document.getElementById("nt-title") as HTMLInputElement | null;
+  const bodyEl = document.getElementById("nt-body") as HTMLTextAreaElement | null;
   const priorityEl = document.getElementById("nt-priority") as HTMLSelectElement | null;
   const minutesEl = document.getElementById("nt-minutes") as HTMLInputElement | null;
   const title = titleEl?.value ?? "";
-  if (title.trim().length === 0) {
+  const body = bodyEl?.value ?? "";
+  if (title.trim().length === 0 && body.trim().length === 0) {
     titleEl?.focus();
     return;
   }
@@ -863,30 +1013,34 @@ function sendNote(): void {
     kind: "task",
     action: "add",
     title,
+    body,
     priority: priorityEl?.value ?? "soon",
     minutes: Number(minutesEl?.value ?? 0) || 0,
   });
   if (titleEl) titleEl.value = "";
+  if (bodyEl) bodyEl.value = "";
   if (minutesEl) minutesEl.value = "";
   titleEl?.focus();
 }
 
-// Enter in the title box adds the task. Typing a sentence and reaching for the
-// mouse to commit it is the friction this feature exists to remove.
+// Enter in a title box adds the task or note. Typing a sentence and reaching
+// for the mouse to commit it is the friction this feature exists to remove.
 //
-// The notes composer takes Ctrl+Enter rather than Enter: it is a textarea, and
-// a multi-line box where Enter submits is a box you cannot write a second
-// paragraph in.
+// The note BODY takes Ctrl+Enter rather than plain Enter: it is a textarea,
+// and a multi-line box where Enter submits is a box you cannot write a second
+// paragraph in. `nt-title` is a single-line input, same as the checklist's
+// `tp-title`, so plain Enter there behaves the same way.
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Enter") return;
   const el = ev.target;
   if (!(el instanceof HTMLElement)) return;
-  if (el.id === "tp-title") {
+  if (el.id === "tp-title" || el.id === "nt-title") {
     ev.preventDefault();
-    sendTask("add");
+    if (el.id === "tp-title") sendTask("add", el);
+    else sendNote();
     return;
   }
-  if (el.id === "nt-title" && (ev.ctrlKey || ev.metaKey)) {
+  if (el.id === "nt-body" && (ev.ctrlKey || ev.metaKey)) {
     ev.preventDefault();
     sendNote();
   }
@@ -896,6 +1050,26 @@ document.addEventListener("keydown", (ev) => {
 void listen(TASKS_CHANGED_EVENT, (e) => {
   if (Array.isArray(e.payload)) {
     tasks = e.payload as typeof tasks;
+  }
+  void render();
+}).catch(() => {
+  // The next render will be right regardless.
+});
+
+// The Notes wall's own broadcast — see the note on NOTES_CHANGED_EVENT. Real
+// validation here, unlike `tasks` above: a note's colour and labels reach
+// straight into a class attribute and chip text, richer data arriving often
+// enough that a shape mistake is worth catching rather than three renders
+// later as a blank tab.
+void listen(NOTES_CHANGED_EVENT, (e) => {
+  if (isNoteViewList(e.payload)) {
+    notes = e.payload;
+    // A note that vanished from the broadcast was deleted somewhere else —
+    // another window, or this one a moment ago. Its editor has nothing left
+    // to save into, so it closes rather than sitting open on a ghost.
+    if (notesEditing !== null && !notes.some((n) => n.id === notesEditing)) {
+      notesEditing = null;
+    }
   }
   void render();
 }).catch(() => {

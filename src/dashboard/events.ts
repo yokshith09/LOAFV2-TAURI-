@@ -144,31 +144,63 @@ export const COMMANDS = [
  */
 export interface TaskCommand {
   readonly kind: "task";
-  readonly action: "add" | "done" | "remove" | "clear-done";
-  /** For `add`. Trimmed and length-capped by the companion, not here. */
+  readonly action:
+    | "add"
+    | "done"
+    | "remove"
+    | "clear-done"
+    // Everything below addresses a note by its REAL id rather than an index
+    // into a broadcast list. `done`/`remove` above carry an index because they
+    // resolve against the tiny 3-item list the pet shows on Today, where the
+    // dashboard has no business inventing identity. The notes wall broadcasts
+    // every note in full — see `NoteView` — so the id it carries back is
+    // simply the one it was handed, not one it invented.
+    | "note-edit"
+    | "note-colour"
+    | "note-pin"
+    | "note-done"
+    | "note-remove"
+    | "note-label-add"
+    | "note-label-remove";
+  /** For `add` and `note-edit`. Trimmed and length-capped by the companion, not here. */
   readonly title?: string;
+  /** For `add` and `note-edit`. Same trimming rule as `title`. */
+  readonly body?: string;
   readonly priority?: string;
   /** Minutes until its timer. Absent or 0 means no timer. */
   readonly minutes?: number;
-  /** For `done` and `remove`. */
+  /** For `done`/`remove` (an index) and every `note-*` action (a real id). */
   readonly id?: string;
+  /** For `note-colour`. Checked against the palette by the companion. */
+  readonly colour?: string;
+  /** For `note-label-add` and `note-label-remove`. */
+  readonly label?: string;
 }
 
 export function isTaskCommand(v: unknown): v is TaskCommand {
   if (typeof v !== "object" || v === null) return false;
   const c = v as Record<string, unknown>;
   if (c.kind !== "task") return false;
-  if (
-    c.action !== "add" &&
-    c.action !== "done" &&
-    c.action !== "remove" &&
-    c.action !== "clear-done"
-  ) {
-    return false;
-  }
+  const actions = [
+    "add",
+    "done",
+    "remove",
+    "clear-done",
+    "note-edit",
+    "note-colour",
+    "note-pin",
+    "note-done",
+    "note-remove",
+    "note-label-add",
+    "note-label-remove",
+  ];
+  if (typeof c.action !== "string" || !actions.includes(c.action)) return false;
   if (c.title !== undefined && typeof c.title !== "string") return false;
+  if (c.body !== undefined && typeof c.body !== "string") return false;
   if (c.priority !== undefined && typeof c.priority !== "string") return false;
   if (c.id !== undefined && typeof c.id !== "string") return false;
+  if (c.colour !== undefined && typeof c.colour !== "string") return false;
+  if (c.label !== undefined && typeof c.label !== "string") return false;
   if (
     c.minutes !== undefined &&
     (typeof c.minutes !== "number" || !Number.isFinite(c.minutes))
@@ -205,6 +237,65 @@ export const STORE_DELETED_EVENT = "loaf://store/deleted";
 export const TASK_COMMAND_EVENT = "loaf://task";
 /** Companion -> dashboard: the current list, as the only writer sees it. */
 export const TASKS_CHANGED_EVENT = "loaf://tasks/changed";
+
+/**
+ * Companion -> dashboard: every note, in full, for the Notes wall.
+ *
+ * A SEPARATE broadcast from `TASKS_CHANGED_EVENT` on purpose. That one carries
+ * `tasks.visible()` — at most three, highest priority first, just enough for
+ * the pet's checklist and the hover card. Sending the same capped list to the
+ * Notes tab is the exact bug this exists to fix: a wall that only ever shows
+ * three cards is a reminder list wearing a notepad's name. This carries
+ * `tasks.wall()` — every note, pinned first then most recently touched — with
+ * every field a card needs to draw itself: body, colour, pin, labels.
+ */
+export const NOTES_CHANGED_EVENT = "loaf://notes/changed";
+
+/** The colours a note may carry. Mirrors `NOTE_COLOURS` in tasks/tasks.ts. */
+const NOTE_COLOURS = ["default", "butter", "rose", "sage", "sky", "lilac", "clay"] as const;
+
+/** Just enough of a note to draw a card, edit it, and file it under a label. */
+export interface NoteView {
+  readonly id: string;
+  readonly title: string;
+  readonly body: string;
+  readonly priority: "now" | "soon" | "whenever";
+  readonly colour: (typeof NOTE_COLOURS)[number];
+  readonly pinned: boolean;
+  readonly done: boolean;
+  readonly labels: readonly string[];
+  /** Minutes until its timer, rounded, or null when it has none. */
+  readonly minutesLeft: number | null;
+}
+
+/**
+ * Checked on the way in, unlike the tiny `tasks` broadcast. A note carries a
+ * colour and a label list that reach straight into `class="..."` attributes and
+ * chip text; the checklist's three fields never did, and this is richer enough
+ * data, arriving often enough, that a shape mistake is worth catching here
+ * rather than three renders later as a blank tab.
+ */
+export function isNoteView(v: unknown): v is NoteView {
+  if (typeof v !== "object" || v === null) return false;
+  const n = v as Record<string, unknown>;
+  return (
+    typeof n.id === "string" &&
+    typeof n.title === "string" &&
+    typeof n.body === "string" &&
+    (n.priority === "now" || n.priority === "soon" || n.priority === "whenever") &&
+    typeof n.colour === "string" &&
+    (NOTE_COLOURS as readonly string[]).includes(n.colour) &&
+    typeof n.pinned === "boolean" &&
+    typeof n.done === "boolean" &&
+    Array.isArray(n.labels) &&
+    n.labels.every((l) => typeof l === "string") &&
+    (n.minutesLeft === null || typeof n.minutesLeft === "number")
+  );
+}
+
+export function isNoteViewList(v: unknown): v is readonly NoteView[] {
+  return Array.isArray(v) && v.every(isNoteView);
+}
 
 /**
  * Dashboard -> companion: a sentence to interpret.

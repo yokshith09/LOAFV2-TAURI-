@@ -13,7 +13,9 @@ import {
   TANTRUM_OPTIONS,
   type MeetingsSnapshot,
   type MemorySnapshot,
+  type NoteView,
 } from "./events";
+import { NOTE_COLOURS, type NoteColour } from "../tasks/tasks";
 import {
   listenRow,
   holdRow,
@@ -156,6 +158,31 @@ export interface DashboardOptions {
    * and the list belongs to the companion window like everything else.
    */
   readonly tasks?: readonly TaskView[];
+  /**
+   * Every note, in full, for the Notes wall — see `NOTES_CHANGED_EVENT`.
+   *
+   * A separate list from `tasks` above, which stays capped at three for the
+   * pet's checklist. This one is the whole wall: every note, with the fields a
+   * card needs to draw itself.
+   */
+  readonly notes?: readonly NoteView[];
+  /**
+   * The label the Notes wall is filtered to, or null for everything.
+   *
+   * View-only state, held by the dashboard window rather than the companion:
+   * filtering which of your own already-downloaded notes are ON SCREEN is not
+   * a fact about the notes, and sending it to the companion and back would
+   * mean a label click waiting on a round trip to take effect.
+   */
+  readonly notesFilter?: string | null;
+  /**
+   * The id of the note currently expanded into its editor, or null when every
+   * card is showing its closed, read-only face.
+   *
+   * View-only for the same reason as `notesFilter`: which card happens to be
+   * open is a fact about this window, not about the note.
+   */
+  readonly notesEditing?: string | null;
   /**
    * Which section is open. Passed in rather than held here because the whole
    * body is re-rendered on every stats tick, and a view that reset itself to
@@ -925,7 +952,10 @@ export function dashboardBody(
 
     ${panel("voice", voicePanel(opts))}
 
-    ${panel("notes", notesPanel(opts.tasks ?? [], opts.memory))}
+    ${panel(
+      "notes",
+      notesPanel(opts.notes ?? [], opts.memory, opts.notesFilter ?? null, opts.notesEditing ?? null),
+    )}
 
     ${panel("meetings", meetingsPanel(opts))}
 
@@ -1063,29 +1093,163 @@ function retentionRow(settings: ClosetState | undefined): string {
     </div>`;
 }
 
+/** The title cap for a note, mirroring `MAX_TITLE_LENGTH` in tasks/tasks.ts. */
+const MAX_TITLE_LENGTH_FOR_NOTES = 80;
+
 /**
- * Everything you have written down, as cards.
+ * Every label on any note, most used first.
+ *
+ * A small local reimplementation of `labelsInUse` from `tasks/tasks.ts` rather
+ * than importing it: that one works over a `Task[]` and this module only ever
+ * sees the trimmed-down `NoteView[]` the companion actually broadcasts. Ten
+ * lines here is a smaller coupling than teaching the render layer the shape of
+ * the model's own storage.
+ */
+function labelsOnTheWall(notes: readonly NoteView[]): string[] {
+  const counts = new Map<string, { label: string; n: number }>();
+  for (const note of notes) {
+    for (const label of note.labels) {
+      const key = label.toLowerCase();
+      const seen = counts.get(key);
+      if (seen) seen.n += 1;
+      else counts.set(key, { label, n: 1 });
+    }
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label))
+    .map((c) => c.label);
+}
+
+/** One card's worth of markup, closed — the face every note shows by default. */
+function noteCardClosed(n: NoteView): string {
+  const timer = n.minutesLeft === null ? "" : `<span class="nt-timer">${n.minutesLeft}m</span>`;
+  // Long enough to need room to breathe rather than sitting the same height as
+  // "buy milk". Judged on the body now, not the title: the title is capped at
+  // 80 characters same as ever, so a transcript's length lives in the body.
+  const long = n.body.length > 220 || n.body.split("\n").length > 4 ? " long" : "";
+  const pinnedCls = n.pinned ? " pinned" : "";
+  const doneCls = n.done ? " done" : "";
+
+  const title = n.title
+    ? `<div class="nt-title-line" data-loaf-task="note-open:${escapeHTML(n.id)}">${escapeHTML(n.title)}</div>`
+    : "";
+  // An unopened, untitled note is not a card with nothing to click — the body
+  // is still the open handle, and a note that is BOTH untitled and empty (the
+  // instant after "Add note" on a body-only draft that failed) still shows its
+  // footer, so it is never an inert rectangle.
+  const body = n.body
+    ? `<div class="nt-body" data-loaf-task="note-open:${escapeHTML(n.id)}">${escapeHTML(n.body)}</div>`
+    : title
+      ? ""
+      : `<div class="nt-body nt-body-empty" data-loaf-task="note-open:${escapeHTML(n.id)}">Empty note</div>`;
+
+  const chips = n.labels.length
+    ? `<div class="nt-chips">${n.labels.map((l) => `<span class="nt-chip">${escapeHTML(l)}</span>`).join("")}</div>`
+    : "";
+
+  return (
+    `<article class="nt-card colour-${escapeHTML(n.colour)} p-${escapeHTML(n.priority)}${long}${pinnedCls}${doneCls}">` +
+    `<div class="nt-card-top">` +
+    `<button class="nt-pin${n.pinned ? " active" : ""}" data-loaf-task="note-pin:${escapeHTML(n.id)}" ` +
+    `title="${n.pinned ? "Unpin" : "Pin"}" aria-label="${n.pinned ? "Unpin" : "Pin"}">📌</button>` +
+    `</div>` +
+    title +
+    body +
+    chips +
+    `<div class="nt-foot">` +
+    `<span class="nt-pri">${escapeHTML(n.priority)}</span>${timer}` +
+    `<span class="nt-acts">` +
+    `<button class="nt-btn" data-loaf-task="note-done:${escapeHTML(n.id)}" ` +
+    `title="${n.done ? "Put back" : "Archive"}">${n.done ? "↺" : "✓"}</button>` +
+    `<button class="nt-btn" data-loaf-task="note-remove:${escapeHTML(n.id)}" title="Delete">×</button>` +
+    `</span></div></article>`
+  );
+}
+
+/**
+ * One card's worth of markup, open for editing.
+ *
+ * TITLE AND BODY ARE SAVED TOGETHER, ON A BUTTON — everything else on the card
+ * (pin, colour, a label) applies the moment it is clicked. That split is
+ * deliberate: a colour or a pin is one decision with no wrong answer to type
+ * your way into, so there is nothing to protect by waiting. Text is different —
+ * sending a command on every keystroke would mean broadcasting a half-typed
+ * sentence to the companion and back dozens of times, and losing the input if
+ * a stats tick redraws the page mid-word.
+ */
+function noteCardOpen(n: NoteView): string {
+  const swatches = NOTE_COLOURS.map((c: NoteColour) => {
+    const active = c === n.colour ? " active" : "";
+    const label = c === "default" ? "no colour" : c;
+    return (
+      `<button class="nt-swatch nt-swatch-${c}${active}" data-loaf-task="note-colour:${escapeHTML(n.id)}" ` +
+      `data-colour="${c}" title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}"></button>`
+    );
+  }).join("");
+
+  const chips = n.labels
+    .map(
+      (l) =>
+        `<span class="nt-chip edit">${escapeHTML(l)}` +
+        `<button class="nt-chip-x" data-loaf-task="note-label-remove:${escapeHTML(n.id)}" ` +
+        `data-label="${escapeHTML(l)}" aria-label="Remove label ${escapeHTML(l)}">×</button></span>`,
+    )
+    .join("");
+
+  return (
+    `<article class="nt-card nt-editing colour-${escapeHTML(n.colour)}">` +
+    `<input id="note-edit-title" class="nt-input nt-title-input" maxlength="${MAX_TITLE_LENGTH_FOR_NOTES}" ` +
+    `value="${escapeHTML(n.title)}" placeholder="Title" aria-label="Title">` +
+    `<textarea id="note-edit-body" class="nt-input" rows="7" maxlength="20000" ` +
+    `placeholder="Take a note…" aria-label="Note">${escapeHTML(n.body)}</textarea>` +
+    `<div class="nt-colour-row">${swatches}</div>` +
+    `<div class="nt-chips edit-row">${chips}` +
+    `<input id="note-edit-label" class="nt-label-input" maxlength="24" placeholder="+ label" aria-label="Add a label">` +
+    `<button class="nt-btn" data-loaf-task="note-label-add:${escapeHTML(n.id)}" aria-label="Add label">+</button>` +
+    `</div>` +
+    `<div class="nt-tools">` +
+    `<button class="nt-btn" data-loaf-task="note-remove:${escapeHTML(n.id)}">Delete</button>` +
+    `<button class="nt-btn" data-loaf-task="note-close">Close</button>` +
+    `<button class="nt-add" data-loaf-task="note-save:${escapeHTML(n.id)}">Save</button>` +
+    `</div></article>`
+  );
+}
+
+/**
+ * Everything you have written down, as a wall of cards — a Google Keep shape,
+ * not a checklist.
  *
  * A BOARD RATHER THAN A LIST, and the difference is not decoration. The task
  * list on Today is a checklist: one line each, ordered by priority, designed to
  * be worked through and emptied. This is where things go that are not one line
  * — a thought, a paragraph a meeting transcript dropped in, something you want
- * to be able to READ rather than tick. A transcript rendered as a single
- * ellipsised row in a checklist is a transcript nobody will ever look at again.
+ * to be able to READ rather than tick, colour, pin, and file under a label.
  *
- * The two are the same underlying list on purpose. A capture screen that wrote
- * to its own separate store would mean two places to look for the thing you
- * wrote down, and the whole point of writing it down is not having to look in
- * two places.
+ * REBUILT from a real notepad model rather than the checklist's three fields.
+ * The old version of this panel rendered `tasks.visible()` — at most three
+ * items, capped by and ordered for the pet's checklist — so a wall of forty
+ * notes showed three of them and called it a notepad. It also stored anything
+ * typed here as a `title`, which is capped at 80 characters: paste in a
+ * transcript and the rest was silently gone the moment it saved. Neither of
+ * those is true any more. `notes` here is the WHOLE wall (`tasks.wall()`), and
+ * the composer below writes a short title and an effectively unbounded body
+ * into two different fields.
  *
- * The composer is a TEXTAREA, not an input. What lands here is often several
- * sentences, and a one-line box that scrolls sideways is how you end up with
- * notes nobody finishes typing.
+ * Title and body are edited together, behind an explicit Save — see the note
+ * on `noteCardOpen`. Colour, pin, archive and labels each apply the instant
+ * they are clicked, the same way ticking a box on Today does.
  */
-function notesPanel(tasks: readonly TaskView[], memory?: MemorySnapshot): string {
+function notesPanel(
+  notes: readonly NoteView[],
+  memory: MemorySnapshot | undefined,
+  filter: string | null,
+  editingId: string | null,
+): string {
   const compose = `<div class="nt-compose">
-    <textarea id="nt-title" class="nt-input" rows="3" maxlength="2000"
-              placeholder="Write something down…" aria-label="New note"></textarea>
+    <input id="nt-title" class="nt-input nt-title-input" maxlength="${MAX_TITLE_LENGTH_FOR_NOTES}"
+           placeholder="Title" aria-label="Title">
+    <textarea id="nt-body" class="nt-input" rows="3" maxlength="20000"
+              placeholder="Take a note…" aria-label="Note"></textarea>
     <div class="nt-tools">
       <select id="nt-priority" class="nt-select" aria-label="Priority">
         <option value="now">Now</option>
@@ -1099,7 +1263,7 @@ function notesPanel(tasks: readonly TaskView[], memory?: MemorySnapshot): string
     <p class="note">Ctrl+Enter adds it. Everything here stays on this computer.</p>
   </div>`;
 
-  if (tasks.length === 0) {
+  if (notes.length === 0) {
     // The memory panel goes on BOTH branches: what Loaf remembers is built
     // from transcripts as much as from typed notes, so an empty board does
     // not mean an empty memory.
@@ -1109,28 +1273,38 @@ function notesPanel(tasks: readonly TaskView[], memory?: MemorySnapshot): string
       ${memoryPanel(memory)}`;
   }
 
-  const cards = tasks
-    .map((t, i) => {
-      const timer =
-        t.minutesLeft === null ? "" : `<span class="nt-timer">${t.minutesLeft}m</span>`;
-      // Long enough to be a transcript rather than a line: given room to
-      // breathe instead of being clipped to the same height as "buy milk".
-      const long = t.title.length > 120 ? " long" : "";
-      return (
-        `<article class="nt-card p-${escapeHTML(t.priority)}${long}">` +
-        `<div class="nt-body">${escapeHTML(t.title)}</div>` +
-        `<div class="nt-foot">` +
-        `<span class="nt-pri">${escapeHTML(t.priority)}</span>${timer}` +
-        `<span class="nt-acts">` +
-        `<button class="nt-btn" data-loaf-task="done:${i}" title="Mark done">✓</button>` +
-        `<button class="nt-btn" data-loaf-task="remove:${i}" title="Remove">×</button>` +
-        `</span></div></article>`
-      );
-    })
+  const labels = labelsOnTheWall(notes);
+  // The filter strip only earns its place once there is something to filter
+  // BY. One label on one note is not a reason to add a row of chips above
+  // every wall anyone will ever have.
+  const filterStrip = labels.length
+    ? `<div class="nt-filters">` +
+      `<button class="nt-filter-chip${filter === null ? " active" : ""}" data-loaf-note-filter="">All</button>` +
+      labels
+        .map(
+          (l) =>
+            `<button class="nt-filter-chip${filter?.toLowerCase() === l.toLowerCase() ? " active" : ""}" ` +
+            `data-loaf-note-filter="${escapeHTML(l)}">${escapeHTML(l)}</button>`,
+        )
+        .join("") +
+      `</div>`
+    : "";
+
+  const shown = filter
+    ? notes.filter((n) => n.labels.some((l) => l.toLowerCase() === filter.toLowerCase()))
+    : notes;
+
+  const empty =
+    shown.length === 0
+      ? `<p class="empty">Nothing here is labelled “${escapeHTML(filter ?? "")}”.</p>`
+      : "";
+
+  const cards = shown
+    .map((n) => (n.id === editingId ? noteCardOpen(n) : noteCardClosed(n)))
     .join("");
 
-  return `<h2>Notes</h2>${compose}
-    <div class="nt-board">${cards}</div>
+  return `<h2>Notes</h2>${compose}${filterStrip}
+    ${empty}<div class="nt-board">${cards}</div>
     ${memoryPanel(memory)}`;
 }
 

@@ -85,12 +85,20 @@ import {
   STATS_CHANGED_EVENT,
   TASK_COMMAND_EVENT,
   TASKS_CHANGED_EVENT,
+  NOTES_CHANGED_EVENT,
+  type NoteView,
   SPOKEN_EVENT,
   SPOKEN_REPLY_EVENT,
   isCommand,
   isTaskCommand,
 } from "./dashboard/events";
-import { TaskList, isPriority, type Priority } from "./tasks/tasks";
+import {
+  TaskList,
+  isPriority,
+  isNoteColour,
+  firstLineOf,
+  type Priority,
+} from "./tasks/tasks";
 import {
   parseIntent,
   acknowledge,
@@ -1712,11 +1720,47 @@ function taskViews(): Array<{ title: string; priority: Priority; minutesLeft: nu
   }));
 }
 
-/** Tell every window the list changed. */
+/**
+ * Every note, in full, for the Notes wall.
+ *
+ * `tasks.wall()` rather than `tasks.visible()` — the whole point of it existing
+ * apart from `taskViews` above. `visible()` caps at three and orders by
+ * priority, which is right for a pet's checklist and wrong for a notepad: a
+ * wall that only ever shows three cards is the bug this rebuild exists to fix.
+ */
+function noteViews(): NoteView[] {
+  const now = Date.now();
+  return tasks.wall().map((t) => ({
+    id: t.id,
+    title: t.title,
+    body: t.body,
+    priority: t.priority,
+    colour: t.colour,
+    pinned: t.pinned,
+    done: t.done,
+    labels: t.labels,
+    minutesLeft:
+      t.dueAt === null ? null : Math.max(0, Math.round((t.dueAt - now) / 60_000)),
+  }));
+}
+
+/**
+ * Tell every window the list changed — both shapes of it.
+ *
+ * ONE FUNCTION, TWO BROADCASTS, DELIBERATELY. `announceTasks` is called from
+ * six places across this file, and adding a second call next to each one is
+ * six chances to forget it at the seventh. The two lists are two views of the
+ * same underlying `tasks`, so whatever changed one is exactly the moment the
+ * other needs re-sending — keeping them behind one call site is what keeps
+ * them from drifting apart.
+ */
 function announceTasks(): void {
   if (!hasTauriHost()) return;
   void emit(TASKS_CHANGED_EVENT, taskViews()).catch(() => {
     // The dashboard re-reads when it next renders.
+  });
+  void emit(NOTES_CHANGED_EVENT, noteViews()).catch(() => {
+    // Same: the next render re-reads.
   });
 }
 
@@ -1736,14 +1780,25 @@ function applyTaskCommand(raw: unknown): void {
       const priority = isPriority(raw.priority) ? raw.priority : "soon";
       const minutes =
         typeof raw.minutes === "number" && raw.minutes > 0 ? raw.minutes : undefined;
-      const added = tasks.add(raw.title ?? "", priority, minutes);
-      // A note somebody typed is as much a memory as one Loaf transcribed.
-      if (added) remember(raw.title ?? "", null);
+      const typedTitle = (raw.title ?? "").trim();
+      const typedBody = raw.body ?? "";
+      // A NOTE MAY START AS JUST A BODY, WITH NO TITLE — the composer's title
+      // box is not required, the same way Keep's is not. `TaskList.add` refuses
+      // an empty title (a blank new row is litter), so when there is a body and
+      // no title, the title is taken from the body's own first line rather than
+      // losing the note.
+      const effectiveTitle =
+        typedTitle.length > 0 ? typedTitle : firstLineOf(typedBody);
+      const added = tasks.add(effectiveTitle, priority, minutes);
       if (added === null) return;
+      if (typedBody.trim().length > 0) tasks.edit(added.id, added.title, typedBody);
+      // A note somebody typed is as much a memory as one Loaf transcribed.
+      remember(`${effectiveTitle}\n${typedBody}`.trim(), null);
       break;
     }
     case "done":
     case "remove": {
+      // An INDEX into the pet's 3-item list — see the note on TaskCommand.
       const index = Number(raw.id);
       if (!Number.isInteger(index) || index < 0) return;
       const target = tasks.visible()[index];
@@ -1755,9 +1810,54 @@ function applyTaskCommand(raw: unknown): void {
     case "clear-done":
       tasks.clearDone();
       break;
+
+    // Everything below addresses a note by its REAL id, handed back exactly as
+    // the Notes wall broadcast it. See the comment on TaskCommand for why that
+    // is not the same trust question as `done`/`remove` above.
+    case "note-edit": {
+      if (typeof raw.id !== "string") return;
+      tasks.edit(raw.id, raw.title ?? "", raw.body ?? "");
+      break;
+    }
+    case "note-colour": {
+      if (typeof raw.id !== "string" || !isNoteColour(raw.colour)) return;
+      tasks.setColour(raw.id, raw.colour);
+      break;
+    }
+    case "note-pin": {
+      if (typeof raw.id !== "string") return;
+      tasks.togglePin(raw.id);
+      break;
+    }
+    case "note-done": {
+      if (typeof raw.id !== "string") return;
+      // A TOGGLE, not a one-way mark. Keep's archive works the same way: the
+      // same control that puts a note away brings it back.
+      const found = tasks.all.find((t) => t.id === raw.id);
+      if (found === undefined) return;
+      if (found.done) tasks.reopen(found.id);
+      else tasks.complete(found.id);
+      break;
+    }
+    case "note-remove": {
+      if (typeof raw.id !== "string") return;
+      tasks.remove(raw.id);
+      break;
+    }
+    case "note-label-add": {
+      if (typeof raw.id !== "string" || typeof raw.label !== "string") return;
+      tasks.addLabel(raw.id, raw.label);
+      break;
+    }
+    case "note-label-remove": {
+      if (typeof raw.id !== "string" || typeof raw.label !== "string") return;
+      tasks.removeLabel(raw.id, raw.label);
+      break;
+    }
   }
   announceTasks();
 }
+
 let secondsSinceScroll: number | null = null;
 const SCROLL_POLL_MS = 200;
 const PROUD_SECONDS = 6;

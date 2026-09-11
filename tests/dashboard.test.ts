@@ -9,7 +9,7 @@ import {
   DASHBOARD_VIEWS,
   type RadarSnapshot,
 } from "../src/dashboard/html";
-import { isCommand, TANTRUM_OPTIONS } from "../src/dashboard/events";
+import { isCommand, TANTRUM_OPTIONS, type NoteView } from "../src/dashboard/events";
 import { wakeWordsFor } from "../src/voice/wake";
 import {
   ClosetSettings,
@@ -855,34 +855,54 @@ describe("the meetings section", () => {
   });
 });
 
+/**
+ * The Notes wall — a rebuild from the ground up.
+ *
+ * The old version of this panel rendered `tasks.visible()`: at most three
+ * items, capped for the pet's checklist, and a single 80-character `title`
+ * field that anything typed here was silently truncated into. That is a
+ * reminder list wearing a notepad's name — which is the exact complaint this
+ * rebuild answers. It is now driven by `NoteView`, the full wall the companion
+ * broadcasts on `NOTES_CHANGED_EVENT`, with a real body, a fixed colour
+ * palette, pinning, and labels.
+ */
 describe("the notes board", () => {
   const t = () => trackerWith({ Code: 40 }).tracker;
-  const note = (title: string, priority = "soon", minutesLeft: number | null = null) => ({
-    title,
-    priority,
-    minutesLeft,
+
+  /** A complete NoteView, so a test can vary one field without restating the rest. */
+  const note = (over: Partial<NoteView> = {}): NoteView => ({
+    id: "n1",
+    title: "A note",
+    body: "",
+    priority: "soon",
+    colour: "default",
+    pinned: false,
+    done: false,
+    labels: [],
+    minutesLeft: null,
+    ...over,
   });
 
   it("offers a composer even with nothing written down yet", () => {
     const html = dashboardHTML(t(), { view: "notes" });
     expect(html).toContain('id="nt-title"');
+    expect(html).toContain('id="nt-body"');
     expect(html).toContain('data-loaf-note="add"');
     expect(html).toContain("Nothing written down yet");
   });
 
-  // A one-line input that scrolls sideways is how you get notes nobody
-  // finishes typing.
-  it("composes into a textarea, not a single-line input", () => {
+  // What lands in the body is often several sentences; what lands in the
+  // title is one short line, the same as the checklist's own title box.
+  it("composes a title as an input and a body as a textarea", () => {
     const html = dashboardHTML(t(), { view: "notes" });
-    expect(html).toMatch(/<textarea id="nt-title"/);
+    expect(html).toMatch(/<input id="nt-title"/);
+    expect(html).toMatch(/<textarea id="nt-body"/);
   });
 
   // Every panel is in the document at once, so a shared id would mean
   // getElementById returning whichever came first and one box doing nothing.
   it("uses different ids from the checklist composer on Today", () => {
     const html = dashboardHTML(t(), { view: "notes" });
-    expect(html).toContain('id="tp-title"');
-    expect(html).toContain('id="nt-title"');
     expect(html.match(/id="nt-title"/g)).toHaveLength(1);
     expect(html.match(/id="tp-title"/g)).toHaveLength(1);
   });
@@ -890,33 +910,244 @@ describe("the notes board", () => {
   it("draws one card per note, carrying its priority", () => {
     const html = dashboardHTML(t(), {
       view: "notes",
-      tasks: [note("call the bank", "now"), note("tidy the desk", "whenever")] as never,
+      notes: [
+        note({ id: "a", title: "call the bank", priority: "now" }),
+        note({ id: "b", title: "tidy the desk", priority: "whenever" }),
+      ],
     });
     expect(html).toContain("call the bank");
-    expect(html).toContain("nt-card p-now");
-    expect(html).toContain("nt-card p-whenever");
+    expect(html).toContain("nt-card colour-default p-now");
+    expect(html).toContain("nt-card colour-default p-whenever");
+  });
+
+  // A whole wall, not three cards — the bug this rebuild exists to fix.
+  it("shows every note, not just the pet's top three", () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      note({ id: `n${i}`, title: `note ${i}` }),
+    );
+    const html = dashboardHTML(t(), { view: "notes", notes: many });
+    for (let i = 0; i < 8; i++) expect(html).toContain(`note ${i}`);
   });
 
   it("gives a long note room instead of clipping it like a one-liner", () => {
     const html = dashboardHTML(t(), {
       view: "notes",
-      tasks: [note("x".repeat(300))] as never,
+      notes: [note({ body: "x".repeat(300) })],
     });
-    expect(html).toContain("nt-card p-soon long");
+    expect(html).toContain("nt-card colour-default p-soon long");
   });
 
-  it("keeps done and remove on every card", () => {
-    const html = dashboardHTML(t(), { view: "notes", tasks: [note("a")] as never });
-    expect(html).toContain('data-loaf-task="done:0"');
-    expect(html).toContain('data-loaf-task="remove:0"');
+  // A title alone, however long, no longer decides "long" — the title is
+  // capped at 80 characters same as the checklist's, so a genuinely long note
+  // lives in the body.
+  it("does not call a note long on title length alone", () => {
+    const html = dashboardHTML(t(), {
+      view: "notes",
+      notes: [note({ title: "A note", body: "short" })],
+    });
+    expect(html).not.toContain(" long");
+  });
+
+  it("keeps archive and delete on every card, addressed by real id", () => {
+    const html = dashboardHTML(t(), { view: "notes", notes: [note({ id: "abc123" })] });
+    expect(html).toContain('data-loaf-task="note-done:abc123"');
+    expect(html).toContain('data-loaf-task="note-remove:abc123"');
+  });
+
+  it("offers a pin on every card", () => {
+    const html = dashboardHTML(t(), { view: "notes", notes: [note({ id: "abc123" })] });
+    expect(html).toContain('data-loaf-task="note-pin:abc123"');
+  });
+
+  it("marks a pinned note, both in its class and its pin button", () => {
+    const html = dashboardHTML(t(), {
+      view: "notes",
+      notes: [note({ id: "p1", pinned: true })],
+    });
+    expect(html).toContain("nt-card colour-default p-soon pinned");
+    expect(html).toMatch(/nt-pin active[^"]*" data-loaf-task="note-pin:p1"/);
+  });
+
+  it("dims and strikes through an archived note rather than hiding it", () => {
+    const html = dashboardHTML(t(), { view: "notes", notes: [note({ id: "d1", done: true })] });
+    expect(html).toContain(" done\">");
+    expect(html).toContain("d1");
   });
 
   it("escapes a note, like every other value on the page", () => {
     const html = dashboardHTML(t(), {
       view: "notes",
-      tasks: [note("<script>x</script>")] as never,
+      notes: [note({ title: "<script>x</script>", body: "<img src=x>" })],
     });
     expect(html).not.toContain("<script>x</script>");
+    expect(html).not.toContain("<img src=x>");
+  });
+
+  describe("colour", () => {
+    it("carries a colour class from the fixed palette", () => {
+      const html = dashboardHTML(t(), { view: "notes", notes: [note({ colour: "sage" })] });
+      expect(html).toContain("colour-sage");
+    });
+
+    it("uses the plain default colour when none was chosen", () => {
+      const html = dashboardHTML(t(), { view: "notes", notes: [note()] });
+      expect(html).toContain("colour-default");
+    });
+  });
+
+  describe("labels", () => {
+    it("shows the labels on a card as chips", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ labels: ["work", "urgent"] })],
+      });
+      expect(html).toContain('<span class="nt-chip">work</span>');
+      expect(html).toContain('<span class="nt-chip">urgent</span>');
+    });
+
+    it("offers no filter strip when nothing carries a label", () => {
+      // bodyOf strips the <style> block, which defines .nt-filters as a
+      // selector whether or not anything on the page uses it.
+      const html = bodyOf(dashboardHTML(t(), { view: "notes", notes: [note()] }));
+      expect(html).not.toContain("nt-filters");
+    });
+
+    it("offers a filter strip once something is labelled", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ labels: ["work"] })],
+      });
+      expect(html).toContain("nt-filters");
+      expect(html).toContain('data-loaf-note-filter="work"');
+      // "All" clears the filter, so it carries no label of its own.
+      expect(html).toContain('data-loaf-note-filter="">All</button>');
+    });
+
+    it("marks which chip is active", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ labels: ["work"] })],
+        notesFilter: "work",
+      });
+      expect(html).toMatch(/nt-filter-chip active" data-loaf-note-filter="work"/);
+    });
+
+    it("shows only notes carrying the active filter", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [
+          note({ id: "a", title: "tagged", labels: ["work"] }),
+          note({ id: "b", title: "untagged" }),
+        ],
+        notesFilter: "work",
+      });
+      expect(html).toContain("tagged");
+      expect(html).not.toContain("untagged");
+    });
+
+    it("filters case-insensitively", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ id: "a", title: "tagged", labels: ["Work"] })],
+        notesFilter: "work",
+      });
+      expect(html).toContain("tagged");
+    });
+
+    it("says plainly when a filter matches nothing", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ labels: ["work"] })],
+        notesFilter: "ghost",
+      });
+      expect(html).toContain("Nothing here is labelled");
+    });
+  });
+
+  describe("the editor", () => {
+    it("shows a card closed by default", () => {
+      // bodyOf strips the <style> block: .nt-editing is defined there as a
+      // selector regardless of whether any card on the page is using it.
+      const html = bodyOf(dashboardHTML(t(), { view: "notes", notes: [note({ id: "e1" })] }));
+      expect(html).not.toContain("nt-editing");
+      expect(html).toContain('data-loaf-task="note-open:e1"');
+    });
+
+    it("opens the one card whose id matches notesEditing", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notes: [note({ id: "e1", title: "Editable" }), note({ id: "e2", title: "Closed" })],
+          notesEditing: "e1",
+        }),
+      );
+      expect(html).toContain("nt-editing");
+      // Only one editor open at a time.
+      expect(html.match(/nt-editing/g)).toHaveLength(1);
+    });
+
+    it("fills the editor's fields from the note being opened", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ id: "e1", title: "My title", body: "My body" })],
+        notesEditing: "e1",
+      });
+      expect(html).toContain('id="note-edit-title"');
+      expect(html).toContain('value="My title"');
+      expect(html).toContain('id="note-edit-body"');
+      expect(html).toContain("My body");
+    });
+
+    it("offers a swatch for every colour in the palette", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ id: "e1" })],
+        notesEditing: "e1",
+      });
+      for (const c of ["default", "butter", "rose", "sage", "sky", "lilac", "clay"]) {
+        expect(html).toContain(`data-colour="${c}"`);
+      }
+    });
+
+    it("marks the note's current colour as the active swatch", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ id: "e1", colour: "rose" })],
+        notesEditing: "e1",
+      });
+      expect(html).toMatch(/nt-swatch nt-swatch-rose active/);
+    });
+
+    it("offers a way to remove each label and add a new one", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ id: "e1", labels: ["work"] })],
+        notesEditing: "e1",
+      });
+      expect(html).toContain('data-loaf-task="note-label-remove:e1"');
+      expect(html).toContain('data-label="work"');
+      expect(html).toContain('id="note-edit-label"');
+      expect(html).toContain('data-loaf-task="note-label-add:e1"');
+    });
+
+    it("offers Save and Close", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ id: "e1" })],
+        notesEditing: "e1",
+      });
+      expect(html).toContain('data-loaf-task="note-save:e1"');
+      expect(html).toContain('data-loaf-task="note-close"');
+    });
+
+    it("escapes the values it fills the editor's fields with", () => {
+      const html = dashboardHTML(t(), {
+        view: "notes",
+        notes: [note({ id: "e1", title: '"><script>x</script>' })],
+        notesEditing: "e1",
+      });
+      expect(html).not.toContain("<script>x</script>");
+    });
   });
 });
 

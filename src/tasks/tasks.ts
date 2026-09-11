@@ -105,6 +105,23 @@ export function normaliseTitle(raw: string): string {
   return raw.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE_LENGTH);
 }
 
+/**
+ * The first line of a note's body, for a note that was never given a title.
+ *
+ * A KEEP-STYLE NOTE MAY BE JUST A BODY. `add` still refuses an empty title —
+ * a blank new row is litter — so when the composer's title box was left empty
+ * and there is a body, this is what stands in for the title instead of losing
+ * the note.
+ *
+ * Falls through blank lines rather than taking the literal first line, so
+ * pasting a body that happens to start with a blank line does not produce an
+ * empty-looking card sitting in the middle of the wall.
+ */
+export function firstLineOf(body: string): string {
+  const line = body.split("\n").find((l) => l.trim().length > 0) ?? "";
+  return normaliseTitle(line);
+}
+
 export function isPriority(v: unknown): v is Priority {
   return typeof v === "string" && (PRIORITIES as readonly string[]).includes(v);
 }
