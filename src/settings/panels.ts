@@ -4,7 +4,7 @@ import { findCompanion } from "../companions/registry";
 import { LISTEN_MODES, LABELS, DESCRIPTIONS } from "../voice/mode";
 import { MAX_WAKE_LENGTH, wakeWordsFor } from "../voice/wake";
 import {
-  PICKABLE_ENGINES,
+  pickableEnginesFor,
   ENGINE_INFO,
   unavailableReason,
   whisperReason,
@@ -111,12 +111,17 @@ export function holdRow(state: ClosetState): string {
 /**
  * Which recogniser, and what each one costs.
  *
- * All three are always listed, including ones that cannot run yet, with the
- * reason attached. Hiding an engine leaves people wondering whether Loaf can
- * do dictation at all; showing it with "Not downloaded yet" answers that.
+ * Every engine this PLATFORM could actually run is listed, including ones
+ * that cannot run yet, with the reason attached. Hiding an engine leaves
+ * people wondering whether Loaf can do dictation at all; showing it with "Not
+ * downloaded yet" answers that. What is never listed is `builtin` off
+ * Windows: that is not "not ready yet", it is an API this platform does not
+ * have — see `pickableEnginesFor`, and the bug it was written to fix, which
+ * was this exact dropdown telling a Mac that "Windows speech" was its
+ * recogniser.
  */
-export function engineRow(state: ClosetState): string {
-  const options = PICKABLE_ENGINES.map((id) => {
+export function engineRow(state: ClosetState, os: string): string {
+  const options = pickableEnginesFor(os).map((id) => {
     const why = unavailableReason(id, state.engineAvailability);
     const label = why === null ? ENGINE_INFO[id].label : `${ENGINE_INFO[id].label} — ${why}`;
     return (
@@ -231,7 +236,10 @@ export function disclosurePanel(state: ClosetState): string {
     // to guess their way around permission screens to find out which it is.
     `<b>Microphone:</b> ${
       state.microphone === null
-        ? "None found. Nothing can be heard until Windows lets Loaf see one."
+        ? // Named the operating system generically rather than "Windows" —
+          // this same line renders wherever there is no microphone, which is
+          // exactly as likely on a Mac withholding the permission.
+          "None found. Nothing can be heard until the operating system lets Loaf see one."
         : escapeHTML(state.microphone)
     }`,
     `<b>Always listening:</b> ${

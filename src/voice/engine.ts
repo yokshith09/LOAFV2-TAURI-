@@ -69,6 +69,28 @@ export const PICKABLE_ENGINES: readonly EngineId[] = ENGINES.filter(
 );
 
 /**
+ * Which engines can actually be picked for talking TO Loaf, on THIS machine.
+ *
+ * THE BUG THIS FUNCTION FIXES. `PICKABLE_ENGINES` above is the Windows list,
+ * and until this existed it was also shown as THE list everywhere — including
+ * on a Mac, where "Windows speech (built in)" rendered as a selectable option
+ * with the reason "Windows speech is not available here", and "Whisper" (the
+ * one that actually works there, once downloaded — see `speech.rs`) was not
+ * offered at all. A settings screen that names the wrong recogniser AND hides
+ * the real one reads exactly like "voice is not working", because from the
+ * outside it is indistinguishable from voice not working.
+ *
+ * `builtin` is Windows' own recogniser; it cannot exist on any other platform,
+ * and listing it there is not "showing an unavailable option with its reason"
+ * the way `whisper: Not downloaded yet` is — there is no reason that will ever
+ * turn it available, because it is calling an API that platform does not have.
+ * So it is not merely disabled elsewhere, it is not offered.
+ */
+export function pickableEnginesFor(os: string): readonly EngineId[] {
+  return os === "windows" ? PICKABLE_ENGINES : (["whisper", "hosted"] as const);
+}
+
+/**
  * Whether Whisper is installed and usable, for the meeting recorder.
  *
  * Separate from `unavailableReason` because Whisper is no longer one of the
@@ -197,21 +219,29 @@ export function isAvailable(id: EngineId, have: EngineAvailability): boolean {
 }
 
 /**
- * The engine to actually use, given what is available.
+ * The engine to actually use, given what is available on this platform.
  *
- * Falls back to `builtin`, never to `hosted`: a fallback that silently starts
- * sending audio to a server is the single worst thing this module could do.
+ * Falls back to the first of `pickableEnginesFor(os)`, NEVER to `hosted`: a
+ * fallback that silently starts sending audio to a server is the single worst
+ * thing this module could do. That first entry is `builtin` on Windows and
+ * `whisper` everywhere else — chosen even when Whisper is not yet downloaded,
+ * because "builtin" is not a fallback that can ever succeed off Windows, and a
+ * fallback that is guaranteed to fail is not a fallback.
  */
 export function resolveEngine(
   wanted: EngineId,
   have: EngineAvailability,
+  os: string,
 ): EngineId {
+  const pickable = pickableEnginesFor(os);
+  const fallback = pickable[0]!;
   // A stored "whisper" from before it stopped being a choice for talking to
-  // Loaf lands here on the next launch and quietly becomes the built-in one.
-  // Migrating rather than erroring: the setting was valid when it was saved.
-  if (!PICKABLE_ENGINES.includes(wanted)) return "builtin";
+  // Loaf on Windows lands here on the next launch there and quietly becomes
+  // the built-in one. Migrating rather than erroring: the setting was valid
+  // when it was saved, on whatever platform saved it.
+  if (!pickable.includes(wanted)) return fallback;
   if (isAvailable(wanted, have)) return wanted;
-  return "builtin";
+  return fallback;
 }
 
 /**

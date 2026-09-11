@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   ENGINES,
   PICKABLE_ENGINES,
+  pickableEnginesFor,
   DEFAULT_ENGINE,
   ENGINE_INFO,
   isEngineId,
@@ -107,28 +108,86 @@ describe("availability", () => {
   });
 });
 
-describe("resolving what to actually run", () => {
-  it("uses what was asked for when it can", () => {
-    for (const id of PICKABLE_ENGINES) expect(resolveEngine(id, ALL)).toBe(id);
+/**
+ * Which engines a settings screen may actually offer — the fix for a Mac
+ * showing "Windows speech (built in)" as its recogniser, with no way to make
+ * it work, while the one that actually does (Whisper) was never listed.
+ */
+describe("which engines this platform can even offer", () => {
+  it("offers Windows' own recogniser only on Windows", () => {
+    expect(pickableEnginesFor("windows")).toEqual(PICKABLE_ENGINES);
+    expect(pickableEnginesFor("windows")).toContain("builtin");
   });
 
-  // Whisper stopped being a choice for talking to Loaf: it answers once a
-  // recording has finished, which is right for a meeting and wrong for a
-  // command. A setting saved back when it WAS a choice has to keep working, so
-  // it migrates on the next launch rather than erroring.
-  it("migrates a stored Whisper choice to the built-in recogniser", () => {
-    expect(resolveEngine("whisper", ALL)).toBe("builtin");
+  // `builtin` is not "not ready yet" off Windows — it is an API that platform
+  // does not have. It must never appear as an option there, disabled or not.
+  it("never offers builtin off Windows", () => {
+    for (const os of ["macos", "linux", "", "other"]) {
+      expect(pickableEnginesFor(os)).not.toContain("builtin");
+    }
+  });
+
+  it("offers Whisper wherever builtin cannot exist", () => {
+    for (const os of ["macos", "linux", "", "other"]) {
+      expect(pickableEnginesFor(os)).toContain("whisper");
+    }
+  });
+
+  it("always offers the hosted engine, on every platform", () => {
+    for (const os of ["windows", "macos", "linux", ""]) {
+      expect(pickableEnginesFor(os)).toContain("hosted");
+    }
+  });
+});
+
+describe("resolving what to actually run", () => {
+  it("uses what was asked for when it can, on Windows", () => {
+    for (const id of PICKABLE_ENGINES) expect(resolveEngine(id, ALL, "windows")).toBe(id);
+  });
+
+  it("uses what was asked for when it can, off Windows", () => {
+    for (const id of pickableEnginesFor("macos")) {
+      expect(resolveEngine(id, ALL, "macos")).toBe(id);
+    }
+  });
+
+  // Whisper stopped being a choice for talking to Loaf ON WINDOWS: it answers
+  // once a recording has finished, which is right for a meeting and wrong for
+  // a command there, where a fast native recogniser already exists. A setting
+  // saved back when it WAS a choice — or saved on a Mac, where it still is —
+  // has to keep working on Windows rather than erroring.
+  it("migrates a stored Whisper choice to the built-in recogniser, on Windows", () => {
+    expect(resolveEngine("whisper", ALL, "windows")).toBe("builtin");
     expect(PICKABLE_ENGINES).not.toContain("whisper");
   });
 
+  // The bug this whole function was rewritten to fix: off Windows, "builtin"
+  // cannot run no matter what is available, so falling back to it is falling
+  // back to something guaranteed to fail — indistinguishable from voice being
+  // broken, because it IS broken, forever, for anyone on that platform.
+  it("never falls back to builtin off Windows — it does not exist there", () => {
+    expect(resolveEngine("builtin", ALL, "macos")).toBe("whisper");
+    expect(resolveEngine("hosted", NONE, "macos")).toBe("whisper");
+  });
+
   // A fallback that silently starts uploading audio is the worst thing this
-  // module could do.
+  // module could do, on any platform.
   it("never falls back to the hosted engine", () => {
-    expect(resolveEngine("whisper", NONE)).toBe("builtin");
-    expect(resolveEngine("hosted", NONE)).toBe("builtin");
-    for (const id of ENGINES) {
-      expect(leavesMachine(resolveEngine(id, NONE))).toBe(false);
+    expect(resolveEngine("whisper", NONE, "windows")).toBe("builtin");
+    expect(resolveEngine("hosted", NONE, "windows")).toBe("builtin");
+    expect(resolveEngine("hosted", NONE, "macos")).toBe("whisper");
+    for (const os of ["windows", "macos"]) {
+      for (const id of ENGINES) {
+        expect(leavesMachine(resolveEngine(id, NONE, os))).toBe(false);
+      }
     }
+  });
+
+  // An unknown platform — `platform_name` has not answered yet — must never be
+  // read as "so it must be Windows". That misreading is exactly how a Mac
+  // ends up being offered a recogniser it does not have.
+  it("treats an unknown platform the same as any non-Windows one", () => {
+    expect(resolveEngine("builtin", ALL, "")).toBe("whisper");
   });
 });
 

@@ -401,7 +401,7 @@ function applyClosetPick(raw: unknown): void {
       wantedEngine = raw.id;
       // Only ever USED as something that can actually run. resolveEngine falls
       // back to the local recogniser, never to the hosted one.
-      behaviour.engine = resolveEngine(raw.id, engineAvailability());
+      behaviour.engine = resolveEngine(raw.id, engineAvailability(), platformName);
       saveHabits(browserStore(), behaviour);
       announceCloset();
       if (behaviour.engine !== raw.id) {
@@ -1632,8 +1632,9 @@ function radarSnapshot(): RadarSnapshot {
  */
 async function pollRadar(raw: string | null, name: string, seconds: number): Promise<void> {
   if (!radar || raw === null) return;
-  if (radar.settings.enabled) {
-  }
+  // Not a second "is it enabled" gate here — `radar.target` below already
+  // refuses when it is off, and a dead check that duplicated it in a way that
+  // did nothing was more confusing than no check at all.
   radar.expireStaleReadings();
   const browser = radar.target(raw);
   if (!browser) return;
@@ -1862,6 +1863,14 @@ let secondsSinceScroll: number | null = null;
 const SCROLL_POLL_MS = 200;
 const PROUD_SECONDS = 6;
 
+/**
+ * Set by `loaf://mcp/busy` — true for exactly as long as a call to another
+ * program, made through Loaf's own MCP client, is in flight. See the note on
+ * `tell_the_companion_mcp_is` in lib.rs for why start and stop can never drift
+ * apart: both are sent from the one place that makes the call.
+ */
+let mcpBusy = false;
+
 function currentMood(): Mood {
   return resolveMood({
     hovering,
@@ -1869,7 +1878,9 @@ function currentMood(): Mood {
     proud: Date.now() < proudUntil,
     scrolling: scrollEnergy.isScrolling,
     typing: typingEnergy.isScrolling,
-    working: workingWatch.busy,
+    // Either reason to look busy uses the same pose: the foreground app
+    // working hard, or Loaf itself waiting on an MCP call it made.
+    working: workingWatch.busy || mcpBusy,
     override: moodOverride,
     // Told to sleep counts the same as having drifted off, so the ladder stays
     // one ladder — hovering still wakes a face, a tantrum still outranks a nap.
@@ -2387,6 +2398,27 @@ let speechAvailable = false;
 let whisperReady = false;
 
 /**
+ * What `platform_name` answered, cached rather than asked again every time an
+ * engine decision needs it.
+ *
+ * Empty string until it answers, which `resolveEngine`/`pickableEnginesFor`
+ * both treat the same as any non-Windows platform — the safe reading, since
+ * assuming Windows before we actually know would be exactly the bug this
+ * whole path exists to fix: offering "Windows speech" somewhere it cannot run.
+ */
+let platformName = "";
+void invokeSafe<string>("platform_name").then((p) => {
+  platformName = p ?? "";
+  // Whichever of "what platform is this" and "is Whisper ready" finishes LAST
+  // is the one that has to re-settle the engine choice. Resolving it against
+  // whichever arrived first and just assuming the other risks the mirror image
+  // of the bug this whole path exists to fix: a Windows machine's "builtin"
+  // silently downgraded to "whisper" because the platform was not known yet
+  // at the moment whisper's readiness happened to be checked.
+  reresolveEngine();
+});
+
+/**
  * Ask Rust whether Whisper is already installed, and update the closet if
  * that answer changed — called at startup and again after a download
  * finishes, since a download is the only thing that can make this true.
@@ -2401,6 +2433,23 @@ let whisperReady = false;
  */
 let wantedEngine: EngineId = behaviour.engine;
 
+/**
+ * Re-settle the engine choice against what is now known, and save it if that
+ * changed anything.
+ *
+ * Shared by two independent events that can each be the reason a choice made
+ * earlier is no longer the right one: Whisper finishing a download, and
+ * `platform_name` finally answering. Keeping the logic in one place is what
+ * makes it correct for whichever of the two happens to arrive second.
+ */
+function reresolveEngine(): void {
+  const resolved = resolveEngine(wantedEngine, engineAvailability(), platformName);
+  if (resolved === behaviour.engine) return;
+  behaviour.engine = resolved;
+  saveHabits(browserStore(), behaviour);
+  announceCloset();
+}
+
 async function refreshWhisperReady(): Promise<void> {
   if (!hasTauriHost()) return;
   const ready = (await invokeSafe<boolean>("whisper_installed")) ?? false;
@@ -2414,11 +2463,7 @@ async function refreshWhisperReady(): Promise<void> {
     announceCloset();
   });
   // Now that it can run, honour the choice that was made when it could not.
-  const resolved = resolveEngine(wantedEngine, engineAvailability());
-  if (resolved !== behaviour.engine) {
-    behaviour.engine = resolved;
-    saveHabits(browserStore(), behaviour);
-  }
+  reresolveEngine();
   announceCloset();
 }
 
@@ -3705,6 +3750,19 @@ if (hasTauriHost()) {
     // Without this a watch fires and nothing is ever said, which is the
     // feature silently not existing.
     console.error("watch notifications unavailable");
+  });
+
+  // THE POSE, NOT THE WORDS. A watch firing gets a bubble because there is
+  // something worth saying; a call that is merely IN PROGRESS — someone
+  // pressed Send in Connections, or a watch is asking right now — has nothing
+  // to say yet, but Loaf visibly waiting on it is the honest answer to "does
+  // Loaf react while an MCP call is happening". No new art: this borrows the
+  // `working` mood, the same pose the companion already takes while the
+  // foreground app is busy — the feeling is identical either way.
+  void listen<boolean>("loaf://mcp/busy", (e) => {
+    mcpBusy = e.payload === true;
+  }).catch(() => {
+    // The pose just never appears, which is survivable — the call still runs.
   });
 
   void listen(TASK_COMMAND_EVENT, (e) => applyTaskCommand(e.payload)).catch(() => {

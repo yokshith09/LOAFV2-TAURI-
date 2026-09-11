@@ -319,6 +319,45 @@ describe("browser permissions", () => {
       "class=\"perms\"",
     );
   });
+
+  /**
+   * The bug report this answers: "the tab tantrum isn't working", with
+   * "Most tabs open at once today" — a running maximum, not the live count the
+   * tantrum actually reacts to — the only number on screen. There was no way
+   * to tell "not reacting" apart from "reacting correctly to fewer tabs than
+   * the peak suggests". This is that missing number.
+   */
+  it("shows the live tab count next to a browser it can read, not just the day's peak", () => {
+    const { tracker } = trackerWith({ Chrome: 3 });
+    const html = dashboardHTML(tracker, {
+      radar: radarOn({
+        statusRows: [{ name: "Chrome", permission: "granted", tabCount: 39 }],
+      }),
+    });
+    expect(html).toContain("39 tabs open now");
+  });
+
+  it("uses the singular for exactly one tab", () => {
+    const { tracker } = trackerWith({ Chrome: 3 });
+    const html = dashboardHTML(tracker, {
+      radar: radarOn({
+        statusRows: [{ name: "Chrome", permission: "granted", tabCount: 1 }],
+      }),
+    });
+    expect(html).toContain("1 tab open now");
+    expect(html).not.toContain("1 tabs");
+  });
+
+  it("says only that it is reading, when no count has come in yet", () => {
+    const { tracker } = trackerWith({ Chrome: 3 });
+    const html = dashboardHTML(tracker, {
+      radar: radarOn({
+        statusRows: [{ name: "Chrome", permission: "granted" }],
+      }),
+    });
+    expect(html).toContain("reading domains");
+    expect(html).not.toContain("tabs open now");
+  });
 });
 
 describe("saying how the domain is obtained", () => {

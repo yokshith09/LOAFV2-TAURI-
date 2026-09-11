@@ -173,26 +173,50 @@ describe("the listening controls", () => {
 });
 
 describe("the engine picker", () => {
-  // Whisper is no longer one of the choices here. It is a batch transcriber:
-  // it answers once a recording has finished, which is right for a meeting and
-  // wrong for a command, where the gap between speaking and something
-  // happening is the whole feature. It lives under Meetings instead.
-  it("does not offer Whisper for talking to Loaf", () => {
-    const html = engineRow(state());
+  // Whisper is no longer one of the choices here ON WINDOWS. It is a batch
+  // transcriber: it answers once a recording has finished, which is right for
+  // a meeting and wrong for a command, where the gap between speaking and
+  // something happening is the whole feature — and Windows already has a
+  // recogniser that does not have that gap.
+  it("does not offer Whisper for talking to Loaf, on Windows", () => {
+    const html = engineRow(state(), "windows");
     expect(html).not.toContain('value="whisper"');
     expect(html).toContain('value="builtin"');
   });
 
   it("still lists an engine that cannot run, with the reason attached", () => {
     // Hiding it leaves people wondering whether the option exists at all.
-    const html = engineRow(state());
+    const html = engineRow(state(), "windows");
     expect(html).toContain('value="hosted"');
     expect(html).toMatch(/value="hosted"[^>]*disabled/);
   });
 
   it("marks an engine that sends audio away as the loud one", () => {
-    expect(engineRow(state({ engine: "hosted" }))).toContain("listen hot");
-    expect(engineRow(state({ engine: "builtin" }))).not.toContain("listen hot");
+    expect(engineRow(state({ engine: "hosted" }), "windows")).toContain("listen hot");
+    expect(engineRow(state({ engine: "builtin" }), "windows")).not.toContain("listen hot");
+  });
+
+  /**
+   * The bug report this rewrite answers: a Mac's Voice tab named "Windows
+   * speech" as its recogniser, disabled, with no way to make it work — and
+   * never mentioned Whisper, which is the one that actually does.
+   */
+  describe("off Windows, where there is no OS recogniser to prefer", () => {
+    it("never offers Windows' own recogniser — it is not disabled, it does not exist", () => {
+      const html = engineRow(state(), "macos");
+      expect(html).not.toContain('value="builtin"');
+      expect(html).not.toContain("Windows speech");
+    });
+
+    it("offers Whisper instead, since it is what actually runs there", () => {
+      const html = engineRow(state({ engine: "whisper" }), "macos");
+      expect(html).toContain('value="whisper"');
+    });
+
+    it("still offers the hosted engine, with its reason if it cannot run", () => {
+      const html = engineRow(state(), "macos");
+      expect(html).toContain('value="hosted"');
+    });
   });
 });
 

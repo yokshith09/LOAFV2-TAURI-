@@ -81,6 +81,8 @@ export interface BrowserStatus {
   readonly name: string;
   readonly permission: PermissionState;
   readonly note?: string;
+  /** Tabs open right now, or null if nothing has counted this browser yet. */
+  readonly tabCount?: number | null;
 }
 
 /**
@@ -592,7 +594,16 @@ function permissionRows(radar: RadarSnapshot, platform: Platform): string {
       switch (status.permission) {
         case "granted":
           dot = "ok";
-          label = "reading domains";
+          // THE LIVE COUNT, NOT ONLY THE DAY'S PEAK. "Most tabs open at once
+          // today" further up the page is a running maximum and can be well
+          // above what is open right now — and the tab tantrum reacts to the
+          // live count, not the peak. Without this line there was no way to
+          // tell "the radar is not reacting" apart from "the radar is
+          // reacting correctly to a number lower than the one on screen".
+          label =
+            status.tabCount == null
+              ? "reading domains"
+              : `reading domains · ${status.tabCount} tab${status.tabCount === 1 ? "" : "s"} open now`;
           break;
         case "denied":
           dot = "no";
@@ -1038,16 +1049,32 @@ function voicePanel(opts: DashboardOptions): string {
   const s = opts.settings;
   if (!s) return ask;
 
+  const platform = opts.platform ?? "other";
+  // WINDOWS HAS A REAL OS RECOGNISER TO PREFER; NOTHING ELSE DOES. On any other
+  // platform "Windows speech" is not a disabled option waiting on a download —
+  // it is an API that platform does not have — so the picker offers Whisper
+  // there instead, and the Whisper download belongs on THIS screen too, not
+  // only under Meetings, because here it is not a nicety: it is the only
+  // thing that makes a command or a dictated sentence work at all.
+  const hasOSRecogniser = platform === "windows";
+  const download = hasOSRecogniser ? "" : `<div class="settings-group">${whisperDownloadRow(s)}</div>`;
+  const commandNote = hasOSRecogniser
+    ? `Dictation uses Whisper once it is downloaded below — until then it hands
+      over to Windows' own voice typing, which types into whatever you are in.
+      Meetings always use Whisper — see the Meetings tab.`
+    : `This machine has no built-in speech recognition, so commands and
+      dictation both use Whisper, on this machine, once it is downloaded
+      below. Meetings use the same download — see the Meetings tab.`;
+
   return `${ask}
 
     <h2>When it listens</h2>
     <div class="settings-group">${listenRow(s)}${holdRow(s)}</div>
 
     <h2>What hears your commands</h2>
-    <div class="settings-group">${engineRow(s)}</div>
-    <p class="note">Dictation hands over to Windows' own voice typing, which
-    types into whatever you are in. Meetings are transcribed by Whisper on this
-    machine — see the Meetings tab.</p>
+    <div class="settings-group">${engineRow(s, platform)}</div>
+    ${download}
+    <p class="note">${commandNote}</p>
 
     <h2>How it talks back</h2>
     <div class="settings-group">${voiceRow(s)}</div>

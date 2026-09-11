@@ -961,8 +961,100 @@ fn describe_the_companion(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Keep the character on screen no matter which Space you switch to.
+///
+/// THIS WAS HALF THE FIX. `set_visible_on_all_workspaces` sets exactly one
+/// Cocoa flag, `NSWindowCollectionBehaviorCanJoinAllSpaces` — which follows you
+/// between ordinary Spaces and does nothing at all the moment another app goes
+/// full screen, because macOS treats a full-screen app as its own separate
+/// Space with its own rule: a window needs the SEPARATE
+/// `FullScreenAuxiliary` flag to be allowed to float above one. Without it,
+/// "the cat is only on my main desktop" is exactly what a full-screen browser,
+/// call or editor produces — which for most people covers most of the day.
+///
+/// `tao` (the windowing crate under Tauri) has a method for the first flag and
+/// none for the second, so this reaches the one flag it does not expose the
+/// same way `control.rs` reaches DisplayServices: directly, through the
+/// system's own Objective-C runtime. `NSWindowCollectionBehavior` is a public,
+/// documented AppKit enum — this is not a private API, and it needs no new
+/// dependency: `objc2`'s own machinery already sits in `Cargo.lock` because
+/// `tao` depends on it, we are simply not routing through it, to avoid pinning
+/// this file to that crate's exact macro syntax for one enum bit this machine
+/// cannot compile to check.
 fn follow_the_user(window: &tauri::WebviewWindow) {
     let _ = window.set_visible_on_all_workspaces(true);
+    #[cfg(target_os = "macos")]
+    macos::add_full_screen_auxiliary(window);
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::ffi::{c_void, CString};
+
+    /// `NSWindowCollectionBehaviorFullScreenAuxiliary`, from AppKit's public
+    /// `NSWindowCollectionBehavior` enum. A fixed bit position Apple has not
+    /// moved since it shipped in Mac OS X 10.5 — see
+    /// `NSWindow.h`/`NSWindowCollectionBehavior` in the AppKit headers.
+    const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+
+    // The Objective-C runtime's own C entry point. Declared with a fixed,
+    // 2-argument shape because Rust needs SOME concrete signature to name a
+    // function pointer by; every call below transmutes it to the exact shape
+    // that call actually needs before using it. This is the same technique
+    // every hand-written Rust/Objective-C bridge uses in place of a bridging
+    // crate — `objc_msgSend`'s real C signature is `(id, SEL, ...)`, which
+    // Rust cannot call directly, and the transmute is what stands in for the
+    // variadic part C itself resolves at compile time.
+    #[link(name = "objc")]
+    extern "C" {
+        fn sel_registerName(name: *const std::os::raw::c_char) -> *mut c_void;
+        fn objc_msgSend(receiver: *mut c_void, selector: *mut c_void) -> usize;
+    }
+
+    fn selector(name: &str) -> Option<*mut c_void> {
+        let cname = CString::new(name).ok()?;
+        // SAFETY: `cname` is a valid, NUL-terminated C string for the lifetime
+        // of this call. `sel_registerName` cannot fail for a well-formed name.
+        Some(unsafe { sel_registerName(cname.as_ptr()) })
+    }
+
+    /// Add the one collection-behaviour bit `tao` does not set, without
+    /// disturbing whatever else is already on the window (Tauri's own
+    /// transparency and always-on-top setup among them) — read the current
+    /// value and OR the new bit into it, never overwrite.
+    pub fn add_full_screen_auxiliary(window: &tauri::WebviewWindow) {
+        let Ok(ns_window) = window.ns_window() else {
+            return;
+        };
+        if ns_window.is_null() {
+            return;
+        }
+        let (Some(get_behavior), Some(set_behavior)) = (
+            selector("collectionBehavior"),
+            selector("setCollectionBehavior:"),
+        ) else {
+            return;
+        };
+
+        // SAFETY: `ns_window` is a live NSWindow* for as long as this function
+        // runs — it comes straight from Tauri, which owns the window. Both
+        // selectors exist on every NSWindow; `collectionBehavior` returns an
+        // `NSUInteger` (word-sized, hence `usize`) and `setCollectionBehavior:`
+        // takes one back and returns nothing, so this is exactly the
+        // "read one word out, write one word in" case plain `objc_msgSend`
+        // handles correctly — no struct is crossing this boundary, so there is
+        // no need for the `objc_msgSend_stret` variant that struct-returning
+        // Objective-C calls require instead.
+        unsafe {
+            let get: extern "C" fn(*mut c_void, *mut c_void) -> usize =
+                std::mem::transmute(objc_msgSend as *const ());
+            let current = get(ns_window, get_behavior);
+
+            let set: extern "C" fn(*mut c_void, *mut c_void, usize) =
+                std::mem::transmute(objc_msgSend as *const ());
+            set(ns_window, set_behavior, current | FULL_SCREEN_AUXILIARY);
+        }
+    }
 }
 
 /// Put the companion somewhere the user can actually see him.
@@ -1760,11 +1852,33 @@ fn mcp_tools(
     connections::with_connection(&pool, &config, &name, |conn| conn.tools())
 }
 
+/// Tell the companion whether an MCP call is in flight right now.
+///
+/// ONE FUNCTION FOR BOTH START AND STOP, so the two can never drift apart —
+/// exactly the reasoning behind `announceTasks` sending two broadcasts from
+/// one call site on the TypeScript side. A caller that emitted `true` directly
+/// and forgot the matching `false` on one exit path (an early return, a
+/// dropped error) would leave the character looking busy forever, which is a
+/// worse bug than never reacting at all.
+///
+/// Best-effort: a window that is not listening, or not open, is not an error.
+fn tell_the_companion_mcp_is(app: &tauri::AppHandle, busy: bool) {
+    use tauri::Emitter;
+    let _ = app.emit("loaf://mcp/busy", busy);
+}
+
 /// Ask a server to do one named thing.
 ///
 /// The record is written whether the call worked or not, and BEFORE the answer
 /// is returned. A log that only remembers successes is not an audit trail; the
 /// call that failed still sent the arguments.
+///
+/// THIS IS ALSO WHERE THE CHARACTER STARTS REACTING. A call to another
+/// program is exactly the kind of "something is happening that is not
+/// instant" the `working` mood already exists for — the same pose the
+/// companion takes while the foreground app is busy, borrowed rather than
+/// drawn again, because the feeling is identical: Loaf is waiting on
+/// something on your behalf.
 #[tauri::command(async)]
 fn mcp_call(
     app: tauri::AppHandle,
@@ -1782,9 +1896,11 @@ fn mcp_call(
             .map_err(|e| format!("Those arguments are not JSON: {e}"))?
     };
 
+    tell_the_companion_mcp_is(&app, true);
     let outcome = connections::with_connection(&pool, &config, &name, |conn| {
         conn.call(&tool, parsed.clone())
     });
+    tell_the_companion_mcp_is(&app, false);
 
     let _ = mcp_client::record(
         &dir,
@@ -1870,9 +1986,11 @@ fn poll_watches(app: &tauri::AppHandle) {
             }
         };
         let pool = app.state::<connections::Pool>();
+        tell_the_companion_mcp_is(app, true);
         let outcome = connections::with_connection(&pool, &config, &w.server, |conn| {
             conn.call(&w.tool, parsed.clone())
         });
+        tell_the_companion_mcp_is(app, false);
         let _ = mcp_client::record(
             &dir,
             &mcp_client::CallRecord {
