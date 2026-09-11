@@ -45,7 +45,7 @@ const radarOn = (over: Partial<RadarSnapshot> = {}): RadarSnapshot => ({
   readsInsideBrowser: true,
   enabled: true,
   tabThreshold: 12,
-  peakTabsNow: null,
+  tabsOpenNow: null,
   statusRows: [],
   ...over,
 });
@@ -513,10 +513,10 @@ describe("the hover preview", () => {
   it("gets loud about the tab count only past the threshold", () => {
     const { tracker } = trackerWith({ Safari: 3 });
     const calm = miniDashboardHTML(tracker, {
-      radar: radarOn({ peakTabsNow: 5, tabThreshold: 12 }),
+      radar: radarOn({ tabsOpenNow: 5, tabThreshold: 12 }),
     });
     const hot = miniDashboardHTML(tracker, {
-      radar: radarOn({ peakTabsNow: 40, tabThreshold: 12 }),
+      radar: radarOn({ tabsOpenNow: 40, tabThreshold: 12 }),
     });
     expect(calm).toContain("5 tabs open");
     expect(calm).not.toContain("really?");

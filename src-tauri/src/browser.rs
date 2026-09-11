@@ -49,6 +49,76 @@ pub const fn reads_inside_the_browser() -> bool {
     cfg!(target_os = "macos")
 }
 
+/// Writing and reading the macOS "which browsers are running" script.
+///
+/// DELIBERATELY NOT BEHIND A `cfg`, for the reason `browser_macos.rs` gives
+/// about its own escaping: the development machine for this project is a PC, and
+/// this module contains the injection boundary. Gating it to macOS would make the
+/// one piece of code that must be right the one piece nobody here can run.
+///
+/// The `allow` is narrowed to "not macOS" rather than blanket, so that on the
+/// platform which actually calls this, an unused function is still an error.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod applescript {
+    /// Process names come back separated by this, not by a comma.
+    ///
+    /// Same reason `browser_macos.rs` uses it for titles: AppleScript's own list
+    /// separator is ", " and "Brave Browser, Beta" would split into two.
+    pub const SEP: &str = "\u{1}";
+
+    /// Whether this name can go into an AppleScript string literal untouched.
+    ///
+    /// NOT escaping — refusing. Every browser process name is letters, digits,
+    /// spaces, dots and dashes, so anything containing a quote or a backslash is
+    /// either a mistake or an attempt to close the string early and append a
+    /// line of script. There is no reading of that where guessing what was meant
+    /// beats skipping the entry.
+    pub fn safe(name: &str) -> bool {
+        let trimmed = name.trim();
+        !trimmed.is_empty()
+            && trimmed.len() <= 64
+            && trimmed
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '.' || c == '-')
+    }
+
+    /// A script asking System Events which of these processes exist right now.
+    ///
+    /// System Events, and not `running of application id "X"`: `tell
+    /// application` will happily boot a browser that was closed, and a pet that
+    /// opens Chrome in order to count its tabs has become the problem it was
+    /// reporting on.
+    ///
+    /// Empty when nothing survives `safe`, so the caller can skip the spawn.
+    pub fn running_script(names: &[String]) -> String {
+        let checks: Vec<String> = names
+            .iter()
+            .filter(|n| safe(n))
+            .map(|n| {
+                let name = n.trim();
+                format!(
+                    "    if exists process \"{name}\" then set out to out & \"{name}\" & \"{SEP}\""
+                )
+            })
+            .collect();
+        if checks.is_empty() {
+            return String::new();
+        }
+        format!(
+            "tell application \"System Events\"\n    set out to \"\"\n{}\n    return out\nend tell",
+            checks.join("\n")
+        )
+    }
+
+    pub fn parse_running(raw: &str) -> Vec<String> {
+        raw.split(SEP)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use super::ProbeOutcome;
@@ -127,6 +197,27 @@ end timeout"#
         parse(&String::from_utf8_lossy(&output.stdout))
     }
 
+    pub fn running(ids: &[String]) -> Vec<String> {
+        let script = super::applescript::running_script(ids);
+        if script.is_empty() {
+            return Vec::new();
+        }
+        let Ok(output) = Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+        else {
+            return Vec::new();
+        };
+        if !output.status.success() {
+            // Almost always Automation permission for System Events not granted.
+            // An empty list reads as "no browsers", which the dashboard already
+            // renders honestly; it is not worth inventing a browser to say so.
+            return Vec::new();
+        }
+        super::applescript::parse_running(&String::from_utf8_lossy(&output.stdout))
+    }
+
     /// `"<tabCount> <host>"`, where the host may be empty for a non-web page.
     pub fn parse(raw: &str) -> ProbeOutcome {
         let trimmed = raw.trim();
@@ -154,10 +245,14 @@ end timeout"#
 mod imp {
     use super::ProbeOutcome;
 
-    /// The bundle id and timeout are macOS's business; Windows reads whatever
-    /// window is in front, which the radar has already decided is a browser.
-    pub fn probe(_bundle_id: &str, _safari: bool, _timeout_secs: u32) -> ProbeOutcome {
-        crate::browser_windows::probe()
+    /// The safari flag and timeout are macOS's business; on Windows `id` is the
+    /// executable name, and every window belonging to it is counted.
+    pub fn probe(id: &str, _safari: bool, _timeout_secs: u32) -> ProbeOutcome {
+        crate::browser_windows::probe(id)
+    }
+
+    pub fn running(ids: &[String]) -> Vec<String> {
+        crate::browser_windows::running(ids)
     }
 }
 
@@ -170,9 +265,91 @@ mod imp {
             why: "reading tabs is not supported on this platform".into(),
         }
     }
+
+    pub fn running(_ids: &[String]) -> Vec<String> {
+        Vec::new()
+    }
 }
 
-pub use imp::probe;
+pub use imp::{probe, running};
+
+/// Runs on every platform, because this is the injection boundary.
+#[cfg(test)]
+mod running_tests {
+    use super::applescript::{
+        parse_running, running_script, safe as script_safe, SEP as RUNNING_SEP,
+    };
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn asks_about_each_browser_by_process_name() {
+        let script = running_script(&names(&["Google Chrome", "Safari"]));
+        assert!(script.contains(r#"exists process "Google Chrome""#));
+        assert!(script.contains(r#"exists process "Safari""#));
+        assert!(script.contains("System Events"));
+    }
+
+    #[test]
+    fn never_tells_an_application_anything() {
+        // `tell application id "..."` would LAUNCH a closed browser. The whole
+        // point of going through System Events is that this cannot happen, so
+        // the script must not contain the phrase that would do it.
+        let script = running_script(&names(&["Google Chrome", "Firefox"]));
+        assert!(!script.contains("tell application id"));
+        assert!(!script.contains(r#"tell application "Google Chrome""#));
+    }
+
+    #[test]
+    fn refuses_a_name_that_could_end_the_string_early() {
+        // The attack: a name that closes the quote and adds a line of its own.
+        for bad in [
+            r#"Chrome" then do shell script "rm -rf ~" -- "#,
+            "Chrome\"",
+            "Chrome\\",
+            "Chrome\nreturn",
+            "",
+            "   ",
+        ] {
+            assert!(!script_safe(bad), "should have refused: {bad:?}");
+            assert_eq!(
+                running_script(&names(&[bad])),
+                "",
+                "leaked into script: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_bad_name_does_not_take_the_good_ones_with_it() {
+        let script = running_script(&names(&["Google Chrome", "Evil\" -- ", "Safari"]));
+        assert!(script.contains(r#""Google Chrome""#));
+        assert!(script.contains(r#""Safari""#));
+        assert!(!script.contains("Evil"));
+    }
+
+    #[test]
+    fn reads_back_what_the_script_reports() {
+        let raw = format!("Google Chrome{RUNNING_SEP}Safari{RUNNING_SEP}");
+        assert_eq!(parse_running(&raw), vec!["Google Chrome", "Safari"]);
+    }
+
+    #[test]
+    fn nothing_running_is_an_empty_list_not_a_blank_name() {
+        assert!(parse_running("").is_empty());
+        assert!(parse_running("\n").is_empty());
+    }
+
+    #[test]
+    fn a_browser_whose_name_has_a_comma_survives_the_split() {
+        // Why the separator is not a comma: AppleScript's own list separator is
+        // ", " and this would otherwise arrive as two browsers.
+        let raw = format!("Brave Browser{RUNNING_SEP}");
+        assert_eq!(parse_running(&raw), vec!["Brave Browser"]);
+    }
+}
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {

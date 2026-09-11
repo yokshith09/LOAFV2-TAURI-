@@ -336,6 +336,6 @@ export function isRadarSnapshot(v: unknown): v is RadarSnapshot {
   if (typeof s.available !== "boolean" || typeof s.enabled !== "boolean") return false;
   if (typeof s.readsInsideBrowser !== "boolean") return false;
   if (typeof s.tabThreshold !== "number" || !Number.isFinite(s.tabThreshold)) return false;
-  if (s.peakTabsNow !== null && typeof s.peakTabsNow !== "number") return false;
+  if (s.tabsOpenNow !== null && typeof s.tabsOpenNow !== "number") return false;
   return Array.isArray(s.statusRows);
 }

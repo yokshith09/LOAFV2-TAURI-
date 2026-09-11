@@ -1,4 +1,10 @@
-import { browserFor, normaliseDomain, KNOWN_BROWSERS, type KnownBrowser } from "./domain";
+import {
+  browserFor,
+  canReadTabs,
+  normaliseDomain,
+  KNOWN_BROWSERS,
+  type KnownBrowser,
+} from "./domain";
 import type { PermissionState } from "../dashboard/html";
 
 /**
@@ -34,7 +40,9 @@ export interface BrowserStatus {
 }
 
 export interface TabAlert {
+  /** The browser holding the most of them, so the line can name somewhere to start. */
   readonly browser: string;
+  /** Every open tab Loaf can see, across every browser — not just `browser`'s. */
   readonly count: number;
 }
 
@@ -131,6 +139,12 @@ export class PrivacyRadar {
   private readonly now: () => number;
 
   settings: RadarSettings = defaultRadarSettings();
+  /**
+   * Which platform this is, because "can this browser's tabs be read" differs
+   * by operating system. Empty until `platform_name` answers, and empty behaves
+   * as "not Windows", which is the cautious reading of the two.
+   */
+  os = "";
   onTantrumBegan: ((alert: TabAlert) => void) | null = null;
   onTantrumEnded: ((count: number) => void) | null = null;
 
@@ -145,25 +159,35 @@ export class PrivacyRadar {
     return this.alert;
   }
 
-  get peakTabsNow(): number | null {
+  /**
+   * Every tab Loaf can currently see, added up across browsers.
+   *
+   * A TOTAL, and it used to be a maximum. "How many tabs do I have open" has
+   * one honest answer when three browsers are running, and it is not "however
+   * many are in the worst one" — someone with 30 in Chrome and 30 in Edge has
+   * 60 tabs open and knows it. The old maximum meant the number on screen
+   * disagreed with the number of tabs on screen, and the tantrum silently
+   * needed one single browser to pass the threshold on its own.
+   */
+  get tabsOpenNow(): number | null {
     const counts = [...this.statuses.values()]
       .map((s) => s.tabCount)
       .filter((c): c is number => c !== null);
-    return counts.length === 0 ? null : Math.max(...counts);
+    return counts.length === 0 ? null : counts.reduce((a, b) => a + b, 0);
   }
 
   /**
-   * Whether the frontmost app is worth asking about right now.
+   * Whether this browser is worth asking about right now.
    *
-   * Returns null when it is not a known browser, when the radar is off, or when
-   * this browser refused recently — a browser that said no is not asked again
-   * for five minutes, because re-prompting someone who declined is how an app
-   * gets quit.
+   * Returns null when it is not a known browser, when its tabs cannot be read
+   * on this platform, when the radar is off, or when this browser refused
+   * recently — a browser that said no is not asked again for five minutes,
+   * because re-prompting someone who declined is how an app gets quit.
    */
   target(raw: string): KnownBrowser | null {
     if (!this.settings.enabled) return null;
     const browser = browserFor(raw);
-    if (!browser || browser.flavour === "unscriptable") return null;
+    if (!browser || !canReadTabs(browser, this.os)) return null;
 
     const existing = this.statuses.get(browser.bundleId);
     if (existing?.permission === "denied" && existing.deniedAtMs !== null) {
@@ -205,7 +229,6 @@ export class PrivacyRadar {
         if (domain !== null && seconds > 0) {
           this.ledger.creditSite(displayName, domain, seconds);
         }
-        if (outcome.tabCount > 0) this.ledger.notePeakTabs(outcome.tabCount);
         break;
       }
       case "denied":
@@ -231,6 +254,11 @@ export class PrivacyRadar {
         break;
     }
     this.evaluateTantrum();
+    // The day's high-water mark is a total too, for the same reason the
+    // threshold is. Recorded here rather than inside the "reading" arm so it
+    // sees every browser's current number, not just the one that just replied.
+    const total = this.tabsOpenNow;
+    if (total !== null && total > 0) this.ledger.notePeakTabs(total);
   }
 
   /**
@@ -259,29 +287,37 @@ export class PrivacyRadar {
       return;
     }
 
+    // The THRESHOLD is compared against the total, the NAME is the worst
+    // offender. Comparing one browser at a time was the whole bug: three
+    // browsers at 25 tabs each is 75 tabs of mess and never tripped a
+    // threshold of 40, because no single one of them got there alone.
+    let total = 0;
+    let seen = false;
     let worst: { name: string; count: number } | null = null;
     for (const s of this.statuses.values()) {
       if (s.tabCount === null) continue;
+      seen = true;
+      total += s.tabCount;
       if (worst === null || s.tabCount > worst.count) {
         worst = { name: s.name, count: s.tabCount };
       }
     }
-    if (worst === null) {
+    if (!seen || worst === null) {
       this.alert = null;
       return;
     }
 
-    if (worst.count > threshold) {
+    if (total > threshold) {
       const wasCalm = this.alert === null;
-      this.alert = { browser: worst.name, count: worst.count };
+      this.alert = { browser: worst.name, count: total };
       if (wasCalm) this.onTantrumBegan?.(this.alert);
-    } else if (worst.count <= threshold - CALM_DOWN_MARGIN) {
+    } else if (total <= threshold - CALM_DOWN_MARGIN) {
       const wasCross = this.alert !== null;
       this.alert = null;
-      if (wasCross) this.onTantrumEnded?.(worst.count);
+      if (wasCross) this.onTantrumEnded?.(total);
     } else if (this.alert !== null) {
       // Inside the hysteresis band: hold the tantrum, but keep the number honest.
-      this.alert = { browser: worst.name, count: worst.count };
+      this.alert = { browser: worst.name, count: total };
     }
   }
 
@@ -294,17 +330,17 @@ export class PrivacyRadar {
     for (const raw of running) {
       const browser = browserFor(raw);
       if (!browser || rows.has(browser.bundleId)) continue;
+      const readable = canReadTabs(browser, this.os);
       rows.set(browser.bundleId, {
         name: browser.displayName,
         bundleId: browser.bundleId,
-        permission: browser.flavour === "unscriptable" ? "unsupported" : "unknown",
+        permission: readable ? "unknown" : "unsupported",
         tabCount: null,
         lastSeenMs: null,
         deniedAtMs: null,
-        note:
-          browser.flavour === "unscriptable"
-            ? "Firefox exposes no way to read tabs — not a Loaf limitation"
-            : undefined,
+        note: readable
+          ? undefined
+          : "Firefox exposes no way to read tabs on macOS — not a Loaf limitation",
       });
     }
     return [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));

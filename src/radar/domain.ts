@@ -7,31 +7,101 @@ export type BrowserFlavour =
   | "chromium"
   /** Chrome and every Chromium fork share one AppleScript dictionary. */
   | "safari"
-  /** Firefox: no scriptable access to tab URLs at all. Not a Loaf limitation. */
+  /**
+   * Firefox: no scriptable access to tabs **through AppleScript**. That is a
+   * macOS fact, not a universal one — see `canReadTabs`, which is why this is
+   * no longer read as "impossible everywhere".
+   */
   | "unscriptable";
 
 export interface KnownBrowser {
-  /** macOS bundle identifier. */
+  /** macOS bundle identifier. What the probe addresses. */
   readonly bundleId: string;
   /** Windows executable name, lowercased. Absent where there is no Windows build. */
   readonly exe?: string;
+  /**
+   * macOS process name, when it differs from `displayName`.
+   *
+   * A third identifier for the same browser, and not redundancy: macOS asks
+   * "is it running" by process name through System Events, addresses it by
+   * bundle id, and Windows knows it by neither.
+   */
+  readonly proc?: string;
   readonly displayName: string;
   readonly flavour: BrowserFlavour;
 }
 
 export const KNOWN_BROWSERS: readonly KnownBrowser[] = [
   { bundleId: "com.google.Chrome", exe: "chrome.exe", displayName: "Google Chrome", flavour: "chromium" },
-  { bundleId: "com.google.Chrome.beta", displayName: "Chrome Beta", flavour: "chromium" },
-  { bundleId: "com.google.Chrome.canary", displayName: "Chrome Canary", flavour: "chromium" },
+  { bundleId: "com.google.Chrome.beta", exe: "chrome_beta.exe", proc: "Google Chrome Beta", displayName: "Chrome Beta", flavour: "chromium" },
+  { bundleId: "com.google.Chrome.canary", exe: "chrome_canary.exe", proc: "Google Chrome Canary", displayName: "Chrome Canary", flavour: "chromium" },
+  { bundleId: "org.chromium.Chromium", exe: "chromium.exe", displayName: "Chromium", flavour: "chromium" },
   { bundleId: "com.brave.Browser", exe: "brave.exe", displayName: "Brave Browser", flavour: "chromium" },
   { bundleId: "com.microsoft.edgemac", exe: "msedge.exe", displayName: "Microsoft Edge", flavour: "chromium" },
   { bundleId: "com.vivaldi.Vivaldi", exe: "vivaldi.exe", displayName: "Vivaldi", flavour: "chromium" },
   { bundleId: "com.operasoftware.Opera", exe: "opera.exe", displayName: "Opera", flavour: "chromium" },
-  { bundleId: "company.thebrowser.Browser", displayName: "Arc", flavour: "chromium" },
+  { bundleId: "com.operasoftware.OperaGX", exe: "opera_gx.exe", displayName: "Opera GX", flavour: "chromium" },
+  { bundleId: "company.thebrowser.Browser", exe: "arc.exe", displayName: "Arc", flavour: "chromium" },
   { bundleId: "com.apple.Safari", displayName: "Safari", flavour: "safari" },
   { bundleId: "com.apple.SafariTechnologyPreview", displayName: "Safari Technology Preview", flavour: "safari" },
-  { bundleId: "org.mozilla.firefox", exe: "firefox.exe", displayName: "Firefox", flavour: "unscriptable" },
+  // Firefox's macOS process is lowercase, unlike every other browser here.
+  { bundleId: "org.mozilla.firefox", exe: "firefox.exe", proc: "firefox", displayName: "Firefox", flavour: "unscriptable" },
 ];
+
+/**
+ * Whether this browser's tabs can be counted **on this operating system**.
+ *
+ * The distinction matters and getting it wrong cost Firefox users the feature
+ * entirely. "Unscriptable" means Firefox publishes no AppleScript dictionary
+ * for its tabs — true, and true only on macOS. Windows does not read tabs by
+ * scripting the browser at all; it reads the accessibility tree, and Firefox
+ * populates that like everything else. So Firefox is unreadable on a Mac and
+ * perfectly readable on Windows, and one flag for both platforms was always
+ * going to be wrong on one of them.
+ *
+ * On Windows the real requirement is simply having a known executable name,
+ * since that is the only way a process gets matched there.
+ */
+export function canReadTabs(browser: KnownBrowser, os: string): boolean {
+  if (os === "windows") return browser.exe !== undefined;
+  return browser.flavour !== "unscriptable";
+}
+
+/**
+ * What to call this browser when asking the platform about it.
+ *
+ * Windows matches on the executable, macOS on the bundle identifier. Callers
+ * that hand this straight back to the platform stay free of that distinction.
+ */
+export function probeIdFor(browser: KnownBrowser, os: string): string {
+  return os === "windows" ? (browser.exe ?? browser.bundleId) : browser.bundleId;
+}
+
+/**
+ * What to call this browser when asking the platform whether it is **running**.
+ *
+ * A different name again from `probeIdFor`: macOS answers "is it running"
+ * through System Events, which knows processes by name and not by bundle id.
+ * Asking the wrong one gets a confident "no" for a browser sitting right there.
+ */
+export function runningIdFor(browser: KnownBrowser, os: string): string {
+  if (os === "windows") return browser.exe ?? browser.displayName;
+  return browser.proc ?? browser.displayName;
+}
+
+/**
+ * Every browser worth asking the platform about, as the ids it will understand.
+ *
+ * Deliberately includes browsers whose tabs cannot be read here: a Mac user
+ * running Firefox should see it listed and told why it cannot be counted,
+ * rather than have Loaf quietly behave as though it were not open.
+ */
+export function browsersToAskAbout(os: string): readonly { browser: KnownBrowser; id: string }[] {
+  return KNOWN_BROWSERS.filter((b) => os !== "windows" || b.exe !== undefined).map((browser) => ({
+    browser,
+    id: runningIdFor(browser, os),
+  }));
+}
 
 /**
  * Identify a browser from whatever the platform probe reported as `raw`.

@@ -113,7 +113,7 @@ export interface RadarSnapshot {
   /** Tabs open before the tantrum. 0 = tantrums off. */
   readonly tabThreshold: number;
   /** Tabs open right now, or null if nothing has counted them. */
-  readonly peakTabsNow: number | null;
+  readonly tabsOpenNow: number | null;
   readonly statusRows: readonly BrowserStatus[];
 }
 
@@ -124,7 +124,7 @@ export function disabledRadar(): RadarSnapshot {
     readsInsideBrowser: true,
     enabled: false,
     tabThreshold: 0,
-    peakTabsNow: null,
+    tabsOpenNow: null,
     statusRows: [],
   };
 }
@@ -1523,7 +1523,7 @@ export function miniBody(
       `<div class="mini-site"><span class="dot"></span>${escapeHTML(top.domain)}` +
       `<span class="time">${formatDuration(top.seconds)}</span></div>`;
   }
-  const tabs = radar.peakTabsNow;
+  const tabs = radar.tabsOpenNow;
   if (tabs !== null && tabs > 0) {
     const hot = tabs > radar.tabThreshold && radar.tabThreshold > 0;
     extra += `<div class="mini-tabs${hot ? " hot" : ""}">${tabs} tabs open${hot ? " — really?" : ""}</div>`;

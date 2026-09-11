@@ -146,6 +146,12 @@ import {
   type ProbeOutcome,
 } from "./radar/radar";
 import {
+  browserFor,
+  browsersToAskAbout,
+  probeIdFor,
+  type KnownBrowser,
+} from "./radar/domain";
+import {
   loadPacks,
   mergeCompanions,
   browserImageLoader,
@@ -1214,6 +1220,11 @@ async function loadHistory(): Promise<void> {
     // The radar files its domains into the tracker, so it cannot exist before
     // the history has been read — the ledger it writes to is that object.
     radar = new PrivacyRadar(tracker);
+    // Set here as well as where `platform_name` answers, because the two are a
+    // race: whichever of them finishes LAST is the one that has to apply it.
+    // Only setting it in the handler leaves the radar on "" whenever the
+    // platform answers before the history has finished loading.
+    radar.os = platformName;
     // What was chosen last time. Without this the consent screen reappears
     // every launch and the tantrum threshold silently returns to 40.
     radar.settings = loadRadarSettings(browserStore());
@@ -1592,23 +1603,43 @@ function applyDecision(raw: unknown): void {
 }
 
 /**
- * Ask every known browser once, then report back.
+ * Ask every browser that is actually open, then report back.
  *
- * On macOS each of these raises the OS's own Automation prompt, which is why
- * the screen says so and why it waits. On Windows nothing is prompted and this
+ * It used to ask only the browser in front, and then say "every known browser"
+ * in its own docstring — so onboarding finished having spoken to exactly one
+ * browser, or none at all when the onboarding window itself was frontmost.
+ *
+ * On macOS each of these raises the OS's own Automation prompt, which is why the
+ * screen says so and why it waits. On Windows nothing is prompted and this
  * simply finds out what can be read.
  */
 async function finishOnboarding(): Promise<void> {
   const report = await invokeSafe<{ app: { name: string; raw: string } | null }>(
     "foreground_app",
   );
-  if (radar && report?.app) {
-    // Only the browser in front, as ever: nothing here may launch one.
-    await pollRadar(report.app.raw, report.app.name, 0);
+  if (radar) {
+    await pollRadar(report?.app?.raw ?? null, report?.app?.name ?? "", 0);
   }
-  onboardingStep = { step: "done", statuses: radar?.statusRows() ?? [] };
+  onboardingStep = { step: "done", statuses: radarRows() };
   announceOnboarding();
   announceRadar();
+}
+
+/**
+ * The browsers Loaf found open at the last poll.
+ *
+ * Kept so the dashboard can list a browser that is running but has not been
+ * read yet — `statusRows` has always accepted that list and nothing ever passed
+ * it one, which is why an unread browser appeared nowhere at all.
+ */
+let runningBrowsers: readonly KnownBrowser[] = [];
+
+function radarRows(): ReturnType<PrivacyRadar["statusRows"]> {
+  if (!radar) return [];
+  // `probeIdFor`, not `runningIdFor`: statusRows identifies a browser through
+  // `browserFor`, which knows bundle ids and executables. A macOS process name
+  // would match nothing and silently drop the row.
+  return radar.statusRows(runningBrowsers.map((b) => probeIdFor(b, platformName)));
 }
 
 function radarSnapshot(): RadarSnapshot {
@@ -1618,36 +1649,69 @@ function radarSnapshot(): RadarSnapshot {
     readsInsideBrowser: radarReadsInsideBrowser,
     enabled: radar.settings.enabled,
     tabThreshold: radar.settings.tabThreshold,
-    peakTabsNow: radar.peakTabsNow,
-    statusRows: radar.statusRows(),
+    tabsOpenNow: radar.tabsOpenNow,
+    statusRows: radarRows(),
   };
 }
 
 /**
- * Ask the frontmost browser about its tabs, if it is one and if it is time.
+ * Ask EVERY open browser about its tabs, and credit the time to the one in front.
  *
- * Only ever the app already in front: `tell application` would launch a browser
- * that was closed, and a pet that opens Chrome to count its tabs has become the
- * problem it was reporting on.
+ * This used to ask only the frontmost app, which is the whole reason someone
+ * with three browsers open saw one: a browser you were not currently looking at
+ * was never asked, so its tabs did not exist as far as the count or the tantrum
+ * was concerned.
+ *
+ * Still never launches anything, which was the original reason for only asking
+ * the front one. The running check goes through the platform's own "is this
+ * process there" — System Events on macOS, the window list on Windows — so a
+ * closed browser is simply absent from the answer rather than being addressed
+ * and booted in order to be counted.
+ *
+ * `seconds` is credited only to the browser actually in front. The others
+ * contribute a tab count and no time, because nobody was looking at them.
  */
 async function pollRadar(raw: string | null, name: string, seconds: number): Promise<void> {
-  if (!radar || raw === null) return;
+  if (!radar) return;
   // Not a second "is it enabled" gate here — `radar.target` below already
   // refuses when it is off, and a dead check that duplicated it in a way that
   // did nothing was more confusing than no check at all.
   radar.expireStaleReadings();
-  const browser = radar.target(raw);
-  if (!browser) return;
+  if (!radar.settings.enabled) return;
 
-  const outcome = await invokeSafe<ProbeOutcome>("probe_browser", {
-    bundleId: browser.bundleId,
-    safari: browser.flavour === "safari",
+  const candidates = browsersToAskAbout(platformName);
+  const open = await invokeSafe<string[]>("running_browsers", {
+    ids: candidates.map((c) => c.id),
   });
-  if (!outcome) return;
-  // Remembered for the meeting watch, which needs to know a call is in a
-  // browser tab. Domain only, exactly as the radar already records it.
-  lastRadarDomain = outcome.kind === "reading" ? outcome.domain : null;
-  radar.absorb(browser, name, outcome, seconds);
+  if (!open) return;
+  const openIds = new Set(open.map((id) => id.trim().toLowerCase()));
+  runningBrowsers = candidates
+    .filter((c) => openIds.has(c.id.trim().toLowerCase()))
+    .map((c) => c.browser);
+
+  const frontmost = raw === null ? null : browserFor(raw);
+  for (const browser of runningBrowsers) {
+    const probeId = probeIdFor(browser, platformName);
+    if (!radar.target(probeId)) continue;
+    const isFront = frontmost?.bundleId === browser.bundleId;
+
+    const outcome = await invokeSafe<ProbeOutcome>("probe_browser", {
+      bundleId: probeId,
+      safari: browser.flavour === "safari",
+    });
+    if (!outcome) continue;
+    if (isFront) {
+      // Remembered for the meeting watch, which needs to know a call is in a
+      // browser tab. Domain only, exactly as the radar already records it.
+      lastRadarDomain = outcome.kind === "reading" ? outcome.domain : null;
+    }
+    radar.absorb(
+      browser,
+      isFront && name !== "" ? name : browser.displayName,
+      outcome,
+      isFront ? seconds : 0,
+    );
+  }
 }
 
 // --- Speaking ----------------------------------------------------------------
@@ -2409,6 +2473,10 @@ let whisperReady = false;
 let platformName = "";
 void invokeSafe<string>("platform_name").then((p) => {
   platformName = p ?? "";
+  // The radar needs it too: whether a browser's tabs can be read at all is a
+  // per-platform question, and Firefox is the case that gets it wrong — readable
+  // on Windows through the accessibility tree, genuinely unreadable on macOS.
+  if (radar) radar.os = platformName;
   // Whichever of "what platform is this" and "is Whisper ready" finishes LAST
   // is the one that has to re-settle the engine choice. Resolving it against
   // whichever arrived first and just assuming the other risks the mirror image

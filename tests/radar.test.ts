@@ -12,7 +12,15 @@ import {
   type TabAlert,
 } from "../src/radar/radar";
 import { MemorySettingsStore } from "../src/closet/settings";
-import { normaliseDomain, browserFor, KNOWN_BROWSERS } from "../src/radar/domain";
+import {
+  normaliseDomain,
+  browserFor,
+  browsersToAskAbout,
+  canReadTabs,
+  probeIdFor,
+  runningIdFor,
+  KNOWN_BROWSERS,
+} from "../src/radar/domain";
 import { isRadarSnapshot } from "../src/dashboard/events";
 import { unavailableRadar, disabledRadar } from "../src/dashboard/html";
 
@@ -100,6 +108,59 @@ describe("identifying a browser", () => {
   });
 });
 
+describe("naming a browser to the platform", () => {
+  const FIREFOX = browserFor("org.mozilla.firefox")!;
+
+  it("reads Firefox on Windows and not on macOS", () => {
+    expect(canReadTabs(FIREFOX, "windows")).toBe(true);
+    expect(canReadTabs(FIREFOX, "macos")).toBe(false);
+    // An unknown platform is treated as "not Windows", which is the cautious
+    // reading — better to offer nothing than to promise a count that cannot come.
+    expect(canReadTabs(FIREFOX, "")).toBe(false);
+  });
+
+  it("addresses it by executable on Windows and bundle id elsewhere", () => {
+    expect(probeIdFor(CHROME, "windows")).toBe("chrome.exe");
+    expect(probeIdFor(CHROME, "macos")).toBe("com.google.Chrome");
+  });
+
+  it("asks whether it is running by process name on macOS", () => {
+    // A THIRD name for the same browser, and the reason it is not redundant:
+    // System Events knows processes by name, not by bundle id, so asking with
+    // the bundle id gets a confident "not running" for a browser sitting there.
+    expect(runningIdFor(CHROME, "macos")).toBe("Google Chrome");
+    expect(runningIdFor(FIREFOX, "macos")).toBe("firefox");
+    expect(runningIdFor(FIREFOX, "windows")).toBe("firefox.exe");
+  });
+
+  it("every browser it asks about can be identified from the answer", () => {
+    // The round trip that matters: the id sent to the platform has to come back
+    // recognisable, or a browser is found running and then dropped on the floor.
+    for (const os of ["windows", "macos"]) {
+      for (const { browser } of browsersToAskAbout(os)) {
+        expect(browserFor(probeIdFor(browser, os))?.bundleId).toBe(browser.bundleId);
+      }
+    }
+  });
+
+  it("offers no browser Windows could never match", () => {
+    expect(browsersToAskAbout("windows").every(({ browser }) => browser.exe !== undefined)).toBe(
+      true,
+    );
+    expect(browsersToAskAbout("windows").map(({ browser }) => browser.displayName)).not.toContain(
+      "Safari",
+    );
+  });
+
+  it("still offers a browser it cannot read, so it can say why", () => {
+    // A Mac running Firefox should see it listed and told it cannot be counted,
+    // not have Loaf behave as though it were closed.
+    expect(browsersToAskAbout("macos").map(({ browser }) => browser.displayName)).toContain(
+      "Firefox",
+    );
+  });
+});
+
 describe("choosing whether to ask", () => {
   it("asks nothing at all while the radar is off", () => {
     const { radar } = make();
@@ -110,6 +171,23 @@ describe("choosing whether to ask", () => {
   it("never asks Firefox, which has no answer to give", () => {
     const { radar } = make();
     expect(radar.target("org.mozilla.firefox")).toBeNull();
+  });
+
+  it("does ask Firefox on Windows, where tabs are not read by scripting", () => {
+    // "Unscriptable" is a macOS fact: Firefox publishes no AppleScript
+    // dictionary for its tabs. Windows never scripts the browser — it reads the
+    // accessibility tree, which Firefox fills in like anything else. One flag
+    // for both platforms meant Firefox users got nothing on the platform where
+    // it works.
+    const { radar } = make();
+    radar.os = "windows";
+    expect(radar.target("firefox.exe")?.displayName).toBe("Firefox");
+  });
+
+  it("still refuses a browser it has no Windows executable for", () => {
+    const { radar } = make();
+    radar.os = "windows";
+    expect(radar.target("com.apple.Safari")).toBeNull();
   });
 
   it("ignores an app that is not a browser", () => {
@@ -219,12 +297,48 @@ describe("the tab tantrum", () => {
     expect(alerts).toHaveLength(1);
   });
 
-  it("reports the worst browser, not the last one asked", () => {
+  it("names the worst browser but counts all of them", () => {
+    // The name is the worst offender, so the line has somewhere to point. The
+    // NUMBER is every tab open, because that is what the user can see.
     const { radar } = make(40);
     radar.absorb(CHROME, "Google Chrome", reading(60), 5);
     radar.absorb(SAFARI, "Safari", reading(3), 5);
     expect(radar.tabAlert!.browser).toBe("Google Chrome");
-    expect(radar.peakTabsNow).toBe(60);
+    expect(radar.tabsOpenNow).toBe(63);
+    expect(radar.tabAlert!.count).toBe(63);
+  });
+
+  it("fires on the total when no single browser would trip it", () => {
+    // THE BUG. Three browsers at 25 tabs is 75 tabs of mess, and a
+    // per-browser comparison never noticed because none of them got to 40
+    // alone. "The tab tantrum isn't working" was this, every time.
+    const { radar, alerts } = make(40);
+    radar.absorb(CHROME, "Google Chrome", reading(25), 5);
+    expect(radar.tabAlert).toBeNull();
+    radar.absorb(SAFARI, "Safari", reading(25), 5);
+    expect(radar.tabAlert).not.toBeNull();
+    expect(radar.tabAlert!.count).toBe(50);
+    expect(alerts).toHaveLength(1);
+  });
+
+  it("calms on the total coming down, not on one browser closing", () => {
+    const { radar, calms } = make(40);
+    radar.absorb(CHROME, "Google Chrome", reading(30), 5);
+    radar.absorb(SAFARI, "Safari", reading(30), 5);
+    expect(radar.tabAlert!.count).toBe(60);
+    // Safari down to nothing still leaves 30, which is inside the calm margin.
+    radar.absorb(SAFARI, "Safari", reading(0), 5);
+    expect(radar.tabAlert).toBeNull();
+    expect(calms).toEqual([30]);
+  });
+
+  it("records the day's peak as a total too", () => {
+    // Otherwise "most tabs open at once today" reports one browser's worth and
+    // disagrees with the number beside it.
+    const { radar, ledger } = make(40);
+    radar.absorb(CHROME, "Google Chrome", reading(20), 5);
+    radar.absorb(SAFARI, "Safari", reading(15), 5);
+    expect(ledger.peaks.at(-1)).toBe(35);
   });
 
   it("never fires when tantrums are switched off", () => {
@@ -244,7 +358,7 @@ describe("the tab tantrum", () => {
     advance(READING_LIFETIME_MS + 1000);
     radar.expireStaleReadings();
     expect(radar.tabAlert).toBeNull();
-    expect(radar.peakTabsNow).toBeNull();
+    expect(radar.tabsOpenNow).toBeNull();
   });
 
   it("keeps a fresh count through an expiry sweep", () => {
@@ -271,6 +385,24 @@ describe("the rows the dashboard shows", () => {
     expect(row.note).toContain("not a Loaf limitation");
   });
 
+  it("lists Firefox as readable on Windows instead of apologising for it", () => {
+    const { radar } = make();
+    radar.os = "windows";
+    const row = radar.statusRows(["firefox.exe"])[0]!;
+    expect(row.permission).toBe("unknown");
+    expect(row.note).toBeUndefined();
+  });
+
+  it("lists every running browser, including ones never spoken to", () => {
+    // This list was always accepted and never passed, so a browser that was
+    // open but not yet read appeared nowhere at all.
+    const { radar } = make();
+    radar.absorb(CHROME, "Google Chrome", reading(4), 5);
+    const rows = radar.statusRows(["com.google.Chrome", "com.apple.Safari"]);
+    expect(rows.map((r) => r.name)).toEqual(["Google Chrome", "Safari"]);
+    expect(rows.find((r) => r.name === "Safari")!.tabCount).toBeNull();
+  });
+
   it("does not duplicate a browser it has already spoken to", () => {
     const { radar } = make();
     radar.absorb(CHROME, "Google Chrome", reading(4), 5);
@@ -283,7 +415,7 @@ describe("the rows the dashboard shows", () => {
     radar.forget();
     expect(radar.statusRows()).toEqual([]);
     expect(radar.tabAlert).toBeNull();
-    expect(radar.peakTabsNow).toBeNull();
+    expect(radar.tabsOpenNow).toBeNull();
   });
 });
 
@@ -297,10 +429,10 @@ describe("the snapshot the dashboard renders from", () => {
     for (const junk of [
       null,
       "on",
-      { available: true, enabled: true, tabThreshold: 40, peakTabsNow: null },
-      { available: "yes", enabled: true, tabThreshold: 40, peakTabsNow: null, statusRows: [] },
-      { available: true, enabled: true, tabThreshold: NaN, peakTabsNow: null, statusRows: [] },
-      { available: true, enabled: true, tabThreshold: 40, peakTabsNow: null, statusRows: {} },
+      { available: true, enabled: true, tabThreshold: 40, tabsOpenNow: null },
+      { available: "yes", enabled: true, tabThreshold: 40, tabsOpenNow: null, statusRows: [] },
+      { available: true, enabled: true, tabThreshold: NaN, tabsOpenNow: null, statusRows: [] },
+      { available: true, enabled: true, tabThreshold: 40, tabsOpenNow: null, statusRows: {} },
     ]) {
       expect(isRadarSnapshot(junk)).toBe(false);
     }

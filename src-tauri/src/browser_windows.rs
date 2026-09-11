@@ -26,14 +26,15 @@
 #![cfg(windows)]
 
 use crate::browser::ProbeOutcome;
-use windows::core::VARIANT;
+use windows::core::{BSTR, VARIANT};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationValuePattern, TreeScope_Descendants,
-    UIA_ControlTypePropertyId, UIA_EditControlTypeId, UIA_TabItemControlTypeId, UIA_ValuePatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern,
+    TreeScope_Children, TreeScope_Descendants, UIA_ButtonControlTypeId, UIA_ControlTypePropertyId,
+    UIA_EditControlTypeId, UIA_NamePropertyId, UIA_TabItemControlTypeId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -109,15 +110,115 @@ impl Drop for Apartment {
     }
 }
 
-pub fn probe() -> ProbeOutcome {
-    let _apartment = Apartment::enter();
+/// Every visible top-level window, paired with the lowercased stem of the
+/// executable that owns it (`"chrome"`, `"firefox"`).
+///
+/// One walk answering two separate questions — which browsers are running, and
+/// which windows belong to a given one. Those used to be two code paths that
+/// agreed only by accident, and the cost was a browser Loaf could count but
+/// never find.
+fn visible_windows() -> Vec<(HWND, String)> {
+    use windows::Win32::Foundation::{BOOL, LPARAM};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+    };
 
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd == HWND(std::ptr::null_mut()) {
-        return ProbeOutcome::Unavailable {
-            why: "no window in front".into(),
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let found = unsafe { &mut *(lparam.0 as *mut Vec<(HWND, String)>) };
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return true.into();
+        }
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == 0 {
+            return true.into();
+        }
+        let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+        else {
+            return true.into();
         };
+        let mut buf = [0u16; 512];
+        let mut len = buf.len() as u32;
+        let got = unsafe {
+            QueryFullProcessImageNameW(
+                handle,
+                PROCESS_NAME_FORMAT(0),
+                windows::core::PWSTR(buf.as_mut_ptr()),
+                &mut len,
+            )
+        };
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
+        if got.is_err() {
+            return true.into();
+        }
+        let exe = String::from_utf16_lossy(&buf[..len as usize]).to_lowercase();
+        let stem = exe
+            .rsplit('\\')
+            .next()
+            .unwrap_or(&exe)
+            .trim_end_matches(".exe")
+            .to_string();
+        found.push((hwnd, stem));
+        true.into()
     }
+
+    let mut found: Vec<(HWND, String)> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(
+            Some(visit),
+            LPARAM(&mut found as *mut Vec<(HWND, String)> as isize),
+        );
+    }
+    found
+}
+
+/// Strip a trailing `.exe` and lowercase, so `"Chrome.exe"` and `"chrome"` are
+/// the same thing to every caller.
+fn stem_of(exe: &str) -> String {
+    exe.trim()
+        .to_lowercase()
+        .trim_end_matches(".exe")
+        .to_string()
+}
+
+/// Which of `candidates` have a visible window right now.
+///
+/// Takes the list rather than holding one: the frontend already knows every
+/// browser Loaf recognises, and a second copy here would be a second thing to
+/// keep in step — which is exactly how Firefox ended up listed in one place and
+/// not the other.
+pub fn running(candidates: &[String]) -> Vec<String> {
+    let live: std::collections::HashSet<String> = visible_windows()
+        .into_iter()
+        .map(|(_, stem)| stem)
+        .collect();
+    candidates
+        .iter()
+        .filter(|c| live.contains(&stem_of(c)))
+        .cloned()
+        .collect()
+}
+
+/// Count one browser's tabs across ALL of its windows, and read the address bar
+/// only if that browser is the one in front.
+///
+/// Two deliberate properties:
+///
+/// 1. **Every window, not the foreground one.** A second Chrome window used to
+///    be invisible, and a browser you were not currently looking at was never
+///    counted at all — so "how many tabs are open" answered for one window of
+///    one browser and called it the total.
+/// 2. **The domain still comes from the front window only.** Counting is
+///    harmless across background browsers; reading their address bars would
+///    widen what Loaf sees for no benefit. So a background browser contributes
+///    a number and nothing else.
+pub fn probe(exe: &str) -> ProbeOutcome {
+    let _apartment = Apartment::enter();
+    let stem = stem_of(exe);
 
     let automation: IUIAutomation =
         match unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) } {
@@ -129,16 +230,38 @@ pub fn probe() -> ProbeOutcome {
             }
         };
 
-    let root = match unsafe { automation.ElementFromHandle(hwnd) } {
-        Ok(e) => e,
-        Err(_) => {
-            return ProbeOutcome::Unavailable {
-                why: "couldn't be read".into(),
-            }
-        }
-    };
+    let foreground = unsafe { GetForegroundWindow() };
+    let mut tab_count = 0u32;
+    let mut windows_seen = 0usize;
+    let mut front_root = None;
 
-    let tab_count = count_tabs(&automation, &root).unwrap_or(0);
+    for (hwnd, owner) in visible_windows() {
+        if owner != stem {
+            continue;
+        }
+        let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+            continue;
+        };
+        tab_count += real_tabs(&automation, &root).len() as u32;
+        windows_seen += 1;
+        if hwnd == foreground {
+            front_root = Some(root);
+        }
+    }
+
+    if windows_seen == 0 {
+        return ProbeOutcome::Unavailable {
+            why: "has no window open".into(),
+        };
+    }
+
+    // Not in front: the count is honest, and that is all this is entitled to.
+    let Some(root) = front_root else {
+        return ProbeOutcome::Reading {
+            domain: None,
+            tab_count,
+        };
+    };
 
     // MITIGATION 1. A focused edit box is an address bar being typed into, and
     // what is in it is a search query, not a destination. The tab count is still
@@ -186,10 +309,13 @@ fn read_address_bar(
     }
 }
 
-fn count_tabs(
+/// Every control in this window that calls itself a tab.
+///
+/// Includes plenty that are not browser tabs — see `real_tabs`.
+fn tab_items(
     automation: &IUIAutomation,
-    root: &windows::Win32::UI::Accessibility::IUIAutomationElement,
-) -> Option<u32> {
+    root: &IUIAutomationElement,
+) -> Option<Vec<IUIAutomationElement>> {
     unsafe {
         let condition = automation
             .CreatePropertyCondition(
@@ -199,7 +325,76 @@ fn count_tabs(
             .ok()?;
         let found = root.FindAll(TreeScope_Descendants, &condition).ok()?;
         let length = found.Length().ok()?;
-        Some(length.max(0) as u32)
+        let mut out = Vec::new();
+        for i in 0..length {
+            if let Ok(element) = found.GetElement(i) {
+                out.push(element);
+            }
+        }
+        Some(out)
+    }
+}
+
+/// A browser tab has a close button; a tab-shaped control inside a web page
+/// does not.
+///
+/// Without this, WhatsApp Web's own "All / Unread / Groups" filters came back as
+/// browser tabs, because they are TabItems too — and so do the panel tabs of an
+/// open DevTools ("Elements", "Console", "Sources"). Counting those inflated the
+/// number, which matters more now that the counts of several browsers are added
+/// together: three browsers with DevTools open used to be able to invent twenty
+/// tabs between them.
+fn close_button(
+    automation: &IUIAutomation,
+    tab: &IUIAutomationElement,
+) -> Option<IUIAutomationElement> {
+    let condition = unsafe {
+        automation
+            .CreatePropertyCondition(
+                UIA_ControlTypePropertyId,
+                &VARIANT::from(UIA_ButtonControlTypeId.0),
+            )
+            .ok()?
+    };
+    let found = unsafe { tab.FindAll(TreeScope_Children, &condition) }.ok()?;
+    let count = unsafe { found.Length() }.ok()?;
+    for i in 0..count {
+        let Ok(button) = (unsafe { found.GetElement(i) }) else {
+            continue;
+        };
+        if name_of(&button)
+            .unwrap_or_default()
+            .to_lowercase()
+            .contains("close")
+        {
+            return Some(button);
+        }
+    }
+    None
+}
+
+/// The tabs in this window that are actually browser tabs.
+///
+/// ponytail: one accessibility call per candidate tab, so a hundred tabs is a
+/// hundred small cross-process calls. Fine at one poll every few seconds; if it
+/// ever shows up in a profile the fix is a UIA cache request over the tab strip
+/// rather than a per-tab lookup.
+fn real_tabs(automation: &IUIAutomation, root: &IUIAutomationElement) -> Vec<IUIAutomationElement> {
+    tab_items(automation, root)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| close_button(automation, t).is_some())
+        .collect()
+}
+
+fn name_of(element: &IUIAutomationElement) -> Option<String> {
+    let value = unsafe { element.GetCurrentPropertyValue(UIA_NamePropertyId) }.ok()?;
+    let text = BSTR::try_from(&value).ok()?.to_string();
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 
@@ -229,187 +424,41 @@ pub fn close_tab(title: &str) -> Result<bool, String> {
 
 #[cfg(windows)]
 mod imp_tabs {
-    use windows::core::{Interface, BSTR, VARIANT};
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_MULTITHREADED,
-    };
+    use super::{close_button, name_of, real_tabs, stem_of, visible_windows, Apartment};
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-        TreeScope_Children, TreeScope_Descendants, UIA_ButtonControlTypeId,
-        UIA_ControlTypePropertyId, UIA_InvokePatternId, UIA_NamePropertyId,
-        UIA_TabItemControlTypeId,
+        UIA_InvokePatternId,
     };
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-
-    struct Apartment(bool);
-
-    impl Apartment {
-        fn enter() -> Self {
-            let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-            Apartment(hr.is_ok())
-        }
-    }
-
-    impl Drop for Apartment {
-        fn drop(&mut self) {
-            if self.0 {
-                unsafe { CoUninitialize() };
-            }
-        }
-    }
 
     /// Executables whose windows have a tab strip worth listing.
+    ///
+    /// Only a fallback ordering now: `list`/`close` act on a browser rather than
+    /// on whatever is in front, because the dashboard asking "what tabs are
+    /// open" IS the foreground window at that moment and would otherwise list
+    /// its own.
     const BROWSERS: &[&str] = &[
-        "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "arc", "chromium",
+        "chrome",
+        "msedge",
+        "firefox",
+        "brave",
+        "opera",
+        "opera_gx",
+        "vivaldi",
+        "arc",
+        "chromium",
+        "chrome_beta",
+        "chrome_canary",
     ];
 
-    /// Find a BROWSER window, not the foreground one.
-    ///
-    /// The foreground window is the wrong target here and it took running it to
-    /// see why: the dashboard asking "what tabs are open" IS the foreground
-    /// window at that moment, so it would list its own. The browser is found by
-    /// executable instead, which also means the list still works while the user
-    /// is reading it rather than only while they are in the browser.
+    /// The first browser window found, for the tab list and the close button.
     fn browser_window(automation: &IUIAutomation) -> Option<IUIAutomationElement> {
-        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
-        use windows::Win32::System::Threading::{
-            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-            PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-        use windows::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
-        };
-
-        struct Hunt {
-            found: Option<HWND>,
-        }
-
-        unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
-            let hunt = unsafe { &mut *(lparam.0 as *mut Hunt) };
-            if hunt.found.is_some() || !unsafe { IsWindowVisible(hwnd) }.as_bool() {
-                return true.into();
-            }
-            let mut pid = 0u32;
-            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-            if pid == 0 {
-                return true.into();
-            }
-            let Ok(handle) =
-                (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
-            else {
-                return true.into();
-            };
-            let mut buf = [0u16; 512];
-            let mut len = buf.len() as u32;
-            let got = unsafe {
-                QueryFullProcessImageNameW(
-                    handle,
-                    PROCESS_NAME_FORMAT(0),
-                    windows::core::PWSTR(buf.as_mut_ptr()),
-                    &mut len,
-                )
-            };
-            let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
-            if got.is_err() {
-                return true.into();
-            }
-            let exe = String::from_utf16_lossy(&buf[..len as usize]).to_lowercase();
-            let stem = exe
-                .rsplit('\\')
-                .next()
-                .unwrap_or(&exe)
-                .trim_end_matches(".exe")
-                .to_string();
-            if BROWSERS.contains(&stem.as_str()) {
-                hunt.found = Some(hwnd);
-            }
-            true.into()
-        }
-
-        let mut hunt = Hunt { found: None };
-        unsafe {
-            let _ = EnumWindows(Some(visit), LPARAM(&mut hunt as *mut Hunt as isize));
-        }
-        // Falls back to the foreground window, so this still does something
-        // sensible on a machine whose browser is not on the list above.
-        let hwnd = hunt
-            .found
-            .unwrap_or_else(|| unsafe { GetForegroundWindow() });
-        if hwnd.0.is_null() {
-            return None;
-        }
+        let hwnd = visible_windows()
+            .into_iter()
+            .find(|(_, stem)| BROWSERS.contains(&stem_of(stem).as_str()))
+            .map(|(hwnd, _)| hwnd)?;
         unsafe { automation.ElementFromHandle(hwnd).ok() }
-    }
-
-    fn name_of(element: &IUIAutomationElement) -> Option<String> {
-        let value = unsafe { element.GetCurrentPropertyValue(UIA_NamePropertyId) }.ok()?;
-        let text = BSTR::try_from(&value).ok()?.to_string();
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    }
-
-    fn tabs(
-        automation: &IUIAutomation,
-        root: &IUIAutomationElement,
-    ) -> Option<Vec<IUIAutomationElement>> {
-        let condition = unsafe {
-            automation
-                .CreatePropertyCondition(
-                    UIA_ControlTypePropertyId,
-                    &VARIANT::from(UIA_TabItemControlTypeId.0),
-                )
-                .ok()?
-        };
-        let found = unsafe { root.FindAll(TreeScope_Descendants, &condition) }.ok()?;
-        let length = unsafe { found.Length() }.ok()?;
-        let mut out = Vec::new();
-        for i in 0..length {
-            if let Ok(element) = unsafe { found.GetElement(i) } {
-                out.push(element);
-            }
-        }
-        Some(out)
-    }
-
-    /// A browser tab has a close button; a tab-shaped control inside a web page
-    /// does not.
-    ///
-    /// Without this, WhatsApp Web's own "All / Unread / Groups" filters came
-    /// back as browser tabs, because they are TabItems too. Listing something
-    /// Loaf cannot close is worse than not listing it — the button would be
-    /// there and do nothing.
-    fn close_button(
-        automation: &IUIAutomation,
-        tab: &IUIAutomationElement,
-    ) -> Option<IUIAutomationElement> {
-        let condition = unsafe {
-            automation
-                .CreatePropertyCondition(
-                    UIA_ControlTypePropertyId,
-                    &VARIANT::from(UIA_ButtonControlTypeId.0),
-                )
-                .ok()?
-        };
-        let found = unsafe { tab.FindAll(TreeScope_Children, &condition) }.ok()?;
-        let count = unsafe { found.Length() }.ok()?;
-        for i in 0..count {
-            let Ok(button) = (unsafe { found.GetElement(i) }) else {
-                continue;
-            };
-            if name_of(&button)
-                .unwrap_or_default()
-                .to_lowercase()
-                .contains("close")
-            {
-                return Some(button);
-            }
-        }
-        None
     }
 
     pub fn list() -> Option<Vec<String>> {
@@ -418,9 +467,8 @@ mod imp_tabs {
             unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }.ok()?;
         let root = browser_window(&automation)?;
         Some(
-            tabs(&automation, &root)?
+            real_tabs(&automation, &root)
                 .iter()
-                .filter(|t| close_button(&automation, t).is_some())
                 .filter_map(name_of)
                 .collect(),
         )
@@ -434,10 +482,7 @@ mod imp_tabs {
         let Some(root) = browser_window(&automation) else {
             return Ok(false);
         };
-        let Some(all) = tabs(&automation, &root) else {
-            return Ok(false);
-        };
-        let Some(tab) = all
+        let Some(tab) = real_tabs(&automation, &root)
             .into_iter()
             .find(|t| name_of(t).as_deref() == Some(title))
         else {
@@ -473,6 +518,51 @@ mod imp_tabs {
 #[cfg(test)]
 mod tests {
     use super::host_of;
+
+    /// Which browsers are open, and how many tabs each one really has.
+    ///
+    /// Ignored because it needs real browsers, which a CI runner has none of.
+    /// The check this exists for: open two or three browsers, then
+    ///
+    ///     cargo test -- --ignored --nocapture every_browser_not_just_the_front_one
+    ///
+    /// and confirm that each one is listed with a plausible count. A single
+    /// browser in the output, or a zero beside one that plainly has tabs, is the
+    /// bug this was written to catch coming back.
+    #[test]
+    #[ignore]
+    fn every_browser_not_just_the_front_one() {
+        let candidates: Vec<String> = [
+            "chrome.exe",
+            "msedge.exe",
+            "firefox.exe",
+            "brave.exe",
+            "vivaldi.exe",
+            "opera.exe",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+
+        let open = super::running(&candidates);
+        println!("running browsers: {open:?}");
+        assert!(
+            !open.is_empty(),
+            "no browser found running — open one and try again"
+        );
+
+        let mut total = 0u32;
+        for exe in &open {
+            match super::probe(exe) {
+                crate::browser::ProbeOutcome::Reading { domain, tab_count } => {
+                    println!("  {exe}: {tab_count} tabs, domain {domain:?}");
+                    total += tab_count;
+                }
+                other => println!("  {exe}: {other:?}"),
+            }
+        }
+        println!("total across every browser: {total}");
+    }
 
     /// What tabs are open in whatever is in front right now.
     ///

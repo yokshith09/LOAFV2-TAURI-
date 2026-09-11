@@ -114,6 +114,21 @@ fn probe_browser(bundle_id: String, safari: bool) -> browser::ProbeOutcome {
     browser::probe(&bundle_id, safari, 8)
 }
 
+/// Which of these browsers are open right now.
+///
+/// Takes the list rather than keeping one, because the frontend already holds
+/// the single table of browsers Loaf knows about. A second copy here would be a
+/// second thing to keep in step, and the first time they disagreed a browser
+/// would become countable but unfindable — which is precisely how "I have three
+/// browsers open and Loaf sees one" happened.
+///
+/// `ids` are executable names on Windows and process names on macOS; both are
+/// what that platform's own answer to "is it running" is keyed on.
+#[tauri::command(async)]
+fn running_browsers(ids: Vec<String>) -> Vec<String> {
+    browser::running(&ids)
+}
+
 /// Whether this build can read tabs, and whether it does so inside the browser.
 ///
 /// The second half is not a detail: on macOS the URL is truncated before it
@@ -2475,6 +2490,7 @@ pub fn run() {
             read_stats,
             write_stats,
             probe_browser,
+            running_browsers,
             browser_probe_supported,
             sprite_packs,
             open_packs_folder,
