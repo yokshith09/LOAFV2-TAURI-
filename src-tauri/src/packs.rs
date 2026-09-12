@@ -154,9 +154,10 @@ The smallest character.json that works:
 frameWidth and frameHeight are in SHEET PIXELS — the numbers you read off your
 canvas. "scale" is 2 for an @2x sheet, 1 for pixel art drawn at unit size.
 
-Moods you can draw: idle, happy, sleeping, worried, scrolling, tantrum, proud.
-Only "idle" is required; anything you skip falls back to the closest one you did
-draw. Frames are numbered left to right, then down, starting at 0.
+Moods you can draw: idle, happy, sleeping, worried, scrolling, typing, working,
+thinking, tantrum, proud. Only "idle" is required; anything you skip falls back
+to the closest one you did draw. Frames are numbered left to right, then down,
+starting at 0.
 
 Anchors are optional and tell Loaf where a hat sits, where the eyes are, and
 where the paws hold a scroll:
