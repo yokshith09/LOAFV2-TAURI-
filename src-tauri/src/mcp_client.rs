@@ -162,6 +162,41 @@ fn candidate_programs(command: &str) -> Vec<String> {
     ]
 }
 
+/// Whatever the server managed to say before it gave up, if anything.
+///
+/// Read on a thread with a deadline rather than straight through, and the reason
+/// is specific: killing `npx` does not necessarily kill the `node` it started,
+/// and a surviving grandchild keeps its end of this pipe open — so a plain
+/// read-to-end can wait forever for a process nobody is waiting for. A second is
+/// long enough for a program that has already failed to have finished
+/// complaining.
+///
+/// Trimmed to the last 800 characters: a stack trace's useful line is the last
+/// one, and this is going into a panel, not a log file.
+fn server_complaint(stderr: Option<std::process::ChildStderr>) -> Option<String> {
+    use std::io::Read;
+    let mut stderr = stderr?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut said = String::new();
+        let _ = stderr.read_to_string(&mut said);
+        let _ = tx.send(said);
+    });
+    let said = rx
+        .recv_timeout(std::time::Duration::from_millis(1000))
+        .unwrap_or_default();
+    let said = said.trim();
+    if said.is_empty() {
+        return None;
+    }
+    let tail: String = if said.chars().count() > 800 {
+        said.chars().skip(said.chars().count() - 800).collect()
+    } else {
+        said.to_string()
+    };
+    Some(tail)
+}
+
 /// What to tell the user when nothing would start.
 ///
 /// "Could not start npx: program not found" is true and useless. The reason npx
@@ -265,9 +300,15 @@ impl Connection {
                 .args(&spec.args)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                // The child's stderr goes to Loaf's, rather than being captured
-                // and silently discarded: a server that cannot start says why.
-                .stderr(Stdio::inherit());
+                // CAPTURED, not inherited. A server that refuses to start
+                // explains itself on stderr — "NOTION_TOKEN is not set" is the
+                // whole answer to why a connection failed — and inheriting it
+                // sent that explanation to Loaf's own stderr, which in a
+                // packaged GUI build goes nowhere at all. The user was left
+                // with "The server stopped talking" and no way to find out
+                // what it said on the way out. It is read back in
+                // `server_complaint` and shown.
+                .stderr(Stdio::piped());
             for (key, value) in &spec.env {
                 command.env(key, value);
             }
@@ -289,6 +330,7 @@ impl Connection {
         let mut child = child.ok_or_else(|| start_failure(&spec.command, &last))?;
         let stdin = child.stdin.take().ok_or("no stdin on the server")?;
         let stdout = child.stdout.take().ok_or("no stdout on the server")?;
+        let stderr = child.stderr.take();
 
         let mut conn = Connection {
             wire: Wire::Local {
@@ -298,7 +340,20 @@ impl Connection {
             },
             next_id: 1,
         };
-        conn.handshake()?;
+        if let Err(why) = conn.handshake() {
+            // Dropping `conn` kills the child, which closes the write end of
+            // the pipe so the read below can reach the end of it.
+            drop(conn);
+            return Err(match server_complaint(stderr) {
+                Some(said) => format!(
+                    "{why}
+
+The server said:
+{said}"
+                ),
+                None => why,
+            });
+        }
         Ok(conn)
     }
 
@@ -900,5 +955,43 @@ mod tests {
             answer.chars().take(300).collect::<String>()
         );
         assert!(!answer.trim().is_empty(), "empty answer");
+    }
+    /// A local server that starts, complains, and dies must say WHY on screen.
+    ///
+    ///     cargo test -- --ignored --nocapture shows_what_a_failing_server_said
+    ///
+    /// This is the last layer of "I press connect and nothing happens": the
+    /// spawn succeeds, the program refuses to run, and its reason went to a
+    /// stderr nobody could see. Uses `node -e` because it is the one interpreter
+    /// every catalog entry already depends on.
+    #[test]
+    #[ignore]
+    fn shows_what_a_failing_server_said() {
+        let spec = ServerSpec {
+            name: "broken".into(),
+            command: "node".into(),
+            args: vec![
+                "-e".into(),
+                "console.error('NOTION_TOKEN is not set'); process.exit(1);".into(),
+            ],
+            env: BTreeMap::new(),
+            note: String::new(),
+            url: String::new(),
+            token: String::new(),
+        };
+        match Connection::open(&spec) {
+            Ok(_) => panic!("that should not have connected"),
+            Err(why) => {
+                println!(
+                    "the panel would show:
+{why}"
+                );
+                assert!(
+                    why.contains("NOTION_TOKEN is not set"),
+                    "the server's own reason was lost: {why}"
+                );
+                assert!(why.contains("The server said"), "{why}");
+            }
+        }
     }
 }
