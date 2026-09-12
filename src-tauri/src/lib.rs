@@ -36,10 +36,12 @@ pub mod browser;
 pub mod browser_macos;
 #[cfg(windows)]
 pub mod browser_windows;
+pub mod claude_desktop;
 pub mod connections;
 pub mod control;
 pub mod mcp;
 pub mod mcp_client;
+pub mod mcp_stdio;
 pub mod packs;
 pub mod platform;
 pub mod remote;
@@ -2381,6 +2383,132 @@ fn open_mcp_config(app: tauri::AppHandle) -> Result<(), String> {
     open_in_file_manager(&path.to_string_lossy())
 }
 
+// --- Claude Desktop ----------------------------------------------------------
+
+/// What the Connections tab needs to describe the Claude Desktop link.
+#[derive(serde::Serialize)]
+struct ClaudeStatus {
+    /// Whether Claude Desktop looks installed on this machine at all.
+    installed: bool,
+    /// Whether its config currently names Loaf.
+    connected: bool,
+    /// Shown so the user can go and look, and so a wrong path is visible.
+    #[serde(rename = "configPath")]
+    config_path: String,
+    /// The user's other MCP servers. Named because Loaf is editing a shared
+    /// file and a person is entitled to see what they are about to sit beside.
+    #[serde(rename = "otherServers")]
+    other_servers: Vec<String>,
+    /// Whether Claude has spoken to Loaf recently enough to still be attached.
+    #[serde(rename = "sessionLive")]
+    session_live: bool,
+    /// Why the config could not be read, if it could not. Never silent — see
+    /// `claude_desktop::read`.
+    error: String,
+}
+
+fn claude_status_now(app: &tauri::AppHandle) -> ClaudeStatus {
+    let path = claude_desktop::config_path();
+    let mut status = ClaudeStatus {
+        installed: claude_desktop::installed(),
+        connected: false,
+        config_path: path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        other_servers: Vec::new(),
+        session_live: false,
+        error: String::new(),
+    };
+    if let Some(path) = path.as_deref() {
+        match claude_desktop::read(path) {
+            Ok(existing) => {
+                status.connected = claude_desktop::has_loaf(existing.as_ref());
+                status.other_servers = claude_desktop::other_servers(existing.as_ref());
+            }
+            Err(why) => status.error = why,
+        }
+    }
+    if let Ok(dir) = data_dir(app) {
+        if let Some((_, at)) = claude_desktop::last_activity(&dir) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            status.session_live = now.saturating_sub(at) < claude_desktop::CONNECTED_FOR_MS;
+        }
+    }
+    status
+}
+
+#[tauri::command(async)]
+fn claude_status(app: tauri::AppHandle) -> ClaudeStatus {
+    claude_status_now(&app)
+}
+
+/// Add Loaf to the Claude Desktop configuration.
+///
+/// Reads what is there, changes one key, writes the rest back untouched, and
+/// keeps a copy first. Claude only reads that file at startup, so the caller has
+/// to say that a restart is needed — there is no way to make it notice sooner.
+#[tauri::command(async)]
+fn claude_connect(app: tauri::AppHandle) -> Result<ClaudeStatus, String> {
+    let path = claude_desktop::config_path()
+        .ok_or("Loaf does not know where Claude Desktop keeps its settings on this system.")?;
+    let existing = claude_desktop::read(&path)?;
+    let (command, args) = claude_desktop::server_command()?;
+    let updated = claude_desktop::with_loaf(existing.as_ref(), &command, &args);
+    claude_desktop::write(&path, &updated)?;
+    Ok(claude_status_now(&app))
+}
+
+#[tauri::command(async)]
+fn claude_disconnect(app: tauri::AppHandle) -> Result<ClaudeStatus, String> {
+    let path = claude_desktop::config_path()
+        .ok_or("Loaf does not know where Claude Desktop keeps its settings on this system.")?;
+    let existing = claude_desktop::read(&path)?;
+    let updated = claude_desktop::without_loaf(existing.as_ref());
+    claude_desktop::write(&path, &updated)?;
+    Ok(claude_status_now(&app))
+}
+
+/// Watch for Claude using Loaf, and tell the companion when it does.
+///
+/// A POLLED FILE rather than a message, and deliberately. The MCP server Claude
+/// spawns is a separate process with no link to this one — that is the promise
+/// at the top of `mcp_stdio.rs`, no socket and no port — so the only thing the
+/// two share is the disk. Half a second is well under the time anybody notices,
+/// and reading one small file that usually has not changed costs nothing.
+///
+/// Only a real `tools/call` raises the bubble. Claude pings its servers on a
+/// timer, and a pet that looked busy every few seconds because of a keep-alive
+/// would be lying about being asked something.
+fn watch_for_claude(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut last_seen: u64 = 0;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let Ok(dir) = data_dir(&app) else { continue };
+            let Some((tool, at)) = claude_desktop::last_activity(&dir) else {
+                continue;
+            };
+            if at <= last_seen {
+                continue;
+            }
+            // The first reading after launch establishes the baseline instead of
+            // announcing something that happened while Loaf was closed.
+            let first = last_seen == 0;
+            last_seen = at;
+            if first || tool.is_empty() {
+                continue;
+            }
+            let _ = app.emit("loaf://claude/asked", tool);
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2420,6 +2548,11 @@ pub fn run() {
                 std::thread::sleep(std::time::Duration::from_secs(15));
                 poll_watches(&ticker);
             });
+
+            // Claude Desktop spawns its own copy of Loaf to answer questions,
+            // and that copy cannot talk to this one. This notices when it has
+            // been asked something, so the companion can react.
+            watch_for_claude(app.handle());
 
             build_tray(app.handle())?;
             build_bubble_window(app.handle())?;
@@ -2517,6 +2650,9 @@ pub fn run() {
             mcp_connected,
             mcp_disconnect,
             open_mcp_config,
+            claude_status,
+            claude_connect,
+            claude_disconnect,
             report_error,
             voice_report,
             speak,

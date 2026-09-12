@@ -40,6 +40,8 @@ import {
   type ServerView,
   type CallRecord,
   type Watch,
+  isClaudeStatus,
+  type ClaudeStatus,
 } from "../connections/connections";
 import {
   COMMAND_EVENT,
@@ -185,6 +187,15 @@ let micUsable = false;
 let connections: ConnectionsState = EMPTY_CONNECTIONS;
 
 /**
+ * The Claude Desktop link, or undefined until Rust answers.
+ *
+ * Undefined draws no card. Saying "not connected" before asking would be this
+ * window inventing a fact about the machine, which is the mistake the radar and
+ * meetings panels are both careful to avoid.
+ */
+let claude: ClaudeStatus | undefined;
+
+/**
  * The search box and what it found.
  *
  * Held here for the same reason as everything else on this page: `render`
@@ -253,6 +264,11 @@ async function refreshConnections(): Promise<void> {
     invoke<unknown[]>("mcp_calls").catch(() => []),
     invoke<unknown[]>("watches_list").catch(() => []),
   ]);
+  // Asked for at the same time, because the Claude card lives in this panel and
+  // a card that lagged a refresh behind would show a stale "not set up" right
+  // after somebody pressed Connect.
+  const claudeNow = await invoke<unknown>("claude_status").catch(() => null);
+  if (isClaudeStatus(claudeNow)) claude = claudeNow;
   connections = {
     ...connections,
     servers: servers.filter(isServerView) as ServerView[],
@@ -324,6 +340,7 @@ async function render(): Promise<void> {
       meetings,
       memory,
       connections,
+      claude,
       search,
     });
     // The button is recreated on every render, so the decision to show it has
@@ -779,6 +796,29 @@ root.addEventListener("click", (ev) => {
         connections = { ...connections, errors: { ...connections.errors, [name]: String(err) } };
       }
       await refreshConnections();
+    })();
+    return;
+  }
+
+  // The other direction: Claude Desktop starting Loaf, rather than Loaf
+  // starting somebody else. Handled here with the rest of Connections because
+  // it is the same card stack, even though it is the opposite relationship.
+  const claudeBtn = target.closest<HTMLElement>("[data-claude-connect], [data-claude-disconnect]");
+  if (claudeBtn) {
+    const connecting = claudeBtn.hasAttribute("data-claude-connect");
+    claudeBtn.textContent = connecting ? "Connecting…" : "Disconnecting…";
+    void (async () => {
+      try {
+        const next = await invoke<unknown>(connecting ? "claude_connect" : "claude_disconnect");
+        // Rust hands back the fresh status, so the card cannot disagree with
+        // the file that was just written.
+        if (isClaudeStatus(next)) claude = next;
+      } catch (err) {
+        // Shown on the card rather than swallowed. Editing another program's
+        // settings file is exactly where a silent failure is unacceptable.
+        if (claude) claude = { ...claude, error: String(err) };
+      }
+      await render();
     })();
     return;
   }

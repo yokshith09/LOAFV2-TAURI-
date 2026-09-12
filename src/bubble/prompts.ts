@@ -124,3 +124,32 @@ export const HOVER_DWELL_MS = 350;
 export function mayNudge(focusRunning: boolean): boolean {
   return !focusRunning;
 }
+
+/**
+ * What to say when Claude asks Loaf something, named by the tool it used.
+ *
+ * The TOOL, not a generic line, because which question was asked is the part
+ * worth knowing — "something happened" is not disclosure, and this app has
+ * always chosen to say out loud when something reads your day. Falls back to a
+ * plain sentence for a tool this build has never heard of, which is what a
+ * newer server talking to an older companion looks like.
+ *
+ * Every line names Claude, so it can never be mistaken for Loaf itself doing
+ * the asking.
+ */
+export function claudeAskedLine(tool: string): string {
+  switch (tool) {
+    case "screen_time_today":
+      return "Claude is looking at today.";
+    case "screen_time_range":
+    case "screen_time_history":
+      return "Claude is reading back over your week.";
+    case "top_apps":
+      return "Claude is asking what you have been in.";
+    case "meetings":
+    case "meeting_notes":
+      return "Claude is going through your meetings.";
+    default:
+      return "Claude is asking Loaf something.";
+  }
+}

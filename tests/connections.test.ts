@@ -14,6 +14,8 @@ import {
   isWatch,
   type Watch,
   isRemote,
+  isClaudeStatus,
+  type ClaudeStatus,
 } from "../src/connections/connections";
 
 const NOW = 1_700_000_000_000;
@@ -787,5 +789,80 @@ describe("setting up a connection that needs a key", () => {
     // failure afterwards.
     const html = connectionsPanel(state({ adding: true }), NOW);
     expect(html).toContain("needs Node.js");
+  });
+});
+
+describe("the other direction: Claude Desktop starting Loaf", () => {
+  const claude = (over: Partial<ClaudeStatus> = {}): ClaudeStatus => ({
+    installed: true,
+    connected: false,
+    configPath: "C:/Users/me/AppData/Roaming/Claude/claude_desktop_config.json",
+    otherServers: [],
+    sessionLive: false,
+    error: "",
+    ...over,
+  });
+
+  it("draws no card at all until Rust has answered", () => {
+    // Saying "not connected" before asking would be the window inventing a
+    // fact about the machine.
+    const html = connectionsPanel(EMPTY_CONNECTIONS, NOW, undefined);
+    expect(html).not.toContain("Claude Desktop");
+  });
+
+  it("offers to connect when Claude is installed but not set up", () => {
+    const html = connectionsPanel(EMPTY_CONNECTIONS, NOW, claude());
+    expect(html).toContain("data-claude-connect");
+    expect(html).not.toContain("data-claude-disconnect");
+  });
+
+  it("says so plainly when Claude is not installed", () => {
+    const html = connectionsPanel(EMPTY_CONNECTIONS, NOW, claude({ installed: false }));
+    expect(html).toContain("does not look like it is installed");
+    expect(html).not.toContain("data-claude-connect");
+  });
+
+  it("tells the user to restart Claude, which is the step that is always missed", () => {
+    // Claude reads that file once, at startup. Connecting and then wondering
+    // why nothing happened is the whole failure mode.
+    const html = connectionsPanel(EMPTY_CONNECTIONS, NOW, claude({ connected: true }));
+    expect(html).toContain("Quit Claude Desktop completely");
+    expect(html).toContain("data-claude-disconnect");
+  });
+
+  it("names the other servers it is about to sit beside", () => {
+    // This edits a shared file, so what else is in it is the user's business.
+    const html = connectionsPanel(
+      EMPTY_CONNECTIONS,
+      NOW,
+      claude({ otherServers: ["filesystem", "github"] }),
+    );
+    expect(html).toContain("filesystem");
+    expect(html).toContain("github");
+    expect(html).toContain("left alone");
+  });
+
+  it("shows when Claude is actually attached right now", () => {
+    const html = connectionsPanel(EMPTY_CONNECTIONS, NOW, claude({ connected: true, sessionLive: true }));
+    expect(html).toContain("attached right now");
+  });
+
+  it("reports a config it could not read, and says nothing was touched", () => {
+    const html = connectionsPanel(
+      EMPTY_CONNECTIONS,
+      NOW,
+      claude({ error: "expected value at line 4" }),
+    );
+    expect(html).toContain("line 4");
+    expect(html).toContain("Loaf has changed nothing");
+    // It must NOT offer to write over a file it could not parse.
+    expect(html).not.toContain("data-claude-connect");
+  });
+
+  it("refuses a status of the wrong shape rather than half-trusting it", () => {
+    expect(isClaudeStatus(claude())).toBe(true);
+    expect(isClaudeStatus({ installed: true })).toBe(false);
+    expect(isClaudeStatus(null)).toBe(false);
+    expect(isClaudeStatus({ ...claude(), otherServers: "nope" })).toBe(false);
   });
 });

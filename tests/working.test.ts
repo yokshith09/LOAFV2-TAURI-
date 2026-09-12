@@ -6,6 +6,7 @@ import {
   WORKING_LEAVE_SECONDS,
   WORTH_MENTIONING_SECONDS,
 } from "../src/behaviour/working";
+import { claudeAskedLine } from "../src/bubble/prompts";
 
 /**
  * Feed a constant reading for a number of seconds, one tick per 0.5s.
@@ -115,5 +116,28 @@ describe("WorkingWatch", () => {
 
   it("has a floor below which a job is not worth remarking on", () => {
     expect(WORTH_MENTIONING_SECONDS).toBeGreaterThan(10);
+  });
+});
+
+describe("what Loaf says when Claude asks it something", () => {
+  it("names the question rather than saying something happened", () => {
+    // Which question was asked is the disclosure. "Something happened" is not.
+    expect(claudeAskedLine("screen_time_today")).toContain("today");
+    expect(claudeAskedLine("top_apps")).toContain("been in");
+    expect(claudeAskedLine("meetings")).toContain("meetings");
+  });
+
+  it("still says something for a tool it has never heard of", () => {
+    // A newer server talking to an older companion. Silence would read as Loaf
+    // not noticing at all.
+    const line = claudeAskedLine("some_tool_added_later");
+    expect(line).toContain("Claude");
+    expect(line.length).toBeGreaterThan(0);
+  });
+
+  it("always names Claude, so it is never mistaken for Loaf itself", () => {
+    for (const tool of ["screen_time_today", "top_apps", "meetings", "unknown"]) {
+      expect(claudeAskedLine(tool)).toContain("Claude");
+    }
   });
 });

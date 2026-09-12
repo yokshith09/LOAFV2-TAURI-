@@ -34,6 +34,7 @@ import {
   CONNECTIONS_CSS,
   EMPTY_CONNECTIONS,
   type ConnectionsState,
+  type ClaudeStatus,
 } from "../connections/connections";
 import {
   searchPanel,
@@ -231,6 +232,14 @@ export interface DashboardOptions {
    * asked yet" produce the same page and the same available actions.
    */
   readonly connections?: ConnectionsState;
+  /**
+   * The Claude Desktop link, or undefined until Rust has answered.
+   *
+   * Undefined renders no card at all rather than "not connected": this window
+   * must not state that a connection is absent on the strength of not having
+   * heard yet, which is the same rule the radar and the meetings panel follow.
+   */
+  readonly claude?: ClaudeStatus;
   /**
    * The search box, its results, and the delete and export controls.
    *
@@ -980,6 +989,7 @@ export function dashboardBody(
       connectionsPanel(
         opts.connections ?? EMPTY_CONNECTIONS,
         (opts.now ?? new Date()).getTime(),
+        opts.claude,
       ),
     )}
 

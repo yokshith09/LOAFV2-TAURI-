@@ -602,7 +602,115 @@ function callLog(calls: readonly CallRecord[], now: number): string {
 }
 
 /** The whole tab. */
-export function connectionsPanel(state: ConnectionsState, now: number): string {
+/**
+ * What Rust says about the Claude Desktop link.
+ *
+ * Undefined until it answers, and rendered as nothing rather than as "not
+ * connected" — this window must not state that a connection is absent on the
+ * strength of not having heard yet.
+ */
+export interface ClaudeStatus {
+  readonly installed: boolean;
+  readonly connected: boolean;
+  readonly configPath: string;
+  readonly otherServers: readonly string[];
+  readonly sessionLive: boolean;
+  readonly error: string;
+}
+
+export function isClaudeStatus(value: unknown): value is ClaudeStatus {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v["installed"] === "boolean" &&
+    typeof v["connected"] === "boolean" &&
+    typeof v["configPath"] === "string" &&
+    Array.isArray(v["otherServers"]) &&
+    typeof v["sessionLive"] === "boolean" &&
+    typeof v["error"] === "string"
+  );
+}
+
+/**
+ * The other direction, given its own card because it is a different thing.
+ *
+ * Everything else on this screen is Loaf starting somebody else's program.
+ * This is Claude starting Loaf. People ask for "connect Loaf to Claude" meaning
+ * this one, and the reason it needs saying out loud is that there is no Claude
+ * to connect TO — Claude is not a server.
+ */
+export function claudeCard(status: ClaudeStatus | undefined): string {
+  if (!status) return "";
+
+  const body = (): string => {
+    if (status.error) {
+      return (
+        `<p class="mcp-error">${escapeHTML(status.error)}</p>` +
+        `<p class="mcp-fine">Loaf has changed nothing. That file belongs to ` +
+        `Claude and is left exactly as it is until it can be read.</p>`
+      );
+    }
+    if (!status.installed) {
+      return (
+        `<p class="mcp-empty">Claude Desktop does not look like it is installed ` +
+        `on this computer, so there is nothing to connect to yet.</p>`
+      );
+    }
+    const others =
+      status.otherServers.length > 0
+        ? `<p class="mcp-fine">Claude also has: ` +
+          `${status.otherServers.map((s) => escapeHTML(s)).join(", ")}. ` +
+          `Those are left alone.</p>`
+        : "";
+    if (status.connected) {
+      return (
+        `<p class="mcp-desc">Claude Desktop can ask Loaf about your day. ` +
+        `Loaf only ever answers questions — nothing here lets Claude change ` +
+        `anything.</p>` +
+        others +
+        `<ol class="mcp-steplist"><li>Quit Claude Desktop completely and open ` +
+        `it again. It reads this setting once, at startup.</li>` +
+        `<li>Ask it something like "what have I been working on today?"</li></ol>` +
+        `<div class="mcp-actions">` +
+        `<button class="mcp-btn danger" data-claude-disconnect="1">Disconnect</button>` +
+        `</div>`
+      );
+    }
+    return (
+      `<p class="mcp-desc">Let Claude Desktop ask Loaf about your screen time ` +
+      `and meetings. Loaf answers questions and nothing else: there is no tool ` +
+      `here that writes, resets or deletes anything.</p>` +
+      others +
+      `<p class="mcp-fine">This adds one entry to Claude's settings file and ` +
+      `keeps a copy of the old one first. Your other servers are not touched.</p>` +
+      `<div class="mcp-actions">` +
+      `<button class="mcp-btn primary" data-claude-connect="1">Connect Loaf to Claude</button>` +
+      `</div>`
+    );
+  };
+
+  const badge = status.sessionLive
+    ? `<span class="mcp-live">Claude is attached right now</span>`
+    : status.connected
+      ? `<span class="mcp-state">set up</span>`
+      : `<span class="mcp-state">not set up</span>`;
+
+  return (
+    `<div class="mcp-card mcp-claude">` +
+    `<div class="mcp-card-head"><h3>Claude Desktop</h3>${badge}</div>` +
+    body() +
+    (status.configPath
+      ? `<p class="mcp-fine">Its settings live at <code>${escapeHTML(status.configPath)}</code>.</p>`
+      : "") +
+    `</div>`
+  );
+}
+
+export function connectionsPanel(
+  state: ConnectionsState,
+  now: number,
+  claude?: ClaudeStatus,
+): string {
   // "Could not read the list" and "the list is empty" are different facts, and
   // showing the second when the first is true sends someone off adding a
   // connection they already have.
@@ -617,6 +725,7 @@ export function connectionsPanel(state: ConnectionsState, now: number): string {
   return (
     `<h2>Connections</h2>` +
     disclosure() +
+    claudeCard(claude) +
     list +
     addForm(state.adding, state.pickedCatalog === null ? null : catalogEntry(state.pickedCatalog)) +
     `<button class="mcp-btn" data-mcp-config="1">Open the config file</button>` +
@@ -665,6 +774,8 @@ export const CONNECTIONS_CSS = `
 .mcp-pick-by,.mcp-pick-setup{font-size:11px;opacity:.8}
 .mcp-pick-needs{font-size:11px;opacity:.7;font-style:italic}
 .mcp-pick.chosen{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+.mcp-claude{border-left:3px solid #6b5bd6}
+.mcp-live{font-size:11px;color:#2f8f5b;font-weight:600}
 .mcp-steps{margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
 .mcp-steplist{margin:0;padding-left:18px;font-size:12px;line-height:1.5}
 .mcp-steplist li{margin-bottom:5px}

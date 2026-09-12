@@ -119,6 +119,7 @@ import {
   PromptRotation,
   mayNudge,
   tantrumLine,
+  claudeAskedLine,
   sessionDoneLine,
   closetGreeting,
   renameLine,
@@ -1935,6 +1936,19 @@ const PROUD_SECONDS = 6;
  */
 let mcpBusy = false;
 
+/**
+ * How long Loaf keeps thinking after Claude asks something.
+ *
+ * A tool call is a moment, not a stretch — reading a file and answering takes
+ * milliseconds — so "busy while it happens" would be a flicker nobody could
+ * see. Holding the pose for a few seconds is what the moment actually MEANS to
+ * a person watching: something just used your day.
+ */
+const CLAUDE_THINKING_MS = 5000;
+
+/** When to stop looking busy on Claude's behalf. */
+let claudeThinkingUntil = 0;
+
 function currentMood(): Mood {
   return resolveMood({
     hovering,
@@ -1942,9 +1956,11 @@ function currentMood(): Mood {
     proud: Date.now() < proudUntil,
     scrolling: scrollEnergy.isScrolling,
     typing: typingEnergy.isScrolling,
-    // Either reason to look busy uses the same pose: the foreground app
-    // working hard, or Loaf itself waiting on an MCP call it made.
-    working: workingWatch.busy || mcpBusy,
+    // Every reason to look busy uses the same pose: the foreground app working
+    // hard, Loaf waiting on an MCP call it made, or Claude asking Loaf
+    // something. The third is the only one where the work is somebody else's,
+    // and it still reads correctly — Loaf is occupied on your behalf either way.
+    working: workingWatch.busy || mcpBusy || Date.now() < claudeThinkingUntil,
     override: moodOverride,
     // Told to sleep counts the same as having drifted off, so the ladder stays
     // one ladder — hovering still wakes a face, a tantrum still outranks a nap.
@@ -3831,6 +3847,22 @@ if (hasTauriHost()) {
     mcpBusy = e.payload === true;
   }).catch(() => {
     // The pose just never appears, which is survivable — the call still runs.
+  });
+
+  // THE OTHER DIRECTION: Claude asking Loaf something, rather than Loaf asking
+  // another program. Loaf is the server here, and the copy of Loaf that Claude
+  // started is a different process that cannot reach this one — so this arrives
+  // by way of a small file it writes and `watch_for_claude` polls.
+  //
+  // Both a bubble and the pose. Unlike a call in progress, there IS something
+  // worth saying: someone else is reading your day right now, and that is
+  // exactly the kind of thing this app has always chosen to say out loud rather
+  // than let happen quietly.
+  void listen<string>("loaf://claude/asked", (e) => {
+    claudeThinkingUntil = Date.now() + CLAUDE_THINKING_MS;
+    say({ kind: "speech", text: claudeAskedLine(e.payload), seconds: 5 });
+  }).catch(() => {
+    // Loaf still answers Claude; it just does not visibly notice.
   });
 
   void listen(TASK_COMMAND_EVENT, (e) => applyTaskCommand(e.payload)).catch(() => {
