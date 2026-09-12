@@ -1960,11 +1960,15 @@ function currentMood(): Mood {
     proud: Date.now() < proudUntil,
     scrolling: scrollEnergy.isScrolling,
     typing: typingEnergy.isScrolling,
-    // Every reason to look busy uses the same pose: the foreground app working
-    // hard, Loaf waiting on an MCP call it made, or Claude asking Loaf
-    // something. The third is the only one where the work is somebody else's,
-    // and it still reads correctly — Loaf is occupied on your behalf either way.
-    working: workingWatch.busy || mcpBusy || Date.now() < claudeThinkingUntil,
+    // Claude gets its OWN rung, above typing. Sharing `working` looked right
+    // and never once showed: you are typing to the assistant while it reads
+    // your day, and `typing` outranks `working`, so the bubble appeared and
+    // the character carried on with its keyboard out.
+    claudeThinking: Date.now() < claudeThinkingUntil,
+    // The other two stay where they were. A busy foreground app should not
+    // beat "you are at the keys" — that ordering was a deliberate call and is
+    // still right for the machine grinding away on its own.
+    working: workingWatch.busy || mcpBusy,
     override: moodOverride,
     // Told to sleep counts the same as having drifted off, so the ladder stays
     // one ladder — hovering still wakes a face, a tantrum still outranks a nap.

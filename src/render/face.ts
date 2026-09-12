@@ -123,6 +123,35 @@ export function drawEyes(ctx: Ctx2D, c: Companion, s: SceneState): void {
       break;
     }
 
+    case "thinking": {
+      // THIS ONE MOVES, and that is the requirement rather than a flourish.
+      // `working` below is drawn deliberately still; this is the only outward
+      // sign that something outside Loaf is reading your day, so it has to be
+      // noticed from across a desk at 134 pixels.
+      //
+      // Eyes tracking side to side, the way someone reads something being
+      // handed to them. Slower than a scroll sweep so the two do not look
+      // alike, and the pupils lead the sockets slightly, which is what stops
+      // it reading as a twitch.
+      const sweep = Math.sin(s.phase * 2.1);
+      const lift = 0.8 * k;
+      for (const e of eyes) {
+        const socket = rect(e.x - 4.6 * k, e.y - 6 * k - lift, 9.2 * k, 11 * k);
+        if (p.iris) {
+          fillOval(ctx, socket, p.iris);
+          fillOval(ctx, insetBy(socket, socket.width * 0.28, 0), p.ink);
+        } else {
+          fillOval(ctx, socket, p.ink);
+        }
+        fillOval(
+          ctx,
+          rect(e.x - 1.2 * k + sweep * 2.4 * k, e.y - 1.6 * k - lift, 3.6 * k, 3.6 * k),
+          withAlpha(WHITE, 0.94),
+        );
+      }
+      break;
+    }
+
     case "working": {
       // Waiting, not working. He is not doing the job — your machine is — so
       // this is the face of someone watching a progress bar: eyes wide and

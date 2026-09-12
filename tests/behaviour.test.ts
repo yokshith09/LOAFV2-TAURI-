@@ -336,6 +336,7 @@ describe("the mood ladder", () => {
       override: null,
       scrolling: false,
       typing: false,
+      claudeThinking: false,
       working: false,
       sleeping: false,
       debug: null,
@@ -403,7 +404,7 @@ describe("the machine-aware rungs", () => {
   const ladder2 = (over: Partial<MoodInputs>): Mood =>
     resolveMood({
       hovering: false, tabAlert: false, proud: false, override: null,
-      scrolling: false, typing: false, working: false, sleeping: false,
+      scrolling: false, typing: false, claudeThinking: false, working: false, sleeping: false,
       debug: null, ...over,
     });
 
@@ -428,5 +429,46 @@ describe("the machine-aware rungs", () => {
 
   it("outranks sleeping, because a busy machine is not an idle one", () => {
     expect(ladder2({ working: true, sleeping: true })).toBe("working");
+  });
+});
+
+describe("noticing that an assistant is reading your day", () => {
+  const ladder = (over: Partial<MoodInputs>): Mood =>
+    resolveMood({
+      hovering: false,
+      tabAlert: false,
+      proud: false,
+      override: null,
+      scrolling: false,
+      typing: false,
+      claudeThinking: false,
+      working: false,
+      sleeping: false,
+      debug: null,
+      ...over,
+    });
+
+  it("beats typing, which is the whole reason it is its own rung", () => {
+    // THE BUG. Sharing `working` looked right and never once showed: you are
+    // typing TO the assistant while it reads your day, and typing outranks
+    // working — so the bubble appeared and the character kept its keyboard out.
+    expect(ladder({ claudeThinking: true, typing: true })).toBe("thinking");
+    expect(ladder({ claudeThinking: true, scrolling: true })).toBe("thinking");
+    expect(ladder({ claudeThinking: true, working: true })).toBe("thinking");
+  });
+
+  it("still yields to the things that are about you", () => {
+    // Petting, a tantrum and the finished-job face all outrank it. Someone
+    // else's assistant is not more important than the person at the desk.
+    expect(ladder({ claudeThinking: true, hovering: true })).toBe("happy");
+    expect(ladder({ claudeThinking: true, tabAlert: true })).toBe("tantrum");
+    expect(ladder({ claudeThinking: true, proud: true })).toBe("proud");
+  });
+
+  it("leaves the busy-machine face exactly where it was", () => {
+    // That ordering was a deliberate call and is still right: a build grinding
+    // away should not beat "you are at the keys".
+    expect(ladder({ working: true, typing: true })).toBe("typing");
+    expect(ladder({ working: true })).toBe("working");
   });
 });

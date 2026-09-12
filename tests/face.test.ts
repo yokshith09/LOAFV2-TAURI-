@@ -159,3 +159,37 @@ describe("drawFurSpikes", () => {
     expect(ctx.bounds().maxY).toBeLessThanOrEqual(head.y + head.height + 9.6);
   });
 });
+
+describe("the face that says somebody else is reading your day", () => {
+  it("is not the waiting face, which is drawn deliberately still", () => {
+    // They were the same pose until it turned out nobody could see it. The
+    // waiting face is motionless on purpose — a busy face beside a busy
+    // computer is two things competing for attention — and that is exactly
+    // the wrong choice for the one signal you cannot otherwise notice.
+    expect(eyesFor("thinking").signature()).not.toBe(eyesFor("working").signature());
+    expect(eyesFor("thinking").signature()).not.toBe(eyesFor("typing").signature());
+    expect(eyesFor("thinking").signature()).not.toBe(eyesFor("idle").signature());
+  });
+
+  it("actually MOVES, which the waiting face does not", () => {
+    // The requirement, stated plainly: it has to animate. Four points spread
+    // across the cycle; a still pose gives the same drawing at every one.
+    const frames = [0, 0.4, 0.8, 1.2].map((phase) => eyesFor("thinking", { phase }).signature());
+    expect(new Set(frames).size).toBeGreaterThan(1);
+
+    // The contrast that makes the point: the waiting face is identical at the
+    // same four moments.
+    const still = [0, 0.4, 0.8, 1.2].map((phase) => eyesFor("working", { phase }).signature());
+    expect(new Set(still).size).toBe(1);
+  });
+
+  it("sweeps sideways rather than jittering in place", () => {
+    // Pupils track across, the way someone reads a page handed to them. If the
+    // horizontal extent never changed it would read as a twitch.
+    const lefts = [0.2, 0.9].map((phase) => {
+      const ctx = eyesFor("thinking", { phase });
+      return ctx.signature();
+    });
+    expect(lefts[0]).not.toBe(lefts[1]);
+  });
+});

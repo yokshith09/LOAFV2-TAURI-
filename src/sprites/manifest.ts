@@ -168,6 +168,8 @@ const FALLBACKS: Readonly<Record<string, readonly string[]>> = {
   // its idle, not a blank frame.
   typing: ["scrolling", "idle"],
   working: ["idle"],
+  // A pack drawn before this existed gets its waiting face, then its idle.
+  thinking: ["working", "idle"],
 };
 
 const MOODS: readonly Mood[] = [
@@ -178,6 +180,7 @@ const MOODS: readonly Mood[] = [
   "scrolling",
   "typing",
   "working",
+  "thinking",
   "tantrum",
   "proud",
 ];

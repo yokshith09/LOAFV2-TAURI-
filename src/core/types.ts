@@ -34,6 +34,16 @@ export type Mood =
   /** You're typing, so he gets a keyboard out. The sibling of `scrolling`. */
   | "typing"
   /**
+   * Somebody else's assistant is reading your day right now.
+   *
+   * SEPARATE FROM `working`, and the difference is the point. `working` is the
+   * face of waiting on your own machine, and it is drawn deliberately STILL —
+   * a busy face next to a busy computer is two things competing for attention.
+   * This one has to be noticed: it is the only outward sign that something
+   * outside Loaf just reached into your history, so it moves.
+   */
+  | "thinking"
+  /**
    * Your machine is busy — a build, a render, a model thinking.
    *
    * Not a mood about you. He is waiting alongside you, which is the whole
@@ -53,6 +63,7 @@ export const ALL_MOODS: readonly Mood[] = [
   "scrolling",
   "typing",
   "working",
+  "thinking",
   "tantrum",
   "proud",
 ] as const;
