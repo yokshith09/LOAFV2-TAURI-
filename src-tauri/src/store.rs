@@ -268,6 +268,32 @@ pub fn import_stats(conn: &Connection, json: &str) -> Result<usize, String> {
     Ok(read)
 }
 
+/// Turn whatever the frontend sent into SECONDS since the epoch.
+///
+/// The columns here are queried with `date(started_at, 'unixepoch')`, which
+/// means seconds. The frontend stores JavaScript time, which means
+/// milliseconds — `Sample.at` says so in as many words — and this function used
+/// to write it through untouched.
+///
+/// Two things broke quietly as a result. `whenSaid` in the search panel
+/// computed a wildly negative age and labelled EVERY result "just now"; and
+/// `preview_range`/`delete_range`, comparing a millisecond value against a date
+/// built from `unixepoch`, matched nothing — so "forget everything between
+/// these dates" reported zero transcripts and deleted zero, which is the worst
+/// possible way for a delete to fail.
+///
+/// Detected by magnitude rather than by trusting the caller: 1e11 seconds is
+/// the year 5138, so anything larger is milliseconds. That keeps rows written
+/// by older builds, which really were seconds, readable.
+fn epoch_seconds(raw: i64) -> i64 {
+    const MILLISECOND_THRESHOLD: i64 = 100_000_000_000;
+    if raw.abs() >= MILLISECOND_THRESHOLD {
+        raw / 1000
+    } else {
+        raw
+    }
+}
+
 /// Bring the meetings and their transcripts in from `meetings.json`.
 pub fn import_meetings(conn: &Connection, json: &str) -> Result<usize, String> {
     let Ok(raw) = serde_json::from_str::<serde_json::Value>(json) else {
@@ -291,7 +317,7 @@ pub fn import_meetings(conn: &Connection, json: &str) -> Result<usize, String> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let started = m.get("startedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+        let started = epoch_seconds(m.get("startedAt").and_then(|v| v.as_i64()).unwrap_or(0));
         let seconds = m.get("seconds").and_then(|v| v.as_i64()).unwrap_or(0);
 
         conn.execute(
@@ -697,6 +723,32 @@ mod tests {
         .unwrap();
         add_line(&c, None, 1_700_000_500, "remember to email the invoice").unwrap();
         c
+    }
+
+    #[test]
+    fn milliseconds_from_the_frontend_become_seconds() {
+        // The frontend stores JavaScript time. These columns are queried with
+        // `unixepoch`, which is seconds. Writing one through as the other made
+        // every search result say "just now" and made range deletes match
+        // nothing at all.
+        let ms = 1_789_200_000_000_i64; // a real moment, in milliseconds
+        assert_eq!(epoch_seconds(ms), 1_789_200_000);
+    }
+
+    #[test]
+    fn a_value_already_in_seconds_is_left_alone() {
+        // Rows written by older builds really were seconds, and dividing those
+        // again would file them in 1970.
+        assert_eq!(epoch_seconds(1_789_200_000), 1_789_200_000);
+        assert_eq!(epoch_seconds(0), 0);
+    }
+
+    #[test]
+    fn the_boundary_is_far_from_any_real_date() {
+        // 1e11 seconds is the year 5138 and 1e11 milliseconds is 1973, so no
+        // plausible timestamp sits near the line where the guess flips.
+        assert_eq!(epoch_seconds(99_999_999_999), 99_999_999_999);
+        assert_eq!(epoch_seconds(100_000_000_000), 100_000_000);
     }
 
     #[test]

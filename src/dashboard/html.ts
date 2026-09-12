@@ -15,7 +15,7 @@ import {
   type MemorySnapshot,
   type NoteView,
 } from "./events";
-import { NOTE_COLOURS, type NoteColour } from "../tasks/tasks";
+import { NOTE_COLOURS, PRIORITY_LABELS, type NoteColour } from "../tasks/tasks";
 import {
   listenRow,
   holdRow,
@@ -31,6 +31,7 @@ import type { ClosetState } from "../closet/settings";
 import { RETENTION_CHOICES, KEEP_FOREVER, retentionLabel } from "../meetings/meetings";
 import {
   connectionsPanel,
+  relativeWhen,
   CONNECTIONS_CSS,
   EMPTY_CONNECTIONS,
   type ConnectionsState,
@@ -254,8 +255,32 @@ export interface DashboardOptions {
 export interface TaskView {
   readonly title: string;
   readonly priority: "now" | "soon" | "whenever";
-  /** Minutes until its timer, rounded, or null when it has none. */
-  readonly minutesLeft: number | null;
+  /** When its timer goes off, in epoch milliseconds, or null for no timer. */
+  readonly dueAt: number | null;
+}
+
+/**
+ * A countdown, worked out at the moment it is drawn.
+ *
+ * COMPUTED HERE rather than sent, because a number computed when the list last
+ * changed is a number that stops moving. A 45-minute reminder read "45m" for
+ * the whole 45 minutes and then disappeared.
+ *
+ * `ceil`, not `round`: with rounding, ninety seconds left showed "2m" and the
+ * final twenty-nine seconds showed "0m". A countdown should only reach zero
+ * when the time is actually up.
+ *
+ * Overdue says so. It used to be clamped to `0m`, which collapsed three
+ * different states — due imminently, due right now, and long overdue and never
+ * cleared — into one string that looked like a stuck timer.
+ */
+export function countdown(dueAt: number | null, now: number): string {
+  if (dueAt === null || !Number.isFinite(dueAt)) return "";
+  const minutes = Math.ceil((dueAt - now) / 60_000);
+  if (minutes > 0) return `${minutes}m`;
+  if (minutes === 0) return "now";
+  const over = Math.abs(minutes);
+  return over >= 60 ? `${Math.floor(over / 60)}h late` : `${over}m late`;
 }
 
 // --- Escaping ----------------------------------------------------------------
@@ -468,14 +493,12 @@ function noticedBlock(tracker: Tracker, opts: DashboardOptions): string {
  * Renders nothing when there is nothing outstanding — a heading over an empty
  * list is a reproach, and this feature is not for that.
  */
-function taskBlock(tasks: readonly TaskView[]): string {
+function taskBlock(tasks: readonly TaskView[], now: number): string {
   if (tasks.length === 0) return "";
   const rows = tasks
     .map((t) => {
-      const timer =
-        t.minutesLeft === null
-          ? ""
-          : `<span class="task-timer">${t.minutesLeft}m</span>`;
+      const left = countdown(t.dueAt, now);
+      const timer = left === "" ? "" : `<span class="task-timer">${left}</span>`;
       return (
         `<div class="task-row"><span class="task-dot p-${t.priority}"></span>` +
         `<span class="task-title">${escapeHTML(t.title)}</span>${timer}</div>`
@@ -548,16 +571,14 @@ export function tidyTabTitle(raw: string): string {
   return raw.trim();
 }
 
-function taskPanel(tasks: readonly TaskView[]): string {
+function taskPanel(tasks: readonly TaskView[], now: number): string {
   const rows =
     tasks.length === 0
       ? `<p class="empty">Nothing on the list.</p>`
       : tasks
           .map((t, i) => {
-            const timer =
-              t.minutesLeft === null
-                ? ""
-                : `<span class="tp-timer">${t.minutesLeft}m</span>`;
+            const left = countdown(t.dueAt, now);
+            const timer = left === "" ? "" : `<span class="tp-timer">${left}</span>`;
             return (
               `<div class="tp-row">` +
               `<button class="tp-tick" data-loaf-task="done:${i}" title="Mark done">✓</button>` +
@@ -947,7 +968,7 @@ export function dashboardBody(
       <h2>By app</h2>
       ${rows}${emptyState}
       <h2>What you meant to do</h2>
-      ${taskPanel(opts.tasks ?? [])}
+      ${taskPanel(opts.tasks ?? [], (opts.now ?? new Date()).getTime())}
       ${tabPanel(opts.tabs ?? [], opts.tabsRead ?? false)}`,
     )}
 
@@ -974,7 +995,13 @@ export function dashboardBody(
 
     ${panel(
       "notes",
-      notesPanel(opts.notes ?? [], opts.memory, opts.notesFilter ?? null, opts.notesEditing ?? null),
+      notesPanel(
+        opts.notes ?? [],
+        opts.memory,
+        opts.notesFilter ?? null,
+        opts.notesEditing ?? null,
+        (opts.now ?? new Date()).getTime(),
+      ),
     )}
 
     ${panel("meetings", meetingsPanel(opts))}
@@ -1158,8 +1185,12 @@ function labelsOnTheWall(notes: readonly NoteView[]): string[] {
 }
 
 /** One card's worth of markup, closed — the face every note shows by default. */
-function noteCardClosed(n: NoteView): string {
-  const timer = n.minutesLeft === null ? "" : `<span class="nt-timer">${n.minutesLeft}m</span>`;
+function noteCardClosed(n: NoteView, now: number): string {
+  const left = countdown(n.dueAt, now);
+  const timer = left === "" ? "" : `<span class="nt-timer">${left}</span>`;
+  // The wall is ordered by this and could not show it, so the order looked
+  // arbitrary. `relativeWhen` already handles plurals and clamps a future time.
+  const edited = `<span class="nt-when">${escapeHTML(relativeWhen(Math.floor(n.updatedAt / 1000), now))}</span>`;
   // Long enough to need room to breathe rather than sitting the same height as
   // "buy milk". Judged on the body now, not the title: the title is capped at
   // 80 characters same as ever, so a transcript's length lives in the body.
@@ -1194,7 +1225,16 @@ function noteCardClosed(n: NoteView): string {
     body +
     chips +
     `<div class="nt-foot">` +
-    `<span class="nt-pri">${escapeHTML(n.priority)}</span>${timer}` +
+    // ONLY when it is urgent, and never the storage key. Every card used to be
+    // stamped with an uppercased `n.priority` — so a note that had simply been
+    // typed, and had never claimed any urgency, read SOON, because "soon" is
+    // the silent default in four separate places. Worse, the wall does not even
+    // sort by priority (it sorts by when a note was touched), so the word was
+    // asserting an order the page did not keep. `PRIORITY_LABELS` existed for
+    // this the whole time and nothing but a test ever imported it.
+    (n.priority === "now" ? `<span class="nt-pri">${PRIORITY_LABELS.now}</span>` : "") +
+    edited +
+    timer +
     `<span class="nt-acts">` +
     `<button class="nt-btn" data-loaf-task="note-done:${escapeHTML(n.id)}" ` +
     `title="${n.done ? "Put back" : "Archive"}">${n.done ? "↺" : "✓"}</button>` +
@@ -1281,6 +1321,7 @@ function notesPanel(
   memory: MemorySnapshot | undefined,
   filter: string | null,
   editingId: string | null,
+  now: number,
 ): string {
   const compose = `<div class="nt-compose">
     <input id="nt-title" class="nt-input nt-title-input" maxlength="${MAX_TITLE_LENGTH_FOR_NOTES}"
@@ -1337,7 +1378,7 @@ function notesPanel(
       : "";
 
   const cards = shown
-    .map((n) => (n.id === editingId ? noteCardOpen(n) : noteCardClosed(n)))
+    .map((n) => (n.id === editingId ? noteCardOpen(n) : noteCardClosed(n, now)))
     .join("");
 
   return `<h2>Notes</h2>${compose}${filterStrip}
@@ -1526,7 +1567,7 @@ export function miniBody(
   const emptyState =
     apps.length === 0 ? `<p class="empty">Nothing yet today.</p>` : "";
 
-  let extra = taskBlock(opts.tasks ?? []);
+  let extra = taskBlock(opts.tasks ?? [], (opts.now ?? new Date()).getTime());
   const top = tracker.todaySitesMerged()[0];
   if (top) {
     extra +=

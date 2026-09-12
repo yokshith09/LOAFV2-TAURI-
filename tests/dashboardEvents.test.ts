@@ -157,7 +157,8 @@ describe("NoteView, the Notes wall's broadcast", () => {
     pinned: false,
     done: false,
     labels: [],
-    minutesLeft: null,
+    dueAt: null,
+    updatedAt: 1_789_200_000_000,
     ...over,
   });
 
@@ -174,9 +175,17 @@ describe("NoteView, the Notes wall's broadcast", () => {
     }
   });
 
-  it("accepts a timer or none", () => {
-    expect(isNoteView(note({ minutesLeft: 5 }))).toBe(true);
-    expect(isNoteView(note({ minutesLeft: null }))).toBe(true);
+  it("accepts a deadline or none", () => {
+    expect(isNoteView(note({ dueAt: 1_789_200_000_000 }))).toBe(true);
+    expect(isNoteView(note({ dueAt: null }))).toBe(true);
+  });
+
+  it("refuses a time that is not a real number", () => {
+    // `typeof NaN === "number"`, so the old check let it through and the card
+    // rendered whatever NaN arithmetic produced.
+    expect(isNoteView(note({ dueAt: NaN }))).toBe(false);
+    expect(isNoteView(note({ updatedAt: NaN }))).toBe(false);
+    expect(isNoteView(note({ updatedAt: Infinity }))).toBe(false);
   });
 
   it("refuses a colour outside the fixed palette", () => {

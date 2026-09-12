@@ -57,7 +57,7 @@ export type BubblePayload =
       readonly tasks?: ReadonlyArray<{
         readonly title: string;
         readonly priority: string;
-        readonly minutesLeft: number | null;
+        readonly dueAt: number | null;
       }>;
       readonly seconds?: number;
     };

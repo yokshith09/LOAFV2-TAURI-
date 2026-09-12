@@ -153,25 +153,6 @@ fn install_model(data_dir: &Path, mut on_progress: impl FnMut(Progress)) -> Resu
     fetch(MODEL_URL, MODEL_BYTES, &dest, "model", &mut on_progress)
 }
 
-/// Fetch and install both pieces. Reports progress for each in turn.
-///
-/// Deliberately not parallel: these are two large sequential downloads run
-/// from a UI showing one progress bar, and interleaving their progress would
-/// make that bar move backwards.
-/// Fetch and install the engine.
-///
-/// WINDOWS ONLY FOR NOW, AND IT SAYS SO RATHER THAN TRYING. The release
-/// fetched here is `whisper-bin-x64.zip` — Windows executables and Windows
-/// DLLs. Pulling two hundred megabytes of those onto a Mac and then reporting
-/// the engine as installed would be worse than not offering it: every later
-/// failure would look like a bug in transcription rather than a platform that
-/// was never wired up.
-///
-/// The guard is a runtime check inside one function rather than two `cfg`
-/// bodies, because everything it calls — the download, the unzip, the size
-/// checks — is ordinary cross-platform Rust. Splitting the function turned all
-/// of that into dead code on macOS, which is a clippy failure and, more to the
-/// point, two versions of a function to keep in step.
 /// Fetch what Whisper still needs, which is now only the model.
 ///
 /// THE WINDOWS-ONLY GUARD IS GONE, and that is the whole point of the change

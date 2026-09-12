@@ -133,6 +133,33 @@ describe("naming a browser to the platform", () => {
     expect(runningIdFor(FIREFOX, "windows")).toBe("firefox.exe");
   });
 
+  it("recognises what the macOS probe ACTUALLY returns", () => {
+    // MacProbe::foreground_app asks System Events for `name`, so the frontmost
+    // browser arrives as its process name — not a bundle id, whatever the old
+    // comment claimed. Failing to match it meant `frontmost` was null for every
+    // browser on a Mac, which silently cost per-site seconds and every meeting
+    // held in a browser tab.
+    expect(browserFor("Google Chrome")?.bundleId).toBe("com.google.Chrome");
+    expect(browserFor("Safari")?.bundleId).toBe("com.apple.Safari");
+    expect(browserFor("Brave Browser")?.bundleId).toBe("com.brave.Browser");
+    expect(browserFor("firefox")?.bundleId).toBe("org.mozilla.firefox");
+  });
+
+  it("matches every process name the mac probe could hand back", () => {
+    // The round trip that was missing: the other test checks the id Loaf SENDS,
+    // which is not the string the platform sends back.
+    for (const { browser } of browsersToAskAbout("macos")) {
+      const asMacReportsIt = runningIdFor(browser, "macos");
+      expect(browserFor(asMacReportsIt)?.bundleId, asMacReportsIt).toBe(browser.bundleId);
+    }
+  });
+
+  it("is not fooled by an app that merely sounds like a browser", () => {
+    expect(browserFor("Chrome Remote Desktop")).toBeNull();
+    expect(browserFor("Safari Books")).toBeNull();
+    expect(browserFor("")).toBeNull();
+  });
+
   it("every browser it asks about can be identified from the answer", () => {
     // The round trip that matters: the id sent to the platform has to come back
     // recognisable, or a browser is found running and then dropped on the floor.

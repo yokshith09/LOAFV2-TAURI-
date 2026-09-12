@@ -109,7 +109,7 @@ let version = "";
  * Held rather than read: this window renders what it is told, and the
  * notetaker's storage belongs to the companion like everything else with state.
  */
-let tasks: Array<{ title: string; priority: string; minutesLeft: number | null }> = [];
+let tasks: Array<{ title: string; priority: string; dueAt: number | null }> = [];
 
 /**
  * Every note, in full — the companion's last broadcast on `NOTES_CHANGED_EVENT`.

@@ -655,22 +655,62 @@ describe("tasks on the hover card", () => {
 
   it("shows a task with its priority", () => {
     const html = miniDashboardHTML(tracker(), {
-      tasks: [{ title: "write the spec", priority: "now", minutesLeft: null }],
+      tasks: [{ title: "write the spec", priority: "now", dueAt: null }],
     });
     expect(html).toContain("write the spec");
     expect(html).toContain("p-now");
   });
 
   it("shows a timer when there is one", () => {
+    const now = new Date("2026-09-12T10:00:00Z");
     const html = miniDashboardHTML(tracker(), {
-      tasks: [{ title: "bread", priority: "soon", minutesLeft: 12 }],
+      now,
+      tasks: [{ title: "bread", priority: "soon", dueAt: now.getTime() + 12 * 60_000 }],
     });
     expect(html).toContain("12m");
   });
 
+  it("counts DOWN, instead of freezing at the number it was sent", () => {
+    // The bug: minutesLeft was computed once when the list changed and shipped
+    // as a plain number, so a 45-minute reminder read "45m" for the whole 45
+    // minutes and then vanished. Same task, two moments, two answers.
+    const due = new Date("2026-09-12T11:00:00Z").getTime();
+    const task = { title: "bread", priority: "soon", dueAt: due } as const;
+    const early = miniDashboardHTML(tracker(), { now: new Date(due - 45 * 60_000), tasks: [task] });
+    const late = miniDashboardHTML(tracker(), { now: new Date(due - 5 * 60_000), tasks: [task] });
+    expect(early).toContain("45m");
+    expect(late).toContain("5m");
+    expect(late).not.toContain("45m");
+  });
+
+  it("says a missed task is late rather than showing a stuck 0m", () => {
+    // Three states used to collapse into "0m": due in seconds, due now, and
+    // long overdue with the timer never cleared.
+    const due = new Date("2026-09-12T11:00:00Z").getTime();
+    const html = miniDashboardHTML(tracker(), {
+      now: new Date(due + 20 * 60_000),
+      tasks: [{ title: "bread", priority: "now", dueAt: due }],
+    });
+    expect(html).toContain("20m late");
+    // Precisely: no timer whose whole content is "0m". A plain substring check
+    // would match the "0m" inside "20m late".
+    expect(html).not.toMatch(/>0m</);
+  });
+
+  it("only reaches zero when the time is actually up", () => {
+    // `round` showed "2m" with ninety seconds left and "0m" for the final
+    // twenty-nine. A countdown should hold 1m until the minute is gone.
+    const due = new Date("2026-09-12T11:00:00Z").getTime();
+    const html = miniDashboardHTML(tracker(), {
+      now: new Date(due - 20_000),
+      tasks: [{ title: "bread", priority: "now", dueAt: due }],
+    });
+    expect(html).toContain("1m");
+  });
+
   it("escapes the title, like every other value on the page", () => {
     const html = miniDashboardHTML(tracker(), {
-      tasks: [{ title: '<script>x</script>', priority: "soon", minutesLeft: null }],
+      tasks: [{ title: '<script>x</script>', priority: "soon", dueAt: null }],
     });
     expect(html).not.toContain("<script>x</script>");
   });
@@ -918,7 +958,8 @@ describe("the notes board", () => {
     pinned: false,
     done: false,
     labels: [],
-    minutesLeft: null,
+    dueAt: null,
+    updatedAt: 1_789_200_000_000,
     ...over,
   });
 

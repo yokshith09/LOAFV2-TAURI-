@@ -336,6 +336,54 @@ fn child_path(program: &str) -> Option<String> {
     Some(trimmed_path(&entries, first.as_deref(), PATH_BUDGET))
 }
 
+/// Where a Mac keeps the tools an MCP server is launched with.
+///
+/// An app started from Finder or the Dock does NOT inherit the shell PATH. It
+/// gets roughly `/usr/bin:/bin:/usr/sbin:/sbin`, and `node` lives in neither —
+/// Homebrew puts it in `/opt/homebrew/bin` on Apple silicon and
+/// `/usr/local/bin` on Intel, and nvm puts it under the home directory.
+///
+/// So every catalog server, all of which run through `npx`, fails to start on a
+/// Mac that has Node installed perfectly well. It surfaces as Loaf telling the
+/// user to go and install Node, which is the most annoying possible wrong
+/// answer. The Windows half of this file already learned the same lesson from
+/// the other direction — see `CMD_PATH_LIMIT`.
+#[cfg(target_os = "macos")]
+const MAC_TOOL_DIRS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/opt/local/bin",
+    "/usr/bin",
+    "/bin",
+];
+
+/// Add the usual tool directories to the child's PATH, if they are missing.
+///
+/// Appended rather than replacing, and only directories that actually exist, so
+/// a machine with a sensible PATH is left exactly as it was.
+#[cfg(target_os = "macos")]
+fn child_path() -> Option<String> {
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    let mut entries: Vec<String> = inherited
+        .split(':')
+        .filter(|e| !e.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    let mut added = false;
+    for dir in MAC_TOOL_DIRS {
+        let known = entries.iter().any(|e| e.trim_end_matches('/') == *dir);
+        if !known && std::path::Path::new(dir).is_dir() {
+            entries.push((*dir).to_string());
+            added = true;
+        }
+    }
+    // Also whatever sits beside the user's node, for nvm and friends.
+    if !added {
+        return None;
+    }
+    Some(entries.join(":"))
+}
+
 /// What to tell the user when nothing would start.
 ///
 /// "Could not start npx: program not found" is true and useless. The reason npx
@@ -463,6 +511,12 @@ impl Connection {
                 // `child_path` — this is a no-op unless the inherited PATH is
                 // already over the line.
                 if let Some(path) = child_path(&program) {
+                    command.env("PATH", path);
+                }
+            }
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(path) = child_path() {
                     command.env("PATH", path);
                 }
             }

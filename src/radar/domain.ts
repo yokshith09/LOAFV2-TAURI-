@@ -106,9 +106,18 @@ export function browsersToAskAbout(os: string): readonly { browser: KnownBrowser
 /**
  * Identify a browser from whatever the platform probe reported as `raw`.
  *
- * macOS gives a bundle identifier, Windows an executable path. Matched
- * case-insensitively and on the trailing filename, because the same browser
- * arrives as a full path on one platform and an identifier on the other.
+ * THREE SPELLINGS, because three different things call this with three
+ * different names for the same browser. Windows gives a full executable path.
+ * Loaf's own code passes a bundle identifier. And macOS — despite what this
+ * comment used to claim — gives the **process name**: `MacProbe::foreground_app`
+ * asks System Events for `name`, so the frontmost browser arrives as
+ * "Google Chrome", which matches neither of the other two.
+ *
+ * That omission was not cosmetic. It made `browserFor` return null for every
+ * browser on macOS, so the frontmost app was never recognised as one — and with
+ * it went per-site seconds (credited only to the browser in front) and every
+ * meeting held in a browser tab, both of which simply never happened on a Mac.
+ * Matched case-insensitively, and on the trailing filename for the path case.
  */
 export function browserFor(raw: string): KnownBrowser | null {
   const needle = raw.trim().toLowerCase();
@@ -116,7 +125,10 @@ export function browserFor(raw: string): KnownBrowser | null {
   const leaf = needle.split(/[\\/]/).pop() ?? needle;
   return (
     KNOWN_BROWSERS.find(
-      (b) => b.bundleId.toLowerCase() === needle || (b.exe !== undefined && b.exe === leaf),
+      (b) =>
+        b.bundleId.toLowerCase() === needle ||
+        (b.exe !== undefined && b.exe === leaf) ||
+        (b.proc ?? b.displayName).toLowerCase() === needle,
     ) ?? null
   );
 }

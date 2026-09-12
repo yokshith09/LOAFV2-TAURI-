@@ -265,7 +265,10 @@ export interface NoteView {
   readonly done: boolean;
   readonly labels: readonly string[];
   /** Minutes until its timer, rounded, or null when it has none. */
-  readonly minutesLeft: number | null;
+  /** When its timer goes off, epoch milliseconds, or null for no timer. */
+  readonly dueAt: number | null;
+  /** When the note was last touched. The wall is sorted by this. */
+  readonly updatedAt: number;
 }
 
 /**
@@ -289,7 +292,9 @@ export function isNoteView(v: unknown): v is NoteView {
     typeof n.done === "boolean" &&
     Array.isArray(n.labels) &&
     n.labels.every((l) => typeof l === "string") &&
-    (n.minutesLeft === null || typeof n.minutesLeft === "number")
+    (n.dueAt === null || (typeof n.dueAt === "number" && Number.isFinite(n.dueAt))) &&
+    typeof n.updatedAt === "number" &&
+    Number.isFinite(n.updatedAt)
   );
 }
 

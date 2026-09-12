@@ -1777,13 +1777,15 @@ const tasks = new TaskList(browserStore());
  * Built from `visible()` so both surfaces agree, and the index a click comes
  * back with means the same thing in both directions.
  */
-function taskViews(): Array<{ title: string; priority: Priority; minutesLeft: number | null }> {
-  const now = Date.now();
+function taskViews(): Array<{ title: string; priority: Priority; dueAt: number | null }> {
   return tasks.visible().map((t) => ({
     title: t.title,
     priority: t.priority,
-    minutesLeft:
-      t.dueAt === null ? null : Math.max(0, Math.round((t.dueAt - now) / 60_000)),
+    // THE DEADLINE, not how far away it was when this was built. These views
+    // are broadcast only when the LIST changes, so a computed "45m" sat frozen
+    // on screen for the whole three quarters of an hour and then vanished. An
+    // absolute time cannot go stale, and two windows cannot disagree about it.
+    dueAt: t.dueAt,
   }));
 }
 
@@ -1796,7 +1798,6 @@ function taskViews(): Array<{ title: string; priority: Priority; minutesLeft: nu
  * wall that only ever shows three cards is the bug this rebuild exists to fix.
  */
 function noteViews(): NoteView[] {
-  const now = Date.now();
   return tasks.wall().map((t) => ({
     id: t.id,
     title: t.title,
@@ -1806,8 +1807,10 @@ function noteViews(): NoteView[] {
     pinned: t.pinned,
     done: t.done,
     labels: t.labels,
-    minutesLeft:
-      t.dueAt === null ? null : Math.max(0, Math.round((t.dueAt - now) / 60_000)),
+    dueAt: t.dueAt,
+    // Sent so a card can say when it was last touched. The wall is SORTED by
+    // this and could not show it, so the order looked arbitrary.
+    updatedAt: t.updatedAt,
   }));
 }
 
@@ -3934,8 +3937,12 @@ setInterval(() => {
     secondsSinceScroll = s;
   });
 }, SCROLL_POLL_MS);
+// The clock moves even when the list does not. Views carry absolute times now,
+// so this exists only to make the dashboard repaint them — without it a
+// countdown is correct at the moment it is sent and wrong a minute later.
 setInterval(() => {
-}, 5000);
+  announceTasks();
+}, 30_000);
 requestAnimationFrame(frame);
 
 // The durable copy of what Loaf remembers, adopted a moment after launch.

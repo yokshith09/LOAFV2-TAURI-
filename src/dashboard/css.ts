@@ -497,6 +497,7 @@ export const NOTES_CSS = `
   .nt-chip-x:hover { color:var(--ink); }
   .nt-foot { display:flex; align-items:center; gap:8px; margin-top:9px;
     padding-top:8px; border-top:1px solid var(--edge); }
+  .nt-when { font-size:9.5px; opacity:.55; margin-left:auto }
   .nt-pri { font-size:9.5px; text-transform:uppercase; letter-spacing:.08em;
     color:var(--ink-soft); font-weight:700; }
   .nt-timer { font-size:11px; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
