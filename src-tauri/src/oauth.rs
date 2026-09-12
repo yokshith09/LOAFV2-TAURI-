@@ -1192,6 +1192,50 @@ mod tests {
         assert_eq!(form(&[("u", "a/b&c=d")]), "u=a%2Fb%26c%3Dd");
     }
 
+    /// The discovery half, against a provider that really requires a sign-in.
+    ///
+    ///     cargo test -- --ignored --nocapture discovers_a_real_provider
+    ///
+    /// Ignored because it needs a network. It signs in to NOTHING and needs no
+    /// account: every document it reads is public, and it stops at the point
+    /// where a browser would open. That is deliberate — the rest of the flow
+    /// cannot be tested without somebody's real credentials, and this covers
+    /// everything up to it.
+    ///
+    /// Notion is used because it is a hosted MCP server that actually
+    /// challenges, and because it spells the well-known path the awkward way
+    /// round — `/.well-known/oauth-protected-resource/mcp` — which is precisely
+    /// the detail `protected_resource_urls` exists to get right.
+    #[test]
+    #[ignore]
+    fn discovers_a_real_provider() {
+        let agent = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(20))
+            .build();
+        let url = "https://mcp.notion.com/mcp";
+
+        let challenge = challenge_for(&agent, url);
+        println!("challenge: {challenge:?}");
+        let header = challenge.expect("a protected server should challenge");
+        assert!(
+            resource_metadata_url(&header).is_some(),
+            "could not read the metadata address out of: {header}"
+        );
+
+        let server = discover(&agent, url, Some(&header)).expect("discovery");
+        println!("authorize: {}", server.authorization_endpoint);
+        println!("token:     {}", server.token_endpoint);
+        println!("register:  {}", server.registration_endpoint);
+        assert!(server.authorization_endpoint.starts_with("https://"));
+        assert!(server.token_endpoint.starts_with("https://"));
+        // Without this, Loaf cannot sign in to a provider it has never met,
+        // which is the whole reason registration is part of the flow.
+        assert!(
+            !server.registration_endpoint.is_empty(),
+            "this provider does not allow programs to register themselves"
+        );
+    }
+
     #[test]
     fn the_landing_page_says_to_go_back_to_loaf() {
         // A blank tab reads as a failure even when everything worked.
