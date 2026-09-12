@@ -6,7 +6,7 @@ import {
   WORKING_LEAVE_SECONDS,
   WORTH_MENTIONING_SECONDS,
 } from "../src/behaviour/working";
-import { claudeAskedLine } from "../src/bubble/prompts";
+import { claudeAskedLine, claudeDoneLine } from "../src/bubble/prompts";
 
 /**
  * Feed a constant reading for a number of seconds, one tick per 0.5s.
@@ -139,5 +139,20 @@ describe("what Loaf says when Claude asks it something", () => {
     for (const tool of ["screen_time_today", "top_apps", "meetings", "unknown"]) {
       expect(claudeAskedLine(tool)).toContain("Claude");
     }
+  });
+});
+
+describe("what Loaf says when Claude finishes", () => {
+  it("always names Claude and never repeats forever", () => {
+    // This fires after every piece of work, so one fixed sentence becomes
+    // wallpaper within a day.
+    const lines = new Set<string>();
+    for (let t = 0; t < 8000; t += 1000) lines.add(claudeDoneLine(t));
+    expect(lines.size).toBeGreaterThan(1);
+    for (const line of lines) expect(line).toContain("Claude");
+  });
+
+  it("is stable within the same second, so a re-render does not reword it", () => {
+    expect(claudeDoneLine(5_000)).toBe(claudeDoneLine(5_400));
   });
 });

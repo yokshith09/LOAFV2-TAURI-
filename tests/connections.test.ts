@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { CATALOG, MANUAL_ONLY, catalogEntry, commandLineOf } from "../src/connections/catalog";
+import {
+  CATALOG,
+  MANUAL_ONLY,
+  catalogEntry,
+  commandLineOf,
+  isHosted,
+} from "../src/connections/catalog";
 import {
   connectionsPanel,
   parseArgs,
@@ -43,7 +49,12 @@ describe("what the panel says before anything is connected", () => {
   // test ever has to be deleted, the feature has changed shape.
   it("explains what connecting means even when nothing is connected", () => {
     const html = connectionsPanel(EMPTY_CONNECTIONS, NOW);
-    expect(html).toContain("another program on this computer");
+    // BOTH shapes. It used to describe only a local program, which was true
+    // when stdio was the only transport and became wrong the day remote
+    // servers landed — and remote is the shape most people actually want.
+    expect(html).toContain("An online service");
+    expect(html).toContain("a program on this");
+    expect(html).toContain("Loaf does not sandbox it");
     expect(html).toContain("network calls Loaf cannot see");
     expect(html).toContain("does not sandbox it");
   });
@@ -618,9 +629,25 @@ describe("the server catalog", () => {
     expect(catalogEntry("gmail")).toBe(null);
   });
 
-  it("shows the command that will actually run", () => {
-    const e = CATALOG[0]!;
-    expect(commandLineOf(e)).toBe([e.command, ...e.args].join(" "));
+  it("shows what will actually be used — an address, or a command line", () => {
+    for (const e of CATALOG) {
+      expect(commandLineOf(e)).toBe(
+        isHosted(e) ? e.url : [e.command, ...e.args].join(" "),
+      );
+      expect(commandLineOf(e).trim()).not.toBe("");
+    }
+  });
+
+  it("every hosted entry is an https address and starts no program", () => {
+    // A hosted entry that carried a command would install something behind a
+    // button whose whole promise is that it does not.
+    for (const e of CATALOG.filter(isHosted)) {
+      expect(e.url.startsWith("https://"), e.id).toBe(true);
+      expect(e.command, e.id).toBe("");
+      expect(e.args.length, e.id).toBe(0);
+      // A hosted service is signed in to, never given a pasted key.
+      expect(e.envKeys.length, e.id).toBe(0);
+    }
   });
 });
 
@@ -637,7 +664,7 @@ describe("the add form", () => {
 
   it("says pressing one does not start anything", () => {
     const html = connectionsPanel(state({ adding: true }), NOW).toLowerCase();
-    expect(html).toContain("nothing runs until");
+    expect(html).toContain("nothing is shared until you do");
   });
 });
 
@@ -773,20 +800,29 @@ describe("when the connection panel could not be made to work", () => {
 
 describe("setting up a connection that needs a key", () => {
 
-  it("gives Notion's key a box to go in", () => {
-    // It used to tell the user to put a token in NOTION_TOKEN and provide
-    // nowhere to put it. The only route was hand-editing JSON.
+  it("asks Notion for no key at all, because it is signed in to", () => {
+    // Notion used to be the npx server, which meant an integration token
+    // pasted into a box. The hosted one needs no key and no install: the
+    // browser sign-in IS the credential.
     const html = connectionsPanel(state({ adding: true, pickedCatalog: "notion" }), NOW);
-    expect(html).toContain('data-mcp-env="NOTION_TOKEN"');
-    expect(html).toContain('type="password"');
+    expect(html).not.toContain("data-mcp-env");
+    expect(html).not.toContain("NOTION_TOKEN");
   });
 
-  it("shows the steps, including sharing the pages", () => {
-    const html = connectionsPanel(state({ adding: true, pickedCatalog: "notion" }), NOW);
-    expect(html).toContain("my-integrations");
-    // The step people miss: a valid key with no pages shared looks like an
-    // empty Notion, which reads as Loaf being broken.
-    expect(html).toContain("Connect to your new integration");
+  it("offers the online services in one press, not as boxes to fill in", () => {
+    const html = connectionsPanel(state({ adding: true }), NOW);
+    expect(html).toContain('data-mcp-quick-add="notion"');
+    expect(html).toContain('data-mcp-quick-add="linear"');
+    expect(html).toContain("Connect with your account");
+  });
+
+  it("still makes a local program go through the boxes", () => {
+    // Adding it starts a program on this computer, so the command stays
+    // visible and editable before anything happens.
+    const html = connectionsPanel(state({ adding: true }), NOW);
+    expect(html).toContain('data-mcp-pick-server="files"');
+    expect(html).not.toContain('data-mcp-quick-add="files"');
+    expect(html).toContain("needs Node.js");
   });
 
   it("asks for no keys until a preset is chosen", () => {

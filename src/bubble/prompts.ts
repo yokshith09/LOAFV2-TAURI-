@@ -153,3 +153,22 @@ export function claudeAskedLine(tool: string): string {
       return "Claude is asking Loaf something.";
   }
 }
+
+/**
+ * What to say when Claude stops asking, which is the only sign a task ended.
+ *
+ * Rotates, because this fires after every piece of work and one fixed sentence
+ * becomes wallpaper within a day — the same reason `PromptRotation` exists for
+ * the break prompts.
+ */
+const CLAUDE_DONE_LINES: readonly string[] = [
+  "Claude is done with that one.",
+  "That is Claude finished. Anything good?",
+  "All quiet again. Claude got what it needed.",
+  "Done. Claude has stopped asking.",
+];
+
+export function claudeDoneLine(at: number = Date.now()): string {
+  const i = Math.floor(at / 1000) % CLAUDE_DONE_LINES.length;
+  return CLAUDE_DONE_LINES[i]!;
+}

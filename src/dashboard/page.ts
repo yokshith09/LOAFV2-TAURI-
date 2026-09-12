@@ -738,6 +738,52 @@ root.addEventListener("click", (ev) => {
 
   // Fills the boxes; never adds. The user sees the exact command that will
   // run, and can change it, before anything is saved.
+  // ONE PRESS for a hosted service. Nothing is installed, nothing is started
+  // and nothing is sent — this writes an address into the config and then the
+  // card offers Sign in, which is the step that actually grants anything.
+  const quickAdd = target.closest<HTMLElement>("[data-mcp-quick-add]");
+  if (quickAdd) {
+    const entry = catalogEntry(quickAdd.dataset.mcpQuickAdd!);
+    if (entry) {
+      quickAdd.textContent = "Adding…";
+      void (async () => {
+        // Adding the same one twice would be refused by Rust for a duplicate
+        // name, which reads as a failure when the honest answer is "it is
+        // already there".
+        const already = connections.servers.some((srv) => srv.name === entry.id);
+        if (!already) {
+          const server: ServerView = {
+            name: entry.id,
+            command: "",
+            args: [],
+            note: entry.note,
+            env_keys: [],
+            url: entry.url,
+            has_token: false,
+          };
+          try {
+            await invoke("mcp_save_servers", { servers: [...connections.servers, server] });
+          } catch (err) {
+            connections = {
+              ...connections,
+              errors: { ...connections.errors, [entry.id]: String(err) },
+            };
+          }
+        }
+        connections = { ...connections, adding: false, pickedCatalog: null };
+        await refreshConnections();
+        // Straight into the browser, because "add it" and "sign in" are one
+        // intention and making somebody hunt for a second button is the kind of
+        // gap where a setup gets abandoned.
+        const btn = document.querySelector<HTMLElement>(
+          `[data-mcp-signin="${CSS.escape(entry.id)}"]`,
+        );
+        btn?.click();
+      })();
+    }
+    return;
+  }
+
   const pickServer = target.closest<HTMLElement>("[data-mcp-pick-server]");
   if (pickServer) {
     const entry = catalogEntry(pickServer.dataset.mcpPickServer!);

@@ -120,6 +120,7 @@ import {
   mayNudge,
   tantrumLine,
   claudeAskedLine,
+  claudeDoneLine,
   sessionDoneLine,
   closetGreeting,
   renameLine,
@@ -3863,6 +3864,19 @@ if (hasTauriHost()) {
     say({ kind: "speech", text: claudeAskedLine(e.payload), seconds: 5 });
   }).catch(() => {
     // Loaf still answers Claude; it just does not visibly notice.
+  });
+
+  // AND WHEN IT IS OVER. Nothing announces that an assistant has finished a
+  // task, so "finished" is a burst of questions stopping — see
+  // QUIET_BEFORE_DONE. Borrows the `proud` pose the companion already uses
+  // after real work, which is the right feeling: the job is done and Loaf
+  // helped with it.
+  void listen("loaf://claude/done", () => {
+    claudeThinkingUntil = 0;
+    proudUntil = Date.now() + PROUD_SECONDS * 1000;
+    say({ kind: "speech", text: claudeDoneLine(), seconds: 5 });
+  }).catch(() => {
+    // The pose just never appears. Nothing else depends on it.
   });
 
   void listen(TASK_COMMAND_EVENT, (e) => applyTaskCommand(e.payload)).catch(() => {

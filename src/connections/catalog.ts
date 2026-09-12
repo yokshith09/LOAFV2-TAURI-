@@ -1,34 +1,32 @@
 /**
- * The short list of servers Loaf will fill in for you.
+ * The services Loaf will set up for you in one press.
  *
- * WHY THIS IS SHORT, AND WHY GMAIL IS NOT ON IT.
+ * TWO KINDS OF CONNECTION LIVE IN HERE, and the difference is the whole reason
+ * this file was rewritten:
  *
- * The question that produced this file was "can I just select Gmail, or do I
- * have to set it up by hand — think of a user, not me". The honest answer took
- * a look at what actually exists rather than a guess:
+ *  - A HOSTED service. Nothing is installed and nothing runs on this computer.
+ *    Loaf talks to an address over HTTPS and you sign in with the account you
+ *    already have. This is what most people mean by "connect my Notion".
+ *  - A PROGRAM on this computer, started by Loaf and spoken to over its own
+ *    input and output. This is the older half of MCP, and it is the one that
+ *    needs Node.js, an install and a key pasted into a box.
  *
- *  - `@modelcontextprotocol/server-github` and `-slack` are **deprecated** on
- *    npm. They install and they are no longer supported, so a one-press button
- *    for either would be Loaf recommending abandoned code.
- *  - For **Gmail there is no first-party server at all**. npm has at least ten
- *    community ones. Any of them may be excellent. Every one of them would
- *    receive full access to the user's mailbox through Google's sign-in.
+ * The hosted ones are listed first because they are the ones an ordinary person
+ * can actually finish.
  *
- * A row in this list is Loaf saying "this is safe to run". Loaf cannot say that
- * about a package it did not write, does not track, and cannot audit — and the
- * blast radius for a mail server is the user's entire correspondence. So the
- * list holds only servers published by the people who own the thing being
- * connected, and everything else stays a deliberate paste by someone who chose
- * it. `MANUAL_ONLY` below explains that in the panel rather than leaving a
- * suspicious gap where Gmail should be.
+ * WHY THIS LIST IS STILL SHORT. A row here is Loaf saying "this is worth
+ * pressing", and that claim has to be checked rather than assumed:
  *
- * This is the same rule the rest of the product follows: Loaf does not sandbox
- * a connected server and could not, so what it can honestly offer is consent
- * and a record — never a promise that the thing is safe.
+ *  - Every hosted entry below was verified to publish OAuth discovery AND a
+ *    registration endpoint, using Loaf's own `discover` — see
+ *    `discovers_a_real_provider` in `oauth.rs`, which fails the build if any of
+ *    them stops working. Without a registration endpoint Loaf cannot sign in to
+ *    a service it has never met, so a row without one would be a dead button.
+ *  - For **Gmail there is still no first-party server**. Google does not publish
+ *    one. The community ones each want full access to a mailbox, and Loaf will
+ *    not pick a mail server on somebody's behalf. See `MANUAL_ONLY`.
  *
- * Verified against the npm registry on 10 September 2026. Anything added here
- * later needs the same check; a deprecated or renamed package in this list is
- * worse than no list, because a button implies somebody looked.
+ * Verified against the live services on 12 September 2026.
  */
 
 export interface CatalogEntry {
@@ -36,66 +34,94 @@ export interface CatalogEntry {
   readonly id: string;
   /** What to call it in the list. */
   readonly label: string;
-  /** The program to run. */
+  /**
+   * The address of a hosted service. Empty for a program on this computer.
+   *
+   * When this is set the connection needs no install and no pasted key: the
+   * sign-in happens in a browser and the token is Loaf's to renew.
+   */
+  readonly url: string;
+  /** The program to run. Empty for a hosted service. */
   readonly command: string;
   readonly args: readonly string[];
   /** Who publishes it — shown, because that is the whole basis for it being here. */
   readonly publisher: string;
-  /** What the user still has to do themselves, in plain words. Empty if nothing. */
+  /** One line on what connecting gets you. */
   readonly setup: string;
-  /**
-   * The numbered steps, for the ones that need something done elsewhere first.
-   *
-   * Separate from `setup` because a paragraph is the wrong shape for "go here,
-   * press this, copy that". Notion's setup was described in one sentence and was
-   * not actually possible from the panel at all — the box it told you to fill in
-   * did not exist.
-   */
+  /** The numbered steps, for the ones that need something done elsewhere first. */
   readonly steps: readonly string[];
-  /**
-   * Environment variables this server needs, e.g. `NOTION_TOKEN`.
-   *
-   * These are SECRETS. They go to Rust through the same one-way channel as a
-   * bearer token and are never read back into a window.
-   */
+  /** Environment variables this server needs. Secrets; hosted entries need none. */
   readonly envKeys: readonly string[];
-  /** Where to get the token, if one is needed. Shown as a link. */
+  /** Where to get the key, if one is needed. */
   readonly tokenFrom: string;
   /** The note pre-filled on the connection. */
   readonly note: string;
 }
 
+/** Whether this is an online service rather than a program on this computer. */
+export function isHosted(entry: CatalogEntry): boolean {
+  return entry.url.trim() !== "";
+}
+
+const HOSTED = {
+  command: "",
+  args: [] as readonly string[],
+  envKeys: [] as readonly string[],
+  tokenFrom: "",
+  steps: [
+    "Press Connect. Loaf adds it and opens your browser.",
+    "Sign in to the account you already have and approve the access it asks for.",
+    "The browser says you can close it, and the card here says signed in.",
+  ] as readonly string[],
+};
+
 export const CATALOG: readonly CatalogEntry[] = [
   {
+    ...HOSTED,
     id: "notion",
     label: "Notion",
-    command: "npx",
-    args: ["-y", "@notionhq/notion-mcp-server"],
+    url: "https://mcp.notion.com/mcp",
     publisher: "Notion",
-    setup:
-      "Notion needs its own key before it will let anything in. Four steps, " +
-      "once, and the third one is the one people miss.",
-    steps: [
-      "Open notion.so/my-integrations and press New integration.",
-      "Give it a name, pick your workspace, and save it.",
-      "Copy the Internal Integration Secret — it starts with ntn_ or secret_.",
-      "In Notion, open each page you want Loaf to see, press the ••• menu, " +
-        "and Connect to your new integration. Nothing is shared until you do " +
-        "this, so a working key with no pages shared reads as an empty Notion.",
-    ],
-    envKeys: ["NOTION_TOKEN"],
-    tokenFrom: "notion.so/my-integrations",
+    setup: "Read and write your Notion pages. Sign in with your Notion account.",
     note: "My Notion pages",
+  },
+  {
+    ...HOSTED,
+    id: "linear",
+    label: "Linear",
+    url: "https://mcp.linear.app/mcp",
+    publisher: "Linear",
+    setup: "Your issues and projects. Sign in with your Linear account.",
+    note: "My Linear issues",
+  },
+  {
+    ...HOSTED,
+    id: "asana",
+    label: "Asana",
+    url: "https://mcp.asana.com/sse",
+    publisher: "Asana",
+    setup: "Your tasks and projects. Sign in with your Asana account.",
+    note: "My Asana tasks",
+  },
+  {
+    ...HOSTED,
+    id: "sentry",
+    label: "Sentry",
+    url: "https://mcp.sentry.dev/mcp",
+    publisher: "Sentry",
+    setup: "Errors and issues from your projects. Sign in with your Sentry account.",
+    note: "My Sentry issues",
   },
   {
     id: "files",
     label: "A folder on this computer",
+    url: "",
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-filesystem"],
     publisher: "the Model Context Protocol project",
     setup:
-      "Add the folder you want it to see as one more argument. It can read " +
-      "everything inside that folder, so pick a narrow one.",
+      "Not a hosted service — this one runs a program on your computer, so it " +
+      "needs Node.js installed.",
     steps: [
       "Decide which single folder this may read. Not your whole home folder.",
       "Add its full path to the end of the arguments box below.",
@@ -105,11 +131,6 @@ export const CATALOG: readonly CatalogEntry[] = [
     note: "Files in one folder",
   },
 ];
-
-/** Whether anything in the catalog needs Node.js installed to run. */
-export function needsNode(entry: CatalogEntry): boolean {
-  return entry.command === "npx" || entry.command === "npm" || entry.command === "node";
-}
 
 /**
  * Things people ask for that are deliberately not one press.
@@ -124,11 +145,12 @@ export interface ManualOnly {
 
 export const MANUAL_ONLY: readonly ManualOnly[] = [
   {
-    label: "Gmail",
+    label: "Gmail and Google Drive",
     why:
-      "Google does not publish one, and the community servers each want full " +
-      "access to your mailbox. Loaf will not pick one for you — choose one you " +
-      "trust and add it below. It works exactly the same once it is added.",
+      "Google does not publish a hosted MCP server, so there is no account to " +
+      "sign in to. The community ones each want full access to your mailbox, and " +
+      "Loaf will not pick one for you. If you have one you trust, add it by hand " +
+      "below and it works exactly like the rest.",
   },
   {
     label: "Slack and GitHub",
@@ -142,7 +164,12 @@ export function catalogEntry(id: string): CatalogEntry | null {
   return CATALOG.find((e) => e.id === id) ?? null;
 }
 
+/** Whether anything in the catalog needs Node.js installed to run. */
+export function needsNode(entry: CatalogEntry): boolean {
+  return entry.command === "npx" || entry.command === "npm" || entry.command === "node";
+}
+
 /** The command line as it will actually run, for showing before it is added. */
 export function commandLineOf(entry: CatalogEntry): string {
-  return [entry.command, ...entry.args].join(" ");
+  return isHosted(entry) ? entry.url : [entry.command, ...entry.args].join(" ");
 }

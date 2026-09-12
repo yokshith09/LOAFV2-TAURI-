@@ -1212,28 +1212,45 @@ mod tests {
         let agent = ureq::AgentBuilder::new()
             .timeout(std::time::Duration::from_secs(20))
             .build();
-        let url = "https://mcp.notion.com/mcp";
 
-        let challenge = challenge_for(&agent, url);
-        println!("challenge: {challenge:?}");
-        let header = challenge.expect("a protected server should challenge");
-        assert!(
-            resource_metadata_url(&header).is_some(),
-            "could not read the metadata address out of: {header}"
-        );
+        // EVERY ENTRY THE CATALOG OFFERS WITH A SIGN-IN BUTTON. A button implies
+        // somebody checked, and this is the check: if a provider stops
+        // publishing discovery, or starts requiring a client id we cannot get,
+        // this fails here rather than for a user who pressed it.
+        let providers = [
+            ("Notion", "https://mcp.notion.com/mcp"),
+            ("Linear", "https://mcp.linear.app/mcp"),
+            ("Sentry", "https://mcp.sentry.dev/mcp"),
+            ("Asana", "https://mcp.asana.com/sse"),
+        ];
 
-        let server = discover(&agent, url, Some(&header)).expect("discovery");
-        println!("authorize: {}", server.authorization_endpoint);
-        println!("token:     {}", server.token_endpoint);
-        println!("register:  {}", server.registration_endpoint);
-        assert!(server.authorization_endpoint.starts_with("https://"));
-        assert!(server.token_endpoint.starts_with("https://"));
-        // Without this, Loaf cannot sign in to a provider it has never met,
-        // which is the whole reason registration is part of the flow.
-        assert!(
-            !server.registration_endpoint.is_empty(),
-            "this provider does not allow programs to register themselves"
-        );
+        let mut failures = Vec::new();
+        for (name, url) in providers {
+            let Some(header) = challenge_for(&agent, url) else {
+                failures.push(format!("{name}: did not challenge at all"));
+                continue;
+            };
+            match discover(&agent, url, Some(&header)) {
+                Ok(server) => {
+                    println!("{name}");
+                    println!("   authorize: {}", server.authorization_endpoint);
+                    println!("   token:     {}", server.token_endpoint);
+                    println!("   register:  {}", server.registration_endpoint);
+                    if server.authorization_endpoint.is_empty() || server.token_endpoint.is_empty()
+                    {
+                        failures.push(format!("{name}: missing an endpoint"));
+                    }
+                    // Without this, Loaf cannot sign in to a provider it has
+                    // never met, which is the whole reason registration is part
+                    // of the flow.
+                    if server.registration_endpoint.is_empty() {
+                        failures.push(format!("{name}: will not let programs register themselves"));
+                    }
+                }
+                Err(why) => failures.push(format!("{name}: {why}")),
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]

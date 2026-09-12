@@ -2587,8 +2587,24 @@ fn watch_for_claude(app: &tauri::AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let mut last_seen: u64 = 0;
+        // Set while Claude is mid-task, so the "finished" moment can be noticed.
+        let mut busy_since: Option<std::time::Instant> = None;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(500));
+
+            // FINISHED IS THE ABSENCE OF A SIGNAL, which is the only shape it
+            // comes in. Nothing tells Loaf that Claude has completed a task —
+            // an assistant asks its questions and then goes quiet — so the end
+            // of a task is a burst of calls stopping. Waiting a few seconds
+            // before saying so is what stops Loaf announcing "all done" between
+            // the first and second question of the same job.
+            if let Some(since) = busy_since {
+                if since.elapsed() >= QUIET_BEFORE_DONE {
+                    busy_since = None;
+                    let _ = app.emit("loaf://claude/done", ());
+                }
+            }
+
             let Ok(dir) = data_dir(&app) else { continue };
             let Some((tool, at)) = claude_desktop::last_activity(&dir) else {
                 continue;
@@ -2603,10 +2619,18 @@ fn watch_for_claude(app: &tauri::AppHandle) {
             if first || tool.is_empty() {
                 continue;
             }
+            busy_since = Some(std::time::Instant::now());
             let _ = app.emit("loaf://claude/asked", tool);
         }
     });
 }
+
+/// How long Claude has to stay quiet before Loaf calls the job done.
+///
+/// Long enough to cover the gap between two questions in one piece of work —
+/// an assistant reading your day usually asks two or three things in a row —
+/// and short enough that the reaction still belongs to what just happened.
+const QUIET_BEFORE_DONE: std::time::Duration = std::time::Duration::from_secs(6);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

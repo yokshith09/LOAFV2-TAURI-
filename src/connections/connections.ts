@@ -20,6 +20,7 @@ import {
   MANUAL_ONLY,
   catalogEntry,
   commandLineOf,
+  isHosted,
   needsNode,
   type CatalogEntry,
 } from "./catalog";
@@ -294,17 +295,30 @@ export function commandLine(server: ServerView): string {
  * It says the same thing whether or not anything is connected, because the
  * moment to understand what connecting means is before you do it.
  */
+/**
+ * What a connection is, in the two shapes it actually comes in.
+ *
+ * THIS USED TO SAY ONLY "another program on this computer", which was true when
+ * stdio was the only transport Loaf had and became wrong the day remote servers
+ * landed. Most connections people want — Notion, Linear, Asana — are online
+ * services with no program and no install, so the old wording described the
+ * rarer half and quietly misdescribed the common one.
+ */
 function disclosure(): string {
   return (
     `<div class="mcp-note">` +
     `<h3>What connecting actually does</h3>` +
-    `<p>A connection is <strong>another program on this computer</strong> that Loaf starts ` +
-    `and sends things to. It can do anything that program can do, including making network ` +
-    `calls Loaf cannot see, to services Loaf has never heard of. Loaf does not sandbox it ` +
-    `and could not.</p>` +
-    `<p>So: nothing is connected unless you add it, nothing is started until something uses ` +
-    `it, and every call is written down below — what was sent, to whom, and when. That log ` +
-    `stays on this machine. It is the part of the promise Loaf can still keep.</p>` +
+    `<p>A connection comes in two shapes. <strong>An online service</strong> — Notion, ` +
+    `Linear, Asana — where nothing is installed, you sign in with the account you already ` +
+    `have, and Loaf sends requests to it over the internet. Or <strong>a program on this ` +
+    `computer</strong> that Loaf starts and talks to.</p>` +
+    `<p>Either way it is somebody else's code and Loaf does not sandbox it. An online ` +
+    `service sees whatever Loaf sends it and whatever your account lets it reach. A local ` +
+    `program can do anything a program on your computer can do, including making network ` +
+    `calls Loaf cannot see, to services Loaf has never heard of.</p>` +
+    `<p>So: nothing is connected unless you add it, nothing is started or sent until ` +
+    `something uses it, and every call is written down below — what was sent, to whom, and ` +
+    `when. That log stays on this machine.</p>` +
     `</div>`
   );
 }
@@ -562,14 +576,26 @@ function addForm(open: boolean, entry: CatalogEntry | null): string {
  * a mail server on your behalf. See catalog.ts.
  */
 function pickList(picked: CatalogEntry | null): string {
+  // A hosted service is ONE PRESS, and that is safe in a way a local program is
+  // not: adding it installs nothing, starts nothing and sends nothing. It writes
+  // an address into the config and then asks you to sign in, which is the step
+  // that actually grants anything — so the consent is still there, just moved to
+  // where it means something.
   const rows = CATALOG.map(
     (e) =>
       `<button class="mcp-pick${picked?.id === e.id ? " chosen" : ""}" ` +
-      `data-mcp-pick-server="${escapeHTML(e.id)}">` +
+      (isHosted(e)
+        ? `data-mcp-quick-add="${escapeHTML(e.id)}"`
+        : `data-mcp-pick-server="${escapeHTML(e.id)}"`) +
+      `>` +
       `<span class="mcp-pick-name">${escapeHTML(e.label)}</span>` +
       `<span class="mcp-pick-by">by ${escapeHTML(e.publisher)}</span>` +
       `<code>${escapeHTML(commandLineOf(e))}</code>` +
-      (needsNode(e) ? `<span class="mcp-pick-needs">needs Node.js</span>` : "") +
+      (isHosted(e)
+        ? `<span class="mcp-pick-hosted">Connect with your account</span>`
+        : needsNode(e)
+          ? `<span class="mcp-pick-needs">runs here &middot; needs Node.js</span>`
+          : "") +
       `</button>`,
   ).join("");
 
@@ -581,9 +607,9 @@ function pickList(picked: CatalogEntry | null): string {
   return (
     `<div class="mcp-picks">` +
     `<h4 class="mcp-watch-head">Start from one of these</h4>` +
-    `<p class="mcp-watch-note">Only servers published by the people who own the ` +
-    `thing being connected. Pressing one fills in the boxes; nothing runs until ` +
-    `you add it.</p>` +
+    `<p class="mcp-watch-note">Only services published by the people who own the ` +
+    `thing being connected, and every one of them checked. The online ones add ` +
+    `straight away and then ask you to sign in; nothing is shared until you do.</p>` +
     `<div class="mcp-pick-row">${rows}</div>` +
     `<p class="mcp-watch-note">Not on this list, on purpose:</p>` +
     `<ul class="mcp-manual">${manual}</ul>` +
@@ -795,6 +821,7 @@ export const CONNECTIONS_CSS = `
 .mcp-pick-name{font-weight:600}
 .mcp-pick-by,.mcp-pick-setup{font-size:11px;opacity:.8}
 .mcp-pick-needs{font-size:11px;opacity:.7;font-style:italic}
+.mcp-pick-hosted{font-size:11px;color:#2f8f5b;font-weight:600}
 .mcp-pick.chosen{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
 .mcp-claude{border-left:3px solid #6b5bd6}
 .mcp-live{font-size:11px;color:#2f8f5b;font-weight:600}
