@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 const PACKS_DIR: &str = "Characters";
-const MANIFEST: &str = "character.json";
+pub const MANIFEST: &str = "character.json";
 
 /// One pack, as far as Rust is concerned: the manifest text and the sheet bytes.
 #[derive(Debug, Serialize)]

@@ -3844,6 +3844,40 @@ if (hasTauriHost()) {
     console.error("watch notifications unavailable");
   });
 
+  // DROP A CHARACTER ON THE PET TO INSTALL IT. One press was the ask, and a
+  // drop is fewer than one — there is no file picker to open and no folder to
+  // find. Tauri reports the paths, Rust does the validating, and the answer
+  // comes back as a sentence either way: see `pack_install`, where refusing a
+  // character DESIGN document is told apart from refusing a broken pack.
+  void listen<{ paths?: string[] }>("tauri://drag-drop", (e) => {
+    const paths = e.payload?.paths ?? [];
+    if (paths.length === 0) return;
+    void (async () => {
+      for (const path of paths) {
+        // NOT `invokeSafe`, which swallows the error — and the error is the
+        // entire point here. `pack_install` goes to real trouble to explain
+        // which of six things is missing, and dropping that on the floor would
+        // leave somebody with a file that silently does nothing.
+        let installed: { name: string } | null = null;
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          installed = (await invoke("install_pack", { path })) as { name: string };
+        } catch (err) {
+          // Said out loud rather than logged. Somebody who just dropped a file
+          // is watching the character, not a console.
+          say({ kind: "speech", text: String(err), seconds: 12 });
+        }
+        if (!installed) continue;
+        // Re-read from disk rather than trusting what was just written, so the
+        // character that appears is the one the loader can actually parse.
+        await loadSpritePacks();
+        say({ kind: "speech", text: `${installed.name} is here. Find them in the closet.`, seconds: 8 });
+      }
+    })();
+  }).catch(() => {
+    // Dropping stops working; the Characters folder button still does.
+  });
+
   // THE POSE, NOT THE WORDS. A watch firing gets a bubble because there is
   // something worth saying; a call that is merely IN PROGRESS — someone
   // pressed Send in Connections, or a watch is asking right now — has nothing

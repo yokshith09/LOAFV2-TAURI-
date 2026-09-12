@@ -43,6 +43,7 @@ pub mod mcp;
 pub mod mcp_client;
 pub mod mcp_stdio;
 pub mod oauth;
+pub mod pack_install;
 pub mod packs;
 pub mod platform;
 pub mod remote;
@@ -248,6 +249,17 @@ fn write_stats(app: tauri::AppHandle, json: String) -> Result<(), String> {
 #[tauri::command]
 fn sprite_packs(app: tauri::AppHandle) -> Result<Vec<packs::LoadedPack>, String> {
     Ok(packs::load_all(&data_dir(&app)?))
+}
+
+/// Install a character pack somebody dropped on the window, or picked.
+///
+/// The refusal is a SENTENCE and goes straight to the screen — see
+/// `pack_install`. Somebody adding a character is holding a file they did not
+/// make, and "invalid pack" tells them nothing about which part is missing.
+#[tauri::command(async)]
+fn install_pack(app: tauri::AppHandle, path: String) -> Result<pack_install::Installed, String> {
+    let dir = data_dir(&app)?;
+    pack_install::install(&dir, std::path::Path::new(&path))
 }
 
 /// Make the Characters folder, write the format guide, and open it.
@@ -2763,6 +2775,7 @@ pub fn run() {
             browser_probe_supported,
             sprite_packs,
             open_packs_folder,
+            install_pack,
             user_sounds,
             read_sound,
             open_sounds_folder,
