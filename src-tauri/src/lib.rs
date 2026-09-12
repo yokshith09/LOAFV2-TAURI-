@@ -2555,7 +2555,8 @@ fn claude_connect(app: tauri::AppHandle) -> Result<ClaudeStatus, String> {
     let path = claude_desktop::config_path()
         .ok_or("Loaf does not know where Claude Desktop keeps its settings on this system.")?;
     let existing = claude_desktop::read(&path)?;
-    let (command, args) = claude_desktop::server_command()?;
+    let dir = data_dir(&app)?;
+    let (command, args) = claude_desktop::server_command(&dir)?;
     let updated = claude_desktop::with_loaf(existing.as_ref(), &command, &args);
     claude_desktop::write(&path, &updated)?;
     Ok(claude_status_now(&app))
@@ -2676,6 +2677,18 @@ pub fn run() {
             // and that copy cannot talk to this one. This notices when it has
             // been asked something, so the companion can react.
             watch_for_claude(app.handle());
+
+            // Keep the copy Claude starts up to date with this build. Only when
+            // already connected: doing it otherwise would put a Loaf binary in
+            // the data folder of somebody who never asked for one.
+            if let Ok(dir) = data_dir(app.handle()) {
+                let connected = claude_desktop::config_path()
+                    .and_then(|p| claude_desktop::read(&p).ok().flatten())
+                    .is_some_and(|cfg| claude_desktop::has_loaf(Some(&cfg)));
+                if connected {
+                    let _ = claude_desktop::keep_a_copy(&dir);
+                }
+            }
 
             build_tray(app.handle())?;
             build_bubble_window(app.handle())?;

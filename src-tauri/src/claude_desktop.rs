@@ -67,15 +67,94 @@ pub fn installed() -> bool {
         .unwrap_or(false)
 }
 
+/// Where the copy of Loaf that Claude starts actually lives.
+///
+/// Beside the history rather than wherever this build happens to sit — see
+/// `keep_a_copy` for why a copy exists at all.
+pub fn server_binary(data_dir: &Path) -> PathBuf {
+    data_dir.join("LoafPlus").join(if cfg!(windows) {
+        "loaf-mcp.exe"
+    } else {
+        "loaf-mcp"
+    })
+}
+
+/// Put a copy of the running program somewhere nothing else will disturb it.
+///
+/// WHY A COPY, when `current_exe` is right there. Claude Desktop starts this
+/// program and keeps that process alive for the whole conversation, so the file
+/// it was started from has to survive being run for hours. Pointing at the
+/// executable in place fails exactly one way, and it is not obvious until you
+/// read Claude's log:
+///
+/// ```text
+/// 13:41:42 Server started and connected successfully
+/// 13:41:43 initialize -> result      tools/list -> result
+/// 13:56:02 Server transport closed unexpectedly
+/// ```
+///
+/// Fourteen good minutes and then death — at the exact second a rebuild
+/// replaced the binary underneath it. Every `cargo build` during development
+/// killed Claude's server, which shows up as "Server disconnected" and looks
+/// like Loaf being broken when Loaf had answered every message correctly.
+///
+/// The same hazard exists outside development: an application that updates
+/// itself replaces its own executable, and `cargo clean` removes it entirely.
+/// A copy in Loaf's own data folder is touched by nothing but this function.
+///
+/// Refreshed when the original is newer, so an updated Loaf does not leave an
+/// old server answering for it.
+pub fn keep_a_copy(data_dir: &Path) -> Result<PathBuf, String> {
+    let source = std::env::current_exe().map_err(|e| format!("Could not find Loaf itself: {e}"))?;
+    let target = server_binary(data_dir);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    if !newer(&source, &target) {
+        return Ok(target);
+    }
+
+    match std::fs::copy(&source, &target) {
+        Ok(_) => Ok(target),
+        // Windows will not let a running executable be overwritten, and while
+        // Claude is attached that is exactly what this is. Renaming one out of
+        // the way IS allowed, so the running server keeps its file and the new
+        // copy takes the name. The leftover is cleared on the next update.
+        Err(_) if target.exists() => {
+            let parked = target.with_extension("old");
+            let _ = std::fs::remove_file(&parked);
+            std::fs::rename(&target, &parked)
+                .map_err(|e| format!("Could not replace the copy Claude uses: {e}"))?;
+            std::fs::copy(&source, &target)
+                .map(|_| ())
+                .map_err(|e| format!("Could not put a copy where Claude can reach it: {e}"))?;
+            Ok(target)
+        }
+        Err(e) => Err(format!(
+            "Could not put a copy where Claude can reach it: {e}"
+        )),
+    }
+}
+
+/// Whether `source` is newer than `target`, treating a missing target as stale.
+fn newer(source: &Path, target: &Path) -> bool {
+    let Ok(target_time) = std::fs::metadata(target).and_then(|m| m.modified()) else {
+        return true;
+    };
+    let Ok(source_time) = std::fs::metadata(source).and_then(|m| m.modified()) else {
+        return false;
+    };
+    source_time > target_time
+}
+
 /// The command Claude should run to reach Loaf.
 ///
-/// The RUNNING APPLICATION with a flag, not the `loaf-mcp` binary. That binary
-/// exists in the source tree and is not part of the installer, so on a real
-/// machine it is simply absent, and a button that wrote a path to a missing
-/// file would produce a connection that fails at every launch with nothing to
-/// look at. `current_exe` is whatever the user actually installed.
-pub fn server_command() -> Result<(String, Vec<String>), String> {
-    let exe = std::env::current_exe().map_err(|e| format!("Could not find Loaf itself: {e}"))?;
+/// Points at the copy, never at `loaf-mcp`. That binary exists in the source
+/// tree and is not part of the installer, so on a real machine it is simply
+/// absent and the connection would fail at every launch with nothing to see.
+pub fn server_command(data_dir: &Path) -> Result<(String, Vec<String>), String> {
+    let exe = keep_a_copy(data_dir)?;
     Ok((
         exe.to_string_lossy().into_owned(),
         vec!["--mcp-server".to_string()],
@@ -294,6 +373,49 @@ mod tests {
         // full of servers belonging to the user.
         assert!(read(&path).is_err());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_copy_lives_beside_the_history_not_beside_the_build() {
+        // The whole point: a path nothing else writes to. Anything under a
+        // build directory is replaced by the next compile, which kills the
+        // server Claude is running from it.
+        let dir = std::path::Path::new("C:/data");
+        let p = server_binary(dir);
+        assert!(p.ends_with(if cfg!(windows) {
+            "LoafPlus/loaf-mcp.exe"
+        } else {
+            "LoafPlus/loaf-mcp"
+        }));
+        assert!(!p.to_string_lossy().contains("target"));
+    }
+
+    #[test]
+    fn a_copy_is_made_and_then_left_alone_until_the_original_changes() {
+        let dir = std::env::temp_dir().join("loaf-copy-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("LoafPlus")).expect("temp dir");
+        let target = server_binary(&dir);
+
+        // Stand in for the running program: any file will do, since the only
+        // thing under test is when it is copied.
+        let source = dir.join("pretend-loaf.exe");
+        std::fs::write(&source, b"first").expect("write");
+        assert!(newer(&source, &target), "a missing copy is always stale");
+
+        std::fs::copy(&source, &target).expect("copy");
+        assert!(
+            !newer(&source, &target),
+            "an up-to-date copy must not be rewritten on every launch"
+        );
+
+        // A newer original — an updated Loaf — must replace it, or an old
+        // server keeps answering for a build that no longer exists.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(&source, b"second").expect("rewrite");
+        assert!(newer(&source, &target));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
