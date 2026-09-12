@@ -15,7 +15,14 @@
  */
 
 import { escapeHTML } from "../dashboard/html";
-import { CATALOG, MANUAL_ONLY, commandLineOf } from "./catalog";
+import {
+  CATALOG,
+  MANUAL_ONLY,
+  catalogEntry,
+  commandLineOf,
+  needsNode,
+  type CatalogEntry,
+} from "./catalog";
 
 /** A server as Rust is willing to describe it. Never carries a secret. */
 export interface ServerView {
@@ -106,11 +113,30 @@ export interface ConnectionsState {
   readonly tools: Readonly<Record<string, readonly string[]>>;
   /** What went wrong last, by server name. */
   readonly errors: Readonly<Record<string, string>>;
+  /**
+   * Why the server LIST itself could not be read, if it could not.
+   *
+   * Separate from `errors`, which are per-server: this is the case where Rust
+   * refused the whole config file, and there is no server to hang the message
+   * on. It used to be swallowed into an empty list, so a config with one stray
+   * comma rendered as "Nothing is connected yet" — which reads as "add
+   * something" rather than "the file you already have cannot be parsed".
+   */
+  readonly listError: string;
   readonly calls: readonly CallRecord[];
   /** What Loaf checks on its own. Empty until the user makes one. */
   readonly watches: readonly Watch[];
   /** Whether the add form is open. */
   readonly adding: boolean;
+  /**
+   * Which catalog entry the user pressed, if any.
+   *
+   * Needed because the form now shows that entry's setup steps and its own
+   * secret boxes. Pressing a preset used to only shove text into the inputs and
+   * be forgotten, so the form had no way to know that this particular server
+   * wants a NOTION_TOKEN.
+   */
+  readonly pickedCatalog: string | null;
   /**
    * The tool the user has opened, if any.
    *
@@ -140,9 +166,11 @@ export const EMPTY_CONNECTIONS: ConnectionsState = {
   running: [],
   tools: {},
   errors: {},
+  listError: "",
   calls: [],
   watches: [],
   adding: false,
+  pickedCatalog: null,
   picked: null,
   argsDraft: "{}",
   result: "",
@@ -425,23 +453,72 @@ function serverCard(server: ServerView, state: ConnectionsState): string {
   );
 }
 
-function addForm(open: boolean): string {
+/**
+ * The steps for whichever catalog entry was picked, if any.
+ *
+ * Shown inside the form rather than on the pick button, because they describe
+ * what to go and do BEFORE pressing Add, and the button is gone by then.
+ */
+function setupSteps(entry: CatalogEntry | null): string {
+  if (!entry || entry.steps.length === 0) return "";
+  const steps = entry.steps.map((s) => `<li>${escapeHTML(s)}</li>`).join("");
+  return (
+    `<div class="mcp-steps">` +
+    `<h4 class="mcp-watch-head">Setting up ${escapeHTML(entry.label)}</h4>` +
+    (entry.setup ? `<p class="mcp-watch-note">${escapeHTML(entry.setup)}</p>` : "") +
+    `<ol class="mcp-steplist">${steps}</ol>` +
+    (entry.tokenFrom
+      ? `<p class="mcp-fine">The key comes from <code>${escapeHTML(entry.tokenFrom)}</code>.</p>`
+      : "") +
+    `</div>`
+  );
+}
+
+/**
+ * A box for each secret this server needs.
+ *
+ * These did not exist, and their absence made the one catalog entry that needs a
+ * key impossible to finish in the app: the Notion row said to put a token in
+ * NOTION_TOKEN, and there was nowhere to put it. The only route was to open the
+ * config file and hand-write JSON, which is not a thing the panel should be
+ * telling an ordinary person to do.
+ *
+ * The value takes the same one-way path as a bearer token — into Rust's config,
+ * never read back out to a window.
+ */
+function envFields(entry: CatalogEntry | null): string {
+  if (!entry || entry.envKeys.length === 0) return "";
+  return entry.envKeys
+    .map(
+      (key) =>
+        `<label>${escapeHTML(key)}` +
+        `<input id="mcp-new-env-${escapeHTML(key)}" data-mcp-env="${escapeHTML(key)}" ` +
+        `type="password" autocomplete="off" maxlength="400" ` +
+        `placeholder="paste the key here"></label>`,
+    )
+    .join("");
+}
+
+function addForm(open: boolean, entry: CatalogEntry | null): string {
   if (!open) {
     return `<button class="mcp-add" data-mcp-add-open="1">+ Add a connection</button>`;
   }
   return (
     `<div class="mcp-form">` +
-    pickList() +
+    pickList(entry) +
+    setupSteps(entry) +
     `<label>What to call it<input id="mcp-new-name" placeholder="granola" maxlength="40"></label>` +
     `<label>Program to run<input id="mcp-new-cmd" placeholder="npx" maxlength="200"></label>` +
     `<label>Arguments<input id="mcp-new-args" placeholder="-y granola-mcp" maxlength="400"></label>` +
+    envFields(entry) +
     `<p class="mcp-fine"><b>Or</b> a remote server, which installs nothing:</p>` +
     `<label>Address<input id="mcp-new-url" placeholder="https://example.com/mcp" maxlength="400"></label>` +
     `<label>Token, if it needs one<input id="mcp-new-token" type="password" ` +
     `placeholder="leave empty if it does not" maxlength="400" autocomplete="off"></label>` +
     `<label>What it is for<input id="mcp-new-note" placeholder="my meeting notes" maxlength="120"></label>` +
-    `<p class="mcp-fine">Nothing is started by saving this. API keys go in the config file — ` +
-    `use the button below, so a key never passes through this window.</p>` +
+    `<p class="mcp-fine">Nothing is started by saving this. Keys typed above go ` +
+    `straight into the config file Rust owns; this window is never able to read ` +
+    `one back.</p>` +
     `<div class="mcp-actions">` +
     `<button class="mcp-btn primary" data-mcp-add-save="1">Add it</button>` +
     `<button class="mcp-btn" data-mcp-add-cancel="1">Cancel</button>` +
@@ -462,14 +539,15 @@ function addForm(open: boolean): string {
  * Loaf cannot do Gmail at all — when the real answer is that Loaf will not pick
  * a mail server on your behalf. See catalog.ts.
  */
-function pickList(): string {
+function pickList(picked: CatalogEntry | null): string {
   const rows = CATALOG.map(
     (e) =>
-      `<button class="mcp-pick" data-mcp-pick-server="${escapeHTML(e.id)}">` +
+      `<button class="mcp-pick${picked?.id === e.id ? " chosen" : ""}" ` +
+      `data-mcp-pick-server="${escapeHTML(e.id)}">` +
       `<span class="mcp-pick-name">${escapeHTML(e.label)}</span>` +
       `<span class="mcp-pick-by">by ${escapeHTML(e.publisher)}</span>` +
       `<code>${escapeHTML(commandLineOf(e))}</code>` +
-      (e.setup ? `<span class="mcp-pick-setup">${escapeHTML(e.setup)}</span>` : "") +
+      (needsNode(e) ? `<span class="mcp-pick-needs">needs Node.js</span>` : "") +
       `</button>`,
   ).join("");
 
@@ -525,15 +603,22 @@ function callLog(calls: readonly CallRecord[], now: number): string {
 
 /** The whole tab. */
 export function connectionsPanel(state: ConnectionsState, now: number): string {
-  const list = state.servers.length
-    ? state.servers.map((s) => serverCard(s, state)).join("")
-    : `<p class="mcp-empty">Nothing is connected. Loaf is talking to no other program.</p>`;
+  // "Could not read the list" and "the list is empty" are different facts, and
+  // showing the second when the first is true sends someone off adding a
+  // connection they already have.
+  const list = state.listError
+    ? `<p class="mcp-error">Loaf could not read its list of connections: ` +
+      `${escapeHTML(state.listError)}. Nothing has been lost — open the config ` +
+      `file below and fix it, or remove the broken entry.</p>`
+    : state.servers.length
+      ? state.servers.map((s) => serverCard(s, state)).join("")
+      : `<p class="mcp-empty">Nothing is connected. Loaf is talking to no other program.</p>`;
 
   return (
     `<h2>Connections</h2>` +
     disclosure() +
     list +
-    addForm(state.adding) +
+    addForm(state.adding, state.pickedCatalog === null ? null : catalogEntry(state.pickedCatalog)) +
     `<button class="mcp-btn" data-mcp-config="1">Open the config file</button>` +
     callLog(state.calls, now)
   );
@@ -578,6 +663,11 @@ export const CONNECTIONS_CSS = `
 .mcp-pick{display:flex;flex-direction:column;gap:3px;text-align:left;cursor:pointer;padding:8px 10px;max-width:280px}
 .mcp-pick-name{font-weight:600}
 .mcp-pick-by,.mcp-pick-setup{font-size:11px;opacity:.8}
+.mcp-pick-needs{font-size:11px;opacity:.7;font-style:italic}
+.mcp-pick.chosen{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+.mcp-steps{margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+.mcp-steplist{margin:0;padding-left:18px;font-size:12px;line-height:1.5}
+.mcp-steplist li{margin-bottom:5px}
 .mcp-manual{margin:0;padding-left:18px;font-size:12px;opacity:.85}
 .mcp-manual li{margin-bottom:4px}
 .mcp-tool{font-size:11px;padding:3px 7px;border-radius:20px;border:1px solid var(--line);opacity:.85}

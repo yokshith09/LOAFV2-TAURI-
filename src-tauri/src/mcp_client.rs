@@ -124,6 +124,67 @@ pub struct CallRecord {
     pub ok: bool,
 }
 
+/// The names to try when launching `command`, in order.
+///
+/// Rust's `Command::new` on Windows appends only `.exe` when searching PATH. npm
+/// ships `npx` as `npx.cmd` and `npx.ps1` with no `.exe` anywhere, so `npx` —
+/// the command every server in the catalog is launched with — was simply
+/// "program not found". Every one-click connection on Windows failed there, and
+/// the panel then threw the message away, which is what "I try to connect and
+/// nothing happens" was.
+///
+/// The extensions are tried by SPAWNING, never by handing a line to `cmd /c`:
+/// a shell would mean quoting the user's own arguments correctly forever, and
+/// the first mistake in that is a command injection. Rust has escaped arguments
+/// to batch files itself since 1.77.2, so spawning `npx.cmd` needs no shell of
+/// our own.
+///
+/// A command that already has an extension, or any path with a separator in it,
+/// is left exactly as the user wrote it.
+fn candidate_programs(command: &str) -> Vec<String> {
+    let trimmed = command.trim().to_string();
+    if !cfg!(windows) {
+        return vec![trimmed];
+    }
+    let leaf = trimmed
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(&trimmed)
+        .to_string();
+    if leaf.contains('.') {
+        return vec![trimmed];
+    }
+    vec![
+        trimmed.clone(),
+        format!("{trimmed}.cmd"),
+        format!("{trimmed}.bat"),
+        format!("{trimmed}.exe"),
+    ]
+}
+
+/// What to tell the user when nothing would start.
+///
+/// "Could not start npx: program not found" is true and useless. The reason npx
+/// is missing is almost always that Node.js is not installed, and that is the
+/// sentence worth showing, because it names something the user can actually go
+/// and do.
+fn start_failure(command: &str, underlying: &str) -> String {
+    let leaf = command
+        .trim()
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(command)
+        .trim_end_matches(".cmd")
+        .trim_end_matches(".exe");
+    if matches!(leaf, "npx" | "npm" | "node") {
+        return format!(
+            "Could not start {command}. This connection needs Node.js, which does not \
+             look like it is installed — get it from nodejs.org, then try again."
+        );
+    }
+    format!("Could not start {command}: {underlying}")
+}
+
 /// How a connection carries messages.
 ///
 /// Two transports, because MCP defines two and they are not interchangeable
@@ -195,28 +256,37 @@ impl Connection {
         if spec.command.trim().is_empty() {
             return Err("This connection has neither a program to run nor an address.".into());
         }
-        let mut command = Command::new(&spec.command);
-        command
-            .args(&spec.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            // The child's stderr goes to Loaf's, rather than being captured and
-            // silently discarded: a server that cannot start says why.
-            .stderr(Stdio::inherit());
-        for (key, value) in &spec.env {
-            command.env(key, value);
-        }
-        #[cfg(windows)]
-        {
-            // No console window for a child of a GUI app.
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
 
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("Could not start {}: {e}", spec.command))?;
+        let mut child = None;
+        let mut last = String::new();
+        for program in candidate_programs(&spec.command) {
+            let mut command = Command::new(&program);
+            command
+                .args(&spec.args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                // The child's stderr goes to Loaf's, rather than being captured
+                // and silently discarded: a server that cannot start says why.
+                .stderr(Stdio::inherit());
+            for (key, value) in &spec.env {
+                command.env(key, value);
+            }
+            #[cfg(windows)]
+            {
+                // No console window for a child of a GUI app.
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                command.creation_flags(CREATE_NO_WINDOW);
+            }
+            match command.spawn() {
+                Ok(c) => {
+                    child = Some(c);
+                    break;
+                }
+                Err(e) => last = e.to_string(),
+            }
+        }
+        let mut child = child.ok_or_else(|| start_failure(&spec.command, &last))?;
         let stdin = child.stdin.take().ok_or("no stdin on the server")?;
         let stdout = child.stdout.take().ok_or("no stdout on the server")?;
 
@@ -640,5 +710,195 @@ mod tests {
         let dir = std::path::Path::new("C:/data");
         assert!(config_path(dir).ends_with("LoafPlus/mcp.json"));
         assert!(log_path(dir).ends_with("LoafPlus/mcp-calls.json"));
+    }
+
+    #[test]
+    fn looks_for_the_windows_script_shim_as_well_as_the_exe() {
+        let tried = candidate_programs("npx");
+        assert_eq!(tried[0], "npx", "the plain name is still tried first");
+        if cfg!(windows) {
+            // The actual bug: npm ships npx.cmd and npx.ps1, never npx.exe, and
+            // Rust's Command only appends .exe — so every catalog server failed
+            // to start on Windows with "program not found".
+            assert!(tried.contains(&"npx.cmd".to_string()));
+            assert!(tried.contains(&"npx.bat".to_string()));
+        } else {
+            assert_eq!(tried.len(), 1, "only Windows needs the shims");
+        }
+    }
+
+    #[test]
+    fn leaves_a_command_the_user_spelled_out_alone() {
+        // Already has an extension, or is a real path: taking it apart and
+        // guessing would be worse than running exactly what was asked for.
+        assert_eq!(candidate_programs("python.exe"), vec!["python.exe"]);
+        assert_eq!(
+            candidate_programs("C:/tools/my-server.bat"),
+            vec!["C:/tools/my-server.bat"]
+        );
+        assert_eq!(candidate_programs("  node.exe  "), vec!["node.exe"]);
+    }
+
+    #[test]
+    fn a_path_without_an_extension_still_gets_the_shims_on_windows() {
+        let tried = candidate_programs("C:/tools/server");
+        assert_eq!(tried[0], "C:/tools/server");
+        if cfg!(windows) {
+            assert!(tried.contains(&"C:/tools/server.cmd".to_string()));
+        }
+    }
+
+    #[test]
+    fn says_node_is_missing_rather_than_program_not_found() {
+        // "Could not start npx: program not found" is true and useless. The
+        // reason npx is absent is almost always that Node.js is not installed,
+        // and that is the sentence that names something a person can go and do.
+        let said = start_failure("npx", "program not found");
+        assert!(said.contains("Node.js"), "{said}");
+        assert!(said.contains("nodejs.org"), "{said}");
+    }
+
+    #[test]
+    fn still_quotes_the_real_reason_for_anything_else() {
+        let said = start_failure("granola-mcp", "Access is denied. (os error 5)");
+        assert!(said.contains("granola-mcp"));
+        assert!(said.contains("Access is denied"));
+        assert!(!said.contains("Node.js"));
+    }
+
+    #[test]
+    fn recognises_node_through_a_full_path_and_an_extension() {
+        for command in [
+            "C:/Program Files/nodejs/npx.cmd",
+            "/usr/local/bin/node",
+            "npm",
+        ] {
+            assert!(
+                start_failure(command, "whatever").contains("Node.js"),
+                "{command}"
+            );
+        }
+    }
+    /// A real round trip to a server LOAF DID NOT WRITE, fetched from npm.
+    ///
+    /// Ignored by default: it needs Node.js and a network on first run, because
+    /// `npx` downloads the package. Run it by hand with
+    ///
+    ///     cargo test -- --ignored --nocapture connects_to_an_external_server
+    ///
+    /// This is the test that would have caught the Windows bug immediately.
+    /// `talks_to_a_real_server` above passes an absolute path to a `.exe`, so it
+    /// never exercised PATH lookup at all — and every server a user can actually
+    /// pick from the catalog is launched as the bare word `npx`, which Rust could
+    /// not find on Windows because npm ships `npx.cmd` and no `npx.exe`.
+    #[test]
+    #[ignore]
+    fn connects_to_an_external_server() {
+        let dir = std::env::temp_dir().join("loaf-mcp-live-test");
+        std::fs::create_dir_all(&dir).expect("make a folder for it to read");
+        std::fs::write(dir.join("hello.txt"), "loaf was here").expect("write a file");
+
+        let spec = ServerSpec {
+            name: "files".into(),
+            command: "npx".into(),
+            args: vec![
+                "-y".into(),
+                "@modelcontextprotocol/server-filesystem".into(),
+                dir.to_string_lossy().into_owned(),
+            ],
+            env: BTreeMap::new(),
+            note: "a folder on this computer".into(),
+            url: String::new(),
+            token: String::new(),
+        };
+
+        // WHY THIS CHECK IS HERE, so nobody spends an afternoon on it twice.
+        // `cargo test` hands its children a PATH of about 18,000 characters
+        // (it prepends the target directories). cmd.exe truncates a variable at
+        // 8,191, and npx runs the package's own bin THROUGH cmd — so the
+        // truncated PATH loses the shim directory and npx reports
+        // "'mcp-server-filesystem' is not recognized". That is the test harness
+        // breaking npx, not Loaf: spawned from an ordinary shell with a normal
+        // PATH, from these same directories, this works. Run it under
+        // `cargo test` and it cannot.
+        let path_len = std::env::var("PATH").map(|p| p.len()).unwrap_or(0);
+        if path_len > 8000 {
+            println!(
+                "SKIPPED: PATH is {path_len} characters, and cmd.exe truncates at 8191,                  which breaks npx itself. Run this from a shell with a shorter PATH."
+            );
+            return;
+        }
+
+        let mut conn = match Connection::open(&spec) {
+            Ok(c) => c,
+            Err(e) => panic!("could not start the external server: {e}"),
+        };
+        let tools = conn.tools().expect("tools/list");
+        println!("external server offered {} tools: {tools:?}", tools.len());
+        assert!(
+            tools
+                .iter()
+                .any(|t| t == "read_text_file" || t == "read_file"),
+            "expected a file-reading tool, got {tools:?}"
+        );
+
+        let answer = conn
+            .call(
+                "list_directory",
+                serde_json::json!({ "path": dir.to_string_lossy() }),
+            )
+            .expect("tools/call");
+        println!("list_directory said: {answer}");
+        assert!(answer.contains("hello.txt"), "got: {answer}");
+    }
+    /// A real round trip to a REMOTE server over HTTP, run by somebody else.
+    ///
+    /// Ignored by default: it needs a network and it talks to a third party.
+    ///
+    ///     cargo test -- --ignored --nocapture connects_to_a_remote_server
+    ///
+    /// DeepWiki is used because it is a public MCP server that needs no account,
+    /// which makes it the only way to exercise this path end to end without
+    /// putting somebody's credential in a test. Nothing about this machine is
+    /// sent — the one call asks about a public repository by name.
+    ///
+    /// This covers what the stdio tests cannot: SSE framing, the session header,
+    /// and the fact that `remote.rs` has never once been run against a server it
+    /// did not also write.
+    #[test]
+    #[ignore]
+    fn connects_to_a_remote_server() {
+        let spec = ServerSpec {
+            name: "deepwiki".into(),
+            command: String::new(),
+            args: vec![],
+            env: BTreeMap::new(),
+            note: "public docs, no account".into(),
+            url: "https://mcp.deepwiki.com/mcp".into(),
+            token: String::new(),
+        };
+
+        let mut conn = match Connection::open(&spec) {
+            Ok(c) => c,
+            Err(e) => panic!("could not reach the remote server: {e}"),
+        };
+        let tools = conn.tools().expect("tools/list");
+        println!("remote server offered {} tools: {tools:?}", tools.len());
+        assert!(
+            tools.iter().any(|t| t == "read_wiki_structure"),
+            "got {tools:?}"
+        );
+
+        let answer = conn
+            .call(
+                "read_wiki_structure",
+                serde_json::json!({ "repoName": "tauri-apps/tauri" }),
+            )
+            .expect("tools/call");
+        println!(
+            "first 300 chars back: {}",
+            answer.chars().take(300).collect::<String>()
+        );
+        assert!(!answer.trim().is_empty(), "empty answer");
     }
 }

@@ -237,9 +237,18 @@ async function runSearch(): Promise<void> {
  * and refreshing a page the user is looking at must not launch four processes.
  * Tools appear only when the button that says it will start it is pressed.
  */
-async function refreshConnections(keep = true): Promise<void> {
+async function refreshConnections(): Promise<void> {
+  // A failure to READ the list is not the same as an empty list. `mcp_servers`
+  // is strict about the config file — one stray comma and it returns an error —
+  // and swallowing that to `[]` rendered a hand-edited config as "Nothing is
+  // connected yet", which sends the user off adding a connection they already
+  // have.
+  let listError = "";
   const [servers, running, calls, watches] = await Promise.all([
-    invoke<unknown[]>("mcp_servers").catch(() => []),
+    invoke<unknown[]>("mcp_servers").catch((err) => {
+      listError = String(err);
+      return [];
+    }),
     invoke<unknown[]>("mcp_connected").catch(() => []),
     invoke<unknown[]>("mcp_calls").catch(() => []),
     invoke<unknown[]>("watches_list").catch(() => []),
@@ -250,13 +259,24 @@ async function refreshConnections(keep = true): Promise<void> {
     running: (running as unknown[]).filter((r): r is string => typeof r === "string"),
     calls: calls.filter(isCallRecord) as CallRecord[],
     watches: watches.filter(isWatch) as Watch[],
-    // A tools list survives a refresh; it is what the user just asked for.
-    // Errors do not: the point of pressing again is to find out if it still
-    // fails, and a stale red line under a server that now works is a lie.
-    tools: keep ? connections.tools : {},
-    errors: {},
+    listError,
+    // Tools AND errors both survive a refresh, and errors surviving is the fix
+    // for the bug that made this whole tab look dead. The old code cleared them
+    // here, and every caller set an error and then immediately called this — so
+    // a failed connection stored its reason, wiped it, and re-rendered the
+    // button as though nothing had been pressed. Nothing ever appeared on
+    // screen. An error is now cleared where it should be: when the user presses
+    // the thing again, just before finding out whether it still fails.
   };
   await render();
+}
+
+/** Forget the last failure for one server, because it is being tried again. */
+function clearError(name: string): void {
+  if (!connections.errors[name]) return;
+  const errors = { ...connections.errors };
+  delete errors[name];
+  connections = { ...connections, errors };
 }
 
 async function render(): Promise<void> {
@@ -533,13 +553,17 @@ root.addEventListener("click", (ev) => {
     // Said out loud on the button that does it, because this is the moment a
     // program the user chose is actually launched.
     startIt.textContent = "Starting it…";
+    // Cleared HERE, not in the refresh below: the point of pressing again is to
+    // find out whether it still fails, and a stale red line under a server that
+    // now works is a lie. Clearing it afterwards instead threw away the reason
+    // this attempt failed, which is the bug that made the tab look inert.
+    clearError(name);
     void (async () => {
       try {
         const tools = await invoke<string[]>("mcp_tools", { name });
         connections = {
           ...connections,
           tools: { ...connections.tools, [name]: tools },
-          errors: { ...connections.errors, [name]: "" },
         };
       } catch (err) {
         connections = {
@@ -569,13 +593,13 @@ root.addEventListener("click", (ev) => {
       result: "",
       argsDraft: same ? connections.argsDraft : "{}",
     };
-    void refreshConnections(false);
+    void refreshConnections();
     return;
   }
 
   if (target.closest("[data-mcp-cancel]")) {
     connections = { ...connections, picked: null, result: "" };
-    void refreshConnections(false);
+    void refreshConnections();
     return;
   }
 
@@ -585,7 +609,7 @@ root.addEventListener("click", (ev) => {
     const box = document.getElementById("mcp-args") as HTMLTextAreaElement | null;
     const args = box?.value ?? connections.argsDraft;
     connections = { ...connections, argsDraft: args, calling: true, result: "" };
-    void refreshConnections(false);
+    void refreshConnections();
     void (async () => {
       try {
         const out = await invoke<string>("mcp_call", {
@@ -639,7 +663,7 @@ root.addEventListener("click", (ev) => {
       } catch (err) {
         connections = { ...connections, result: String(err) };
       }
-      await refreshConnections(false);
+      await refreshConnections();
     })();
     return;
   }
@@ -663,7 +687,7 @@ root.addEventListener("click", (ev) => {
       await invoke("mcp_save_servers", { servers: left }).catch((err) =>
         console.error("could not save connections", err),
       );
-      await refreshConnections(false);
+      await refreshConnections();
     })();
     return;
   }
@@ -674,15 +698,23 @@ root.addEventListener("click", (ev) => {
   if (pickServer) {
     const entry = catalogEntry(pickServer.dataset.mcpPickServer!);
     if (entry) {
-      const set = (id: string, value: string): void => {
-        const el = document.getElementById(id) as HTMLInputElement | null;
-        if (el) el.value = value;
-      };
-      set("mcp-new-name", entry.id);
-      set("mcp-new-cmd", entry.command);
-      set("mcp-new-args", entry.args.join(" "));
-      set("mcp-new-note", entry.note);
-      (document.getElementById("mcp-new-name") as HTMLInputElement | null)?.focus();
+      // Remembered now, not just typed into the boxes. The form has to know
+      // WHICH preset this is to show its setup steps and its own key boxes —
+      // Notion's documented setup asks for a NOTION_TOKEN, and until the form
+      // knew a preset had been chosen there was nowhere on screen to put one.
+      connections = { ...connections, pickedCatalog: entry.id };
+      void (async () => {
+        await render();
+        const set = (id: string, value: string): void => {
+          const el = document.getElementById(id) as HTMLInputElement | null;
+          if (el) el.value = value;
+        };
+        set("mcp-new-name", entry.id);
+        set("mcp-new-cmd", entry.command);
+        set("mcp-new-args", entry.args.join(" "));
+        set("mcp-new-note", entry.note);
+        (document.getElementById("mcp-new-name") as HTMLInputElement | null)?.focus();
+      })();
     }
     return;
   }
@@ -694,7 +726,7 @@ root.addEventListener("click", (ev) => {
   }
 
   if (target.closest("[data-mcp-add-cancel]")) {
-    connections = { ...connections, adding: false };
+    connections = { ...connections, adding: false, pickedCatalog: null };
     void render();
     return;
   }
@@ -710,26 +742,39 @@ root.addEventListener("click", (ev) => {
     // config with neither too; the check is here as well so the answer is
     // immediate rather than an error string after a round trip.
     if (!name || (!command && !url)) return;
+    // Every secret box the chosen preset asked for. Collected from the DOM the
+    // same way the rest of the form is, and sent down the one-way `secrets`
+    // channel so the value never becomes something this window could be asked
+    // to hand back.
+    const env: Record<string, string> = {};
+    for (const box of document.querySelectorAll<HTMLInputElement>("[data-mcp-env]")) {
+      const key = box.dataset.mcpEnv!;
+      const v = box.value.trim();
+      if (v) env[key] = v;
+    }
     const server: ServerView = {
       name,
       command,
       args: parseArgs(value("mcp-new-args")),
       note: value("mcp-new-note"),
-      env_keys: [],
+      env_keys: Object.keys(env),
       url,
       has_token: token !== "",
     };
     void (async () => {
       const servers = [...connections.servers, server];
+      const secrets: Record<string, string> = { ...env };
+      if (token) secrets["__token"] = token;
+      clearError(name);
       try {
         // The token goes in `secrets`, the one-way channel, never in the server
         // list — so it reaches Rust without ever being something the window can
         // be asked to hand back. Same path the env values already use.
         await invoke("mcp_save_servers", {
           servers,
-          ...(token ? { secrets: { [name]: { __token: token } } } : {}),
+          ...(Object.keys(secrets).length ? { secrets: { [name]: secrets } } : {}),
         });
-        connections = { ...connections, adding: false };
+        connections = { ...connections, adding: false, pickedCatalog: null };
       } catch (err) {
         connections = { ...connections, errors: { ...connections.errors, [name]: String(err) } };
       }

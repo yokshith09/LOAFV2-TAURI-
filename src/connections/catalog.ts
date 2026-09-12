@@ -43,6 +43,24 @@ export interface CatalogEntry {
   readonly publisher: string;
   /** What the user still has to do themselves, in plain words. Empty if nothing. */
   readonly setup: string;
+  /**
+   * The numbered steps, for the ones that need something done elsewhere first.
+   *
+   * Separate from `setup` because a paragraph is the wrong shape for "go here,
+   * press this, copy that". Notion's setup was described in one sentence and was
+   * not actually possible from the panel at all — the box it told you to fill in
+   * did not exist.
+   */
+  readonly steps: readonly string[];
+  /**
+   * Environment variables this server needs, e.g. `NOTION_TOKEN`.
+   *
+   * These are SECRETS. They go to Rust through the same one-way channel as a
+   * bearer token and are never read back into a window.
+   */
+  readonly envKeys: readonly string[];
+  /** Where to get the token, if one is needed. Shown as a link. */
+  readonly tokenFrom: string;
   /** The note pre-filled on the connection. */
   readonly note: string;
 }
@@ -55,8 +73,18 @@ export const CATALOG: readonly CatalogEntry[] = [
     args: ["-y", "@notionhq/notion-mcp-server"],
     publisher: "Notion",
     setup:
-      "Make an internal integration in Notion, share the pages you want with it, " +
-      "and put its token in NOTION_TOKEN below.",
+      "Notion needs its own key before it will let anything in. Four steps, " +
+      "once, and the third one is the one people miss.",
+    steps: [
+      "Open notion.so/my-integrations and press New integration.",
+      "Give it a name, pick your workspace, and save it.",
+      "Copy the Internal Integration Secret — it starts with ntn_ or secret_.",
+      "In Notion, open each page you want Loaf to see, press the ••• menu, " +
+        "and Connect to your new integration. Nothing is shared until you do " +
+        "this, so a working key with no pages shared reads as an empty Notion.",
+    ],
+    envKeys: ["NOTION_TOKEN"],
+    tokenFrom: "notion.so/my-integrations",
     note: "My Notion pages",
   },
   {
@@ -68,9 +96,20 @@ export const CATALOG: readonly CatalogEntry[] = [
     setup:
       "Add the folder you want it to see as one more argument. It can read " +
       "everything inside that folder, so pick a narrow one.",
+    steps: [
+      "Decide which single folder this may read. Not your whole home folder.",
+      "Add its full path to the end of the arguments box below.",
+    ],
+    envKeys: [],
+    tokenFrom: "",
     note: "Files in one folder",
   },
 ];
+
+/** Whether anything in the catalog needs Node.js installed to run. */
+export function needsNode(entry: CatalogEntry): boolean {
+  return entry.command === "npx" || entry.command === "npm" || entry.command === "node";
+}
 
 /**
  * Things people ask for that are deliberately not one press.

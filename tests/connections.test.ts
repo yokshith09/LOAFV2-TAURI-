@@ -709,3 +709,83 @@ describe("a remote server", () => {
     expect(html).toContain('type="password"');
   });
 });
+
+describe("when the connection panel could not be made to work", () => {
+  it("says the list could not be READ, not that the list is empty", () => {
+    // These are different facts. `mcp_servers` is strict about its config file,
+    // and swallowing that to `[]` rendered a hand-edited config as "Nothing is
+    // connected yet" — which sends someone off adding what they already have.
+    const html = connectionsPanel(
+      state({ listError: "line 4: trailing comma" }),
+      NOW,
+    );
+    expect(html).toContain("could not read its list");
+    expect(html).toContain("trailing comma");
+    expect(html).not.toContain("Nothing is connected");
+  });
+
+  it("shows why a server would not start", () => {
+    // THE BUG THAT MADE THE TAB LOOK DEAD. The reason was stored and then wiped
+    // by the refresh that followed, so the button reset and nothing appeared.
+    const html = connectionsPanel(
+      state({
+        servers: [server()],
+        errors: { granola: "Could not start npx. This connection needs Node.js" },
+      }),
+      NOW,
+    );
+    expect(html).toContain("needs Node.js");
+  });
+
+  it("keeps a server's own card when only the list failed", () => {
+    const html = connectionsPanel(state({ listError: "broken" }), NOW);
+    expect(html).toContain("Open the config file");
+  });
+});
+
+describe("setting up a connection that needs a key", () => {
+
+  it("gives Notion's key a box to go in", () => {
+    // It used to tell the user to put a token in NOTION_TOKEN and provide
+    // nowhere to put it. The only route was hand-editing JSON.
+    const html = connectionsPanel(state({ adding: true, pickedCatalog: "notion" }), NOW);
+    expect(html).toContain('data-mcp-env="NOTION_TOKEN"');
+    expect(html).toContain('type="password"');
+  });
+
+  it("shows the steps, including sharing the pages", () => {
+    const html = connectionsPanel(state({ adding: true, pickedCatalog: "notion" }), NOW);
+    expect(html).toContain("my-integrations");
+    // The step people miss: a valid key with no pages shared looks like an
+    // empty Notion, which reads as Loaf being broken.
+    expect(html).toContain("Connect to your new integration");
+  });
+
+  it("asks for no keys until a preset is chosen", () => {
+    const html = connectionsPanel(state({ adding: true }), NOW);
+    expect(html).not.toContain("data-mcp-env");
+  });
+
+  it("asks for no keys for a server that needs none", () => {
+    const html = connectionsPanel(state({ adding: true, pickedCatalog: "files" }), NOW);
+    expect(html).not.toContain("data-mcp-env");
+    expect(html).toContain("Not your whole home folder");
+  });
+
+  it("every catalog entry that names a key also explains where to get it", () => {
+    for (const entry of CATALOG) {
+      if (entry.envKeys.length > 0) {
+        expect(entry.tokenFrom, entry.id).not.toBe("");
+        expect(entry.steps.length, entry.id).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("warns that the npx entries need Node.js installed", () => {
+    // Every catalog entry runs through npx, and a machine without Node.js
+    // cannot start any of them. Better said on the button than discovered as a
+    // failure afterwards.
+    const html = connectionsPanel(state({ adding: true }), NOW);
+    expect(html).toContain("needs Node.js");
+  });
+});
