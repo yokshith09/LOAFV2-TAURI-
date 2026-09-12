@@ -42,6 +42,7 @@ pub mod control;
 pub mod mcp;
 pub mod mcp_client;
 pub mod mcp_stdio;
+pub mod oauth;
 pub mod packs;
 pub mod platform;
 pub mod remote;
@@ -2383,6 +2384,104 @@ fn open_mcp_config(app: tauri::AppHandle) -> Result<(), String> {
     open_in_file_manager(&path.to_string_lossy())
 }
 
+// --- Signing in to a remote server -------------------------------------------
+
+/// Open a URL in whatever browser the user actually uses.
+///
+/// The address is given as ONE argument rather than handed to a shell. That is
+/// not fussiness: this URL is built partly from a discovery document the server
+/// supplied, and `cmd /c start` would let an `&` inside it become a second
+/// command.
+///
+/// Anything that is not http(s) is refused for the same reason. A discovery
+/// document is somebody else's text, and `file://` is not a sign-in page.
+fn open_in_browser(url: &str) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("That sign-in address did not look like a web address.".into());
+    }
+    #[cfg(windows)]
+    let result = std::process::Command::new("explorer").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
+    result
+        .map(|_| ())
+        .map_err(|e| format!("Could not open a browser: {e}"))
+}
+
+/// Sign in to a remote server with a browser.
+///
+/// `(async)` because this blocks for as long as the person takes — putting it on
+/// Tauri's pool is what stops the companion freezing while somebody hunts for a
+/// password.
+#[tauri::command(async)]
+fn mcp_sign_in(
+    app: tauri::AppHandle,
+    pool: tauri::State<'_, connections::Pool>,
+    name: String,
+) -> Result<Vec<connections::ServerView>, String> {
+    let dir = data_dir(&app)?;
+    let config = connections::load(&dir)?;
+    let spec = config
+        .servers
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or("There is no connection by that name.")?;
+    if !remote::is_remote(&spec.url) {
+        return Err(
+            "Only a remote connection can be signed in to. A program on this \
+                    computer is given its key in the config file instead."
+                .into(),
+        );
+    }
+
+    let url = spec.url.trim().to_string();
+    let existing = spec.oauth.clone();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(30))
+        .build();
+    let challenge = oauth::challenge_for(&agent, &url);
+    let session = oauth::sign_in(
+        &agent,
+        &url,
+        challenge.as_deref(),
+        existing.as_ref(),
+        open_in_browser,
+    )?;
+
+    // Re-read rather than reusing what was loaded before the browser opened. A
+    // sign-in takes minutes, and writing back a stale copy would undo anything
+    // else changed in the meantime.
+    let mut config = connections::load(&dir)?;
+    let Some(server) = config.servers.iter_mut().find(|s| s.name == name) else {
+        return Err("That connection was removed while you were signing in.".into());
+    };
+    server.oauth = Some(session);
+    connections::save(&dir, &config)?;
+    // Whatever is already open is still holding the old token.
+    connections::disconnect(&pool, &name);
+    Ok(connections::redact(&config))
+}
+
+/// Forget a sign-in, leaving the connection itself in place.
+#[tauri::command(async)]
+fn mcp_sign_out(
+    app: tauri::AppHandle,
+    pool: tauri::State<'_, connections::Pool>,
+    name: String,
+) -> Result<Vec<connections::ServerView>, String> {
+    let dir = data_dir(&app)?;
+    let mut config = connections::load(&dir)?;
+    let Some(server) = config.servers.iter_mut().find(|s| s.name == name) else {
+        return Err("There is no connection by that name.".into());
+    };
+    server.oauth = None;
+    connections::save(&dir, &config)?;
+    connections::disconnect(&pool, &name);
+    Ok(connections::redact(&config))
+}
+
 // --- Claude Desktop ----------------------------------------------------------
 
 /// What the Connections tab needs to describe the Claude Desktop link.
@@ -2650,6 +2749,8 @@ pub fn run() {
             mcp_connected,
             mcp_disconnect,
             open_mcp_config,
+            mcp_sign_in,
+            mcp_sign_out,
             claude_status,
             claude_connect,
             claude_disconnect,

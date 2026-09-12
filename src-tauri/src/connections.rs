@@ -46,6 +46,13 @@ pub struct ServerView {
     /// The address, for a remote server. Not a secret: it is what the user typed.
     #[serde(default)]
     pub url: String,
+    /// Whether a browser sign-in has been done for this server.
+    ///
+    /// Separate from `has_token`, because the two offer different buttons: a
+    /// pasted token can only be replaced by hand, while a sign-in can be
+    /// renewed and undone from the panel.
+    #[serde(default)]
+    pub signed_in: bool,
     /// Whether a bearer token is stored — never the token.
     ///
     /// The same rule as `env_keys`: the window is told a credential EXISTS so it
@@ -66,6 +73,13 @@ pub fn redact(config: &Config) -> Vec<ServerView> {
             args: s.args.clone(),
             url: s.url.clone(),
             has_token: !s.token.trim().is_empty(),
+            // WHETHER, never what. The same rule the token follows: the window
+            // is told a sign-in exists so it can say so and offer to undo it,
+            // and there is no shape in which the token itself comes back down.
+            signed_in: s
+                .oauth
+                .as_ref()
+                .is_some_and(super::oauth::Session::signed_in),
             note: s.note.clone(),
             env_keys: s.env.keys().cloned().collect(),
         })
@@ -139,6 +153,12 @@ pub fn apply(stored: &Config, incoming: Vec<ServerView>, secrets: &SecretsIn) ->
                 // "leave what is stored", not "clear it" — otherwise every save
                 // from the panel would wipe the credential it was never shown.
                 token,
+                // CARRIED THROUGH, like the watches below. This function
+                // rebuilds every server from what the window sent, and the
+                // window is never told about a sign-in — so building a fresh
+                // spec here would sign the user out of every remote server the
+                // next time somebody renamed one.
+                oauth: old.and_then(|s| s.oauth.clone()),
                 env: merge_env(&typed, &existing),
                 note: view.note,
             }
@@ -307,6 +327,7 @@ mod tests {
             note: String::new(),
             url: String::new(),
             token: String::new(),
+            oauth: None,
         }
     }
 
@@ -334,6 +355,7 @@ mod tests {
             env_keys: Vec::new(),
             url: String::new(),
             has_token: false,
+            signed_in: false,
         }];
         let out = apply(&stored, incoming, &SecretsIn::default());
         assert_eq!(out.watches, stored.watches);
@@ -405,6 +427,7 @@ mod tests {
             env_keys: vec![],
             url: String::new(),
             has_token: false,
+            signed_in: false,
         }];
         let after = apply(&stored, view, &SecretsIn::default());
         assert_eq!(after.servers.len(), 1);

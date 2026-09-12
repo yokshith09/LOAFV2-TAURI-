@@ -53,12 +53,35 @@ pub struct ServerSpec {
     /// never what it is.
     #[serde(default)]
     pub token: String,
+    /// A browser sign-in, once one has been done. See `oauth.rs`.
+    ///
+    /// Separate from `token` rather than replacing it, because the two are
+    /// different promises. `token` is a value the user pasted and Loaf must not
+    /// touch; this one Loaf obtained itself, can renew without asking, and can
+    /// throw away when the user signs out. When both exist the sign-in wins,
+    /// since it is the one that can be kept fresh.
+    ///
+    /// Skipped when absent so a config that never used this stays exactly as it
+    /// was. Nobody should find a block of OAuth fields in their file because
+    /// they once opened the panel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<crate::oauth::Session>,
     /// Extra environment for the child, e.g. an API key the user supplies.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     /// The user's own note about what this is for. Shown in the UI.
     #[serde(default)]
     pub note: String,
+}
+
+impl ServerSpec {
+    /// The bearer token to send, preferring a sign-in over a pasted one.
+    pub fn bearer(&self) -> String {
+        match &self.oauth {
+            Some(session) if session.signed_in() => session.tokens.access_token.clone(),
+            _ => self.token.clone(),
+        }
+    }
 }
 
 /// The whole config file.
@@ -229,6 +252,14 @@ const _: () = assert!(PATH_BUDGET + 1000 < CMD_PATH_LIMIT);
 /// has to survive the cut, it is the one that makes the command runnable at all.
 ///
 /// Pure and separate so the arithmetic can be tested without a real PATH.
+///
+/// Deliberately NOT behind `cfg(windows)`, even though only Windows calls it.
+/// The development machine for this project is a PC and the macOS half is only
+/// ever seen by CI, so gating this would make its tests Windows-only too — and
+/// then a change that broke the arithmetic would be found on a runner instead of
+/// here. The `allow` is narrowed to "not Windows" so that on the platform which
+/// does call it, an unused function is still an error.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn trimmed_path(entries: &[String], first: Option<&str>, budget: usize) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
@@ -283,7 +314,9 @@ fn program_dir(program: &str) -> Option<std::path::PathBuf> {
 /// cmd.exe, which means the PATH is thrown away — so npx installs the package
 /// perfectly and then cannot find the binary it just installed:
 ///
-///     'notion-mcp-server' is not recognized as an internal or external command
+/// ```text
+/// 'notion-mcp-server' is not recognized as an internal or external command
+/// ```
 ///
 /// which reads as a broken package and is nothing of the kind. Development
 /// builds hit this every time. So do plenty of real machines: 8,191 characters
@@ -384,7 +417,8 @@ impl Connection {
             wire: Wire::Remote {
                 agent,
                 url: spec.url.trim().to_string(),
-                token: spec.token.clone(),
+                // The sign-in when there is one, the pasted token otherwise.
+                token: spec.bearer(),
                 session: None,
             },
             next_id: 1,
@@ -777,6 +811,7 @@ mod tests {
             note: String::new(),
             url: String::new(),
             token: String::new(),
+            oauth: None,
         };
         // `unwrap_err` would need Connection: Debug, and a live connection is
         // not a thing worth making printable for one test.
@@ -796,6 +831,7 @@ mod tests {
             note: String::new(),
             url: "https://a".into(),
             token: String::new(),
+            oauth: None,
         };
         assert!(
             Connection::open(&spec).is_err(),
@@ -860,6 +896,7 @@ mod tests {
             note: "Loaf's own server".into(),
             url: String::new(),
             token: String::new(),
+            oauth: None,
         };
         let mut conn = Connection::open(&spec).expect("handshake");
         let tools = conn.tools().expect("tools/list");
@@ -978,6 +1015,7 @@ mod tests {
             note: "a folder on this computer".into(),
             url: String::new(),
             token: String::new(),
+            oauth: None,
         };
 
         // This used to skip itself when PATH was over 8,191 characters,
@@ -1032,6 +1070,7 @@ mod tests {
             note: "public docs, no account".into(),
             url: "https://mcp.deepwiki.com/mcp".into(),
             token: String::new(),
+            oauth: None,
         };
 
         let mut conn = match Connection::open(&spec) {
@@ -1079,6 +1118,7 @@ mod tests {
             note: String::new(),
             url: String::new(),
             token: String::new(),
+            oauth: None,
         };
         match Connection::open(&spec) {
             Ok(_) => panic!("that should not have connected"),

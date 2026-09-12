@@ -682,12 +682,38 @@ describe("a remote server", () => {
 
   it("says a token is stored without ever showing one", () => {
     const html = connectionsPanel(state({ servers: [remote()] }), NOW);
-    expect(html).toContain("signed in");
+    expect(html).toContain("token saved");
+    expect(html).not.toContain("mail-token-value");
+  });
+
+  it("tells a pasted token apart from a browser sign-in", () => {
+    // They used to render identically, and they are not the same thing: only
+    // one of them can be renewed or undone from this panel.
+    const pasted = connectionsPanel(state({ servers: [remote()] }), NOW);
+    expect(pasted).toContain("token saved");
+    expect(pasted).toContain("data-mcp-signin");
+
+    const real = connectionsPanel(state({ servers: [remote({ signed_in: true })] }), NOW);
+    expect(real).toContain("signed in");
+    expect(real).toContain("data-mcp-signout");
+    expect(real).not.toContain("data-mcp-signin");
   });
 
   it("does not claim a sign-in when there is none", () => {
-    const html = connectionsPanel(state({ servers: [remote({ has_token: false })] }), NOW);
-    expect(html).not.toContain("signed in");
+    const html = connectionsPanel(
+      state({ servers: [remote({ has_token: false })] }),
+      NOW,
+    );
+    expect(html).toContain("no sign-in yet");
+    expect(html).not.toContain("token saved");
+  });
+
+  it("offers no sign-in button for a program on this computer", () => {
+    // A local server is handed its key in the config file. A browser button
+    // there would be one that cannot work.
+    const html = connectionsPanel(state({ servers: [server()] }), NOW);
+    expect(html).not.toContain("data-mcp-signin");
+    expect(html).not.toContain("data-mcp-signout");
   });
 
   it("is accepted by the validator, and so is a config from an older build", () => {

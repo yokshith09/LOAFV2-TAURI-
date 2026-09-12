@@ -685,6 +685,33 @@ root.addEventListener("click", (ev) => {
     return;
   }
 
+  // Signing in opens a browser and then waits for the person, which can take
+  // minutes. The button says so, because a control that looks stuck is how
+  // somebody presses it four times and starts four sign-ins.
+  const signIn = target.closest<HTMLElement>("[data-mcp-signin], [data-mcp-signout]");
+  if (signIn) {
+    const out = signIn.hasAttribute("data-mcp-signout");
+    const name = (out ? signIn.dataset.mcpSignout : signIn.dataset.mcpSignin)!;
+    signIn.textContent = out ? "Signing out…" : "Waiting for your browser…";
+    (signIn as HTMLButtonElement).disabled = true;
+    clearError(name);
+    void (async () => {
+      try {
+        const servers = await invoke<unknown[]>(out ? "mcp_sign_out" : "mcp_sign_in", { name });
+        connections = {
+          ...connections,
+          servers: servers.filter(isServerView) as ServerView[],
+        };
+      } catch (err) {
+        // Shown on the card. A refused or abandoned sign-in has a reason and
+        // this is the one screen where it belongs.
+        connections = { ...connections, errors: { ...connections.errors, [name]: String(err) } };
+      }
+      await refreshConnections();
+    })();
+    return;
+  }
+
   const stopIt = target.closest<HTMLElement>("[data-mcp-stop]");
   if (stopIt) {
     const name = stopIt.dataset.mcpStop!;

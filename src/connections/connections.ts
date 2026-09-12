@@ -41,6 +41,13 @@ export interface ServerView {
   readonly url?: string;
   /** Whether a token is stored. Never the token — there is no reveal. */
   readonly has_token?: boolean;
+  /**
+   * Whether a browser sign-in has been done. Never the token itself.
+   *
+   * Optional because a config written by an older build has no such field, and
+   * absent reads as "not signed in", which is the honest default.
+   */
+  readonly signed_in?: boolean;
 }
 
 /**
@@ -196,7 +203,8 @@ export function isServerView(v: unknown): v is ServerView {
     s.env_keys.every((k) => typeof k === "string") &&
     // Optional, because a config written by an older build has neither.
     (s.url === undefined || typeof s.url === "string") &&
-    (s.has_token === undefined || typeof s.has_token === "boolean")
+    (s.has_token === undefined || typeof s.has_token === "boolean") &&
+    (s.signed_in === undefined || typeof s.signed_in === "boolean")
   );
 }
 
@@ -434,7 +442,13 @@ function serverCard(server: ServerView, state: ConnectionsState): string {
     (isRemote(server)
       ? `<code class="mcp-cmd">${escapeHTML(server.url ?? "")}</code>` +
         `<p class="mcp-keys">Remote server` +
-        (server.has_token ? ` &middot; <span class="mcp-set">signed in</span>` : "") +
+        // A browser sign-in and a pasted token are both "authorised", and the
+        // panel says which — only one of them can be renewed or undone here.
+        (server.signed_in
+          ? ` &middot; <span class="mcp-set">signed in</span>`
+          : server.has_token
+            ? ` &middot; <span class="mcp-set">token saved</span>`
+            : ` &middot; no sign-in yet`) +
         `</p>`
       : `<code class="mcp-cmd">${escapeHTML(commandLine(server))}</code>`) +
     (server.note ? `<p class="mcp-desc">${escapeHTML(server.note)}</p>` : "") +
@@ -445,6 +459,14 @@ function serverCard(server: ServerView, state: ConnectionsState): string {
     `</button>` +
     (running
       ? `<button class="mcp-btn" data-mcp-stop="${escapeHTML(server.name)}">Stop it</button>`
+      : "") +
+    // Only a remote server can be signed in to. A program on this computer is
+    // handed its key in the config file, and offering a browser for that would
+    // be a button that cannot work.
+    (isRemote(server)
+      ? server.signed_in
+        ? `<button class="mcp-btn" data-mcp-signout="${escapeHTML(server.name)}">Sign out</button>`
+        : `<button class="mcp-btn primary" data-mcp-signin="${escapeHTML(server.name)}">Sign in</button>`
       : "") +
     `<button class="mcp-btn danger" data-mcp-remove="${escapeHTML(server.name)}">Remove</button>` +
     `</div>` +
