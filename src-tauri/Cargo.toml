@@ -61,6 +61,23 @@ whisper-rs = "0.16"
 # thread pool, and a blocking read loop is what makes byte-by-byte progress
 # reporting straightforward.
 ureq = "2"
+
+# SIGNING IN TO A REMOTE MCP SERVER. All four are already compiled as
+# transitive dependencies of ureq/rustls, so naming them here adds nothing to
+# the build — it only makes them usable.
+#
+# sha2 rather than a hand-written hash: PKCE's S256 challenge is a SHA-256, the
+# MCP specification requires that method and not `plain`, and a subtly wrong
+# hash would fail as "the server rejected the sign-in" with nothing to look at.
+# This is the one place in the project where rolling our own would be silly.
+sha2 = "0.10"
+base64 = "0.21"
+# The verifier and the state parameter must come from the OS random source.
+# `state` is the entire defence against another site completing a sign-in on the
+# user's behalf, so a predictable one is a real hole rather than a tidiness
+# issue.
+getrandom = "0.2"
+percent-encoding = "2"
 # Only the release zip needs unzipping; the model is a plain file download.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # THE STORE (M3). Bundled rather than linked against a system SQLite: the

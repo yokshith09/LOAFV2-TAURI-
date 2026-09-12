@@ -2220,11 +2220,15 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 name = "loaf"
 version = "0.5.2"
 dependencies = [
+ "base64 0.21.7",
  "cpal",
+ "getrandom 0.2.17",
  "hound",
+ "percent-encoding",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",

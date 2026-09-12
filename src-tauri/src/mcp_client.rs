@@ -197,6 +197,112 @@ fn server_complaint(stderr: Option<std::process::ChildStderr>) -> Option<String>
     Some(tail)
 }
 
+/// The most a `PATH` may be before a command processor throws it away.
+///
+/// Windows' documented ceiling for one environment variable in `cmd.exe`. The
+/// important part is what happens at the ceiling, which is worse than it sounds
+/// and was measured rather than assumed: cmd does not truncate an oversized
+/// PATH, it **discards it**. A child launched through a `.cmd` with a
+/// 9,032-character PATH sees `PATH` as the empty string. With 3,112 it sees it
+/// whole.
+const CMD_PATH_LIMIT: usize = 8_191;
+
+/// How much of the budget to actually use.
+///
+/// Well under the limit because we are not the last one to touch this variable:
+/// npm PREPENDS its own temp shim directory before running a package's binary,
+/// and if that push takes the total over the line the whole PATH vanishes at the
+/// step that matters most.
+const PATH_BUDGET: usize = 6_000;
+
+/// npm PREPENDS its own shim directory before running a package's binary. If
+/// that push crossed the line the whole variable would vanish at the one step
+/// that matters most, so the GAP is the actual safety property — checked here
+/// rather than in a test, because a test cannot stop the build.
+const _: () = assert!(PATH_BUDGET + 1000 < CMD_PATH_LIMIT);
+
+/// Build a `PATH` under `budget`, keeping `first` at the front whatever happens.
+///
+/// Order is preserved for everything else and duplicates are dropped, which on a
+/// developer's machine is often the whole saving. `first` jumps the queue
+/// because it is the directory holding the program being launched — if anything
+/// has to survive the cut, it is the one that makes the command runnable at all.
+///
+/// Pure and separate so the arithmetic can be tested without a real PATH.
+fn trimmed_path(entries: &[String], first: Option<&str>, budget: usize) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    let mut used = 0usize;
+
+    let push = |dir: &str, out: &mut Vec<String>, seen: &mut Vec<String>, used: &mut usize| {
+        let dir = dir.trim().trim_end_matches(['\\', '/']);
+        if dir.is_empty() {
+            return;
+        }
+        // Windows paths are case-insensitive, so `C:\Tools` and `c:\tools` are
+        // one directory listed twice and only one of them is worth the room.
+        let key = dir.to_lowercase();
+        if seen.contains(&key) {
+            return;
+        }
+        let cost = dir.len() + 1;
+        if *used + cost > budget {
+            return;
+        }
+        *used += cost;
+        seen.push(key);
+        out.push(dir.to_string());
+    };
+
+    if let Some(dir) = first {
+        push(dir, &mut out, &mut seen, &mut used);
+    }
+    for dir in entries {
+        push(dir, &mut out, &mut seen, &mut used);
+    }
+    out.join(";")
+}
+
+/// The directory holding `program`, found the way the loader would.
+#[cfg(windows)]
+fn program_dir(program: &str) -> Option<std::path::PathBuf> {
+    if program.contains(['\\', '/']) {
+        return std::path::Path::new(program)
+            .parent()
+            .map(std::path::Path::to_path_buf);
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find(|dir| dir.join(program).is_file())
+}
+
+/// A shorter `PATH` for the child, or None to leave the inherited one alone.
+///
+/// WHY THIS IS NEEDED AT ALL, since it looks like meddling. `cargo run` and
+/// `cargo test` hand their children a PATH of roughly 18,000 characters. Every
+/// server in the catalog runs through `npx`, which is a `.cmd`, which means
+/// cmd.exe, which means the PATH is thrown away — so npx installs the package
+/// perfectly and then cannot find the binary it just installed:
+///
+///     'notion-mcp-server' is not recognized as an internal or external command
+///
+/// which reads as a broken package and is nothing of the kind. Development
+/// builds hit this every time. So do plenty of real machines: 8,191 characters
+/// is not a lot on a workstation with many toolchains installed.
+///
+/// Nothing is changed when the inherited PATH is already fine, so an ordinary
+/// installed build behaves exactly as before.
+#[cfg(windows)]
+fn child_path(program: &str) -> Option<String> {
+    let inherited = std::env::var("PATH").ok()?;
+    if inherited.len() <= CMD_PATH_LIMIT {
+        return None;
+    }
+    let entries: Vec<String> = inherited.split(';').map(str::to_string).collect();
+    let dir = program_dir(program);
+    let first = dir.as_deref().map(|d| d.to_string_lossy().into_owned());
+    Some(trimmed_path(&entries, first.as_deref(), PATH_BUDGET))
+}
+
 /// What to tell the user when nothing would start.
 ///
 /// "Could not start npx: program not found" is true and useless. The reason npx
@@ -318,6 +424,13 @@ impl Connection {
                 use std::os::windows::process::CommandExt;
                 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                 command.creation_flags(CREATE_NO_WINDOW);
+                // A PATH too long for cmd.exe is thrown away rather than cut
+                // short, and every catalog server runs through a `.cmd`. See
+                // `child_path` — this is a no-op unless the inherited PATH is
+                // already over the line.
+                if let Some(path) = child_path(&program) {
+                    command.env("PATH", path);
+                }
             }
             match command.spawn() {
                 Ok(c) => {
@@ -867,23 +980,11 @@ mod tests {
             token: String::new(),
         };
 
-        // WHY THIS CHECK IS HERE, so nobody spends an afternoon on it twice.
-        // `cargo test` hands its children a PATH of about 18,000 characters
-        // (it prepends the target directories). cmd.exe truncates a variable at
-        // 8,191, and npx runs the package's own bin THROUGH cmd — so the
-        // truncated PATH loses the shim directory and npx reports
-        // "'mcp-server-filesystem' is not recognized". That is the test harness
-        // breaking npx, not Loaf: spawned from an ordinary shell with a normal
-        // PATH, from these same directories, this works. Run it under
-        // `cargo test` and it cannot.
-        let path_len = std::env::var("PATH").map(|p| p.len()).unwrap_or(0);
-        if path_len > 8000 {
-            println!(
-                "SKIPPED: PATH is {path_len} characters, and cmd.exe truncates at 8191,                  which breaks npx itself. Run this from a shell with a shorter PATH."
-            );
-            return;
-        }
-
+        // This used to skip itself when PATH was over 8,191 characters,
+        // because cmd.exe discards an oversized PATH and npx could then not
+        // find the binary it had just installed. `child_path` now hands the
+        // child a short one, so the test that had to be skipped under
+        // `cargo test` is exactly the test that proves the fix.
         let mut conn = match Connection::open(&spec) {
             Ok(c) => c,
             Err(e) => panic!("could not start the external server: {e}"),
@@ -993,5 +1094,44 @@ mod tests {
                 assert!(why.contains("The server said"), "{why}");
             }
         }
+    }
+    #[test]
+    fn keeps_the_program_directory_at_the_front_of_a_trimmed_path() {
+        // If anything survives the cut it has to be the directory holding the
+        // program, or the command is not runnable at all.
+        let entries: Vec<String> = (0..500).map(|i| format!("C:/filler/number/{i}")).collect();
+        let out = trimmed_path(&entries, Some("C:/Program Files/nodejs"), 6000);
+        assert!(
+            out.starts_with("C:/Program Files/nodejs;"),
+            "{}",
+            &out[..60]
+        );
+        assert!(out.len() <= 6000, "{} chars", out.len());
+    }
+
+    #[test]
+    fn drops_directories_listed_twice_however_they_are_spelled() {
+        let entries = vec![
+            "C:/Tools".to_string(),
+            "c:/tools".to_string(),
+            "C:/Tools/".to_string(),
+            "C:/Other".to_string(),
+        ];
+        assert_eq!(trimmed_path(&entries, None, 6000), "C:/Tools;C:/Other");
+    }
+
+    #[test]
+    fn leaves_out_empty_entries() {
+        let entries = vec![String::new(), "C:/Real".to_string(), "   ".to_string()];
+        // A trailing separator produces an empty entry, and an empty entry in
+        // PATH means the current directory — not something to hand a server.
+        let out = trimmed_path(&entries, None, 6000);
+        assert_eq!(out, "C:/Real");
+    }
+
+    #[test]
+    fn a_short_path_survives_completely_intact() {
+        let entries = vec!["C:/One".to_string(), "C:/Two".to_string()];
+        assert_eq!(trimmed_path(&entries, None, 6000), "C:/One;C:/Two");
     }
 }
