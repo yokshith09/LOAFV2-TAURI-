@@ -13,6 +13,7 @@ import {
   DEFAULT_SESSION_MINUTES,
   MAX_SESSION_MINUTES,
 } from "../src/voice/commands";
+import { spokenPhrases } from "../src/voice/phrases";
 
 describe("minutesIn", () => {
   it.each([
@@ -116,6 +117,47 @@ describe("tasks", () => {
   it("refuses a task with nothing in it", () => {
     expect(parseIntent("add a task:")).toBeNull();
     expect(parseIntent("remind me to")).toBeNull();
+  });
+});
+
+describe("adding a note by voice", () => {
+  // THE BUG. "add a note saying buy milk" could never be heard by a closed
+  // voice grammar, because the note's own words are not on any list anyone
+  // could write in advance. "add a note" alone — the trigger, no content —
+  // is what the grammar can hold, and it has to mean something on its own.
+  it("understands the bare trigger, with nothing after it, as its own intent", () => {
+    expect(parseIntent("add a note")).toEqual({ kind: "note.dictate" });
+  });
+
+  it("still reads as an ordinary task once dictation supplies a title", () => {
+    // This is exactly the string dictateNoteAfterWake re-enters the parser
+    // with once Whisper has captured the content — no "saying", because the
+    // parser strips only the marker phrase it matched and a stray "saying"
+    // would otherwise survive as the first word of the title.
+    expect(parseIntent("add a note buy milk")).toEqual({
+      kind: "task.add",
+      title: "buy milk",
+      priority: "soon",
+      minutes: null,
+    });
+  });
+
+  it("is not fooled by punctuation the grammar or a stray colon might add", () => {
+    expect(parseIntent("add a note.")).toEqual({ kind: "note.dictate" });
+    expect(parseIntent("add a note:")).toEqual({ kind: "note.dictate" });
+    expect(parseIntent("  add a note  ")).toEqual({ kind: "note.dictate" });
+  });
+
+  it("is in the spoken vocabulary, so Windows' closed recogniser can hear it", () => {
+    expect(spokenPhrases()).toContain("add a note");
+  });
+
+  it("asks what the note is, the same way whether spoken or typed", () => {
+    expect(acknowledge({ kind: "note.dictate" })).toBe("What's the note?");
+  });
+
+  it("never needs a yes/no confirmation — taking a note is not destructive", () => {
+    expect(needsConfirmation({ kind: "note.dictate" })).toBe(false);
   });
 });
 

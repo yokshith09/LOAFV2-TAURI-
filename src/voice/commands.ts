@@ -31,6 +31,17 @@ export type Intent =
   | { readonly kind: "focus.start"; readonly minutes: number }
   | { readonly kind: "focus.stop" }
   | { readonly kind: "task.add"; readonly title: string; readonly priority: Priority; readonly minutes: number | null }
+  /**
+   * "add a note", heard or typed, with nothing after it yet.
+   *
+   * Separate from `task.add` on purpose. That intent needs a title in the SAME
+   * sentence, which a closed voice grammar can never supply — the note's own
+   * words are not on any list anyone could write in advance. This one names
+   * the trigger only; the caller opens a second turn to capture the content,
+   * then re-enters the parser as an ordinary `task.add` once there is a title
+   * to find. See `dictateNoteAfterWake` in main.ts.
+   */
+  | { readonly kind: "note.dictate" }
   | { readonly kind: "sleep" }
   | { readonly kind: "wake" }
   | { readonly kind: "open"; readonly what: "dashboard" | "closet" | "timer" }
@@ -403,6 +414,14 @@ export function parseIntent(raw: string, now: Date = new Date()): Intent | null 
     return minutes === null ? null : { kind: "focus.start", minutes };
   }
 
+  // --- The bare note trigger, checked BEFORE the task block below can shadow
+  // --- it. "add a note" with nothing after it matches the task marker too,
+  // --- and would otherwise fall all the way through to titleAfter finding no
+  // --- title and this function returning null — heard, and silently refused.
+  if (t === "add a note") {
+    return { kind: "note.dictate" };
+  }
+
   // --- Tasks
   // "remind me ABOUT the meeting at 10" is how people phrase a reminder for
   // a thing rather than an action, and it used to return null — no note, no
@@ -584,6 +603,8 @@ export function acknowledge(intent: Intent): string {
       return intent.minutes === null
         ? `Added: ${intent.title}`
         : `Added: ${intent.title} — I'll say in ${intent.minutes} minutes.`;
+    case "note.dictate":
+      return "What's the note?";
     case "sleep":
       return "Going quiet.";
     case "wake":

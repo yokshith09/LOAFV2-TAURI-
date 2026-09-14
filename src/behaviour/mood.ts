@@ -11,13 +11,21 @@ import type { Mood } from "../core/types";
  * The reference's order, with the rungs whose features are not ported marked
  * rather than quietly dropped:
  *
- *   1. hovering  -> happy      petting calms even a tantrum
- *   2. tabAlert  -> tantrum    too many tabs open, per the privacy radar
- *   3. proud                   you closed enough tabs to end a tantrum
- *   4. override                the break nudge, and whatever speaks next
- *   5. scrolling               the wheel has been moving
- *   6. sleeping                away from the keyboard past the idle threshold
+ *   1. hovering  -> happy      petting calms even a tantrum, even a sleeping one
+ *   2. sleeping                asleep is ONE face, full stop — see below
+ *   3. tabAlert  -> tantrum    too many tabs open, per the privacy radar
+ *   4. proud                   you closed enough tabs to end a tantrum
+ *   5. override                the break nudge, and whatever speaks next
+ *   6. scrolling               the wheel has been moving
  *   7. idle
+ *
+ * SLEEPING RANKS SECOND, RIGHT UNDER PETTING, and that used to be a bug in the
+ * other direction: it sat second from the BOTTOM, so an MCP call or a tantrum
+ * would visibly wake the face — the mood flipped to `thinking` or `tantrum`
+ * with no bubble to explain why, since `say()` already silences the bubble
+ * during sleep. A character that reacts to things you cannot see it react to
+ * is not "quietly staying in the corner." Waking now has to be a real wake:
+ * the user taps him, or turns sleep off. See `toldToSleep` in main.ts.
  */
 export interface MoodInputs {
   /** The cursor is over the companion. */
@@ -57,6 +65,10 @@ export interface MoodInputs {
 
 export function resolveMood(inputs: MoodInputs): Mood {
   if (inputs.hovering) return "happy";
+  // Second, not seventh. Every rung below this one is an ACTIVITY — the
+  // machine is busy, an assistant is reading, tabs piled up, you closed
+  // enough of them — and none of that is what "asleep" means to look at.
+  if (inputs.sleeping) return "sleeping";
   if (inputs.tabAlert) return "tantrum";
   if (inputs.proud) return "proud";
   if (inputs.override !== null) return inputs.override;
@@ -70,6 +82,5 @@ export function resolveMood(inputs: MoodInputs): Mood {
   // every keystroke in an editor costs CPU — and this is which one wins.
   if (inputs.typing) return "typing";
   if (inputs.working) return "working";
-  if (inputs.sleeping) return "sleeping";
   return inputs.debug ?? "idle";
 }

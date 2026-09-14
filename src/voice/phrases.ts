@@ -96,6 +96,11 @@ const FIXED_PHRASES: readonly string[] = [
   "voice typing",
   "record this meeting",
   "stop recording",
+  // A TRIGGER, not the note itself — a closed grammar can hold "add a note"
+  // but never "add a note saying buy milk", since the content is arbitrary.
+  // Hearing this one phrase opens a free-form Whisper turn for whatever comes
+  // next; see dictateNoteAfterWake in main.ts.
+  "add a note",
 
   // Destructive. They are in the vocabulary because refusing to hear them
   // would not make them safe — it would make them typed. They are heard, then

@@ -666,6 +666,9 @@ function runIntent(intent: Intent): void {
       meetingWatch.note(intent.title);
       announceTasks();
       break;
+    case "note.dictate":
+      void dictateNoteAfterWake();
+      break;
     case "sleep":
       applyCommand("sleep");
       break;
@@ -2098,6 +2101,60 @@ async function dictateAfterWake(): Promise<void> {
   }
 }
 
+/**
+ * "add a note" was just understood — capture what comes next and file it.
+ *
+ * THIS WAS THE MISSING LINK. "Add a note saying buy milk" could never be
+ * heard by Windows' one-shot recogniser in `dictateAfterWake`, because that
+ * recogniser only matches a closed list of exact phrases, and the note's own
+ * words are — by definition — not on any list anyone could write in advance.
+ * A frontend comment once claimed the sentence after the wake word went to
+ * Whisper; on Windows that was never true, and it is why saying a note out
+ * loud did nothing at all, silently.
+ *
+ * The fix is not a bigger grammar. "add a note" — the phrase alone, no
+ * content — is now its own intent (`note.dictate`, commands.ts), which the
+ * closed grammar can hold. Reaching this function means that intent already
+ * ran and its acknowledgement ("What's the note?") was already spoken by
+ * `applySpoken`, so this opens straight into a SEPARATE Whisper turn — the
+ * same free-dictation path `dictateWithWhisper` already proved out — and
+ * hands the result back through `applySpoken` with the same "add a note"
+ * marker the trigger itself uses, so `parseIntent`'s task block finds it as
+ * an ordinary `task.add` and priority words ("...it's urgent") are understood
+ * exactly once, not reimplemented here. Deliberately NOT "add a note saying
+ * X" — the parser strips only the marker phrase it matched, so "saying" would
+ * survive as the first word of the title. Reachable the same way whether the
+ * trigger was spoken or typed — there is only the one path.
+ */
+async function dictateNoteAfterWake(): Promise<void> {
+  if (!hasTauriHost()) return;
+  if (!whisperReady) {
+    reportVoice("voice note refused: Loaf believes the Whisper model is not downloaded");
+    say({
+      kind: "speech",
+      text: "Taking a note by voice needs the Whisper download — it is in the Voice tab. You can still type one.",
+      seconds: 10,
+    });
+    return;
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  let text = "";
+  try {
+    text = await invoke<string>("dictate_once", { model: behaviour.whisperModel });
+  } catch (e) {
+    reportVoice(`voice note failed: ${String(e)}`);
+    say({ kind: "speech", text: String(e), seconds: 8 });
+    return;
+  }
+  if (!text.trim()) {
+    reportVoice("voice note ran and heard nothing — the microphone opened and no speech was detected");
+    say({ kind: "speech", text: "I didn't catch anything, so nothing was added.", seconds: 6 });
+    return;
+  }
+  reportVoice(`voice note heard ${text.trim().length} characters and is filing it`);
+  applySpoken(`add a note ${text.trim()}`);
+}
+
 /** How many follow-ups one wake word may carry before it must be said again. */
 const MAX_TURNS_PER_WAKE = 8;
 
@@ -2781,9 +2838,12 @@ function say(payload: BubblePayload): void {
   // and anything added later all pass through this function, and a rule
   // enforced in six places is a rule that will be forgotten in the seventh.
   //
-  // The preview card is exempt: it only appears because the cursor is on him,
-  // which is a question, not an interruption.
-  if (toldToSleep && payload.kind !== "preview") return;
+  // NO EXEMPTIONS. The preview card used to be let through on the theory that
+  // hovering is a question, not an interruption — but "quietly stays in the
+  // corner, no dashboard preview" is what sleep is supposed to mean, and a
+  // stats card popping open on hover is exactly a dashboard preview. Waking
+  // him is still one tap away.
+  if (toldToSleep) return;
   // Spoken here rather than at the call sites, for the same reason the sleep
   // gate is here: one place that every bubble passes through. A preview card
   // is never spoken — it appears because the cursor is resting on him, and

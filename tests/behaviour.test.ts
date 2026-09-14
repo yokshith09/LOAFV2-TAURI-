@@ -368,16 +368,30 @@ describe("the mood ladder", () => {
     expect(ladder({ tabAlert: true, override: "worried" })).toBe("tantrum");
   });
 
-  it("lets a spoken line outrank being asleep", () => {
-    // A nudge that arrived just as you stepped away must still show the worried
-    // face rather than a sleeping one.
-    expect(ladder({ override: "worried", sleeping: true })).toBe("worried");
+  it("stays asleep through a spoken line too, not just an activity mood", () => {
+    // Reversed on purpose, closing an asymmetry the sleep audit found: `say()`
+    // already refuses to speak a nudge while asleep, but a couple of callers
+    // (the break nudge among them) set the mood override BEFORE reaching that
+    // gate — so the face used to flip to worried with no bubble to explain
+    // why. Ranking sleeping above override here is the one fix that closes it
+    // for every such caller at once, rather than gating each one separately.
+    expect(ladder({ override: "worried", sleeping: true })).toBe("sleeping");
   });
 
-  it("shows the scrolling pose over being asleep", () => {
-    // Scrolling IS input, so the two should never both be true — but if a stale
-    // idle tick overlaps a fresh scroll, the one that just happened wins.
-    expect(ladder({ scrolling: true, sleeping: true })).toBe("scrolling");
+  it("shows sleeping over the scrolling pose, once actually asleep", () => {
+    // Reversed on purpose. Scrolling IS input, so the two should never both be
+    // true in practice — but the case this guards is explicit sleep (a tap
+    // has not woken him), where "quietly stays in the corner" has to win over
+    // a stale scroll reading, not the other way round.
+    expect(ladder({ scrolling: true, sleeping: true })).toBe("sleeping");
+  });
+
+  it("still lets petting wake the face, even while asleep", () => {
+    // The one deliberate exception. Every activity mood loses to sleeping now,
+    // but hovering ranks first of all — a tap already wakes him for real, and
+    // a hand resting on him while he sleeps getting no reaction at all would
+    // be a worse product than the one small exception this is.
+    expect(ladder({ hovering: true, sleeping: true })).toBe("happy");
   });
 
   it("lets a spoken line outrank the scrolling pose", () => {
@@ -427,8 +441,12 @@ describe("the machine-aware rungs", () => {
     expect(ladder2({ typing: true, working: true, hovering: true })).toBe("happy");
   });
 
-  it("outranks sleeping, because a busy machine is not an idle one", () => {
-    expect(ladder2({ working: true, sleeping: true })).toBe("working");
+  it("shows sleeping over a busy machine, once asleep", () => {
+    // Reversed on purpose. This used to mean "the machine grinding away is
+    // more interesting than idle" — but idle is not what sleeping means, and
+    // a face that visibly reacted to an MCP call with nobody around to see the
+    // bubble was the exact bug this ordering exists to prevent.
+    expect(ladder2({ working: true, sleeping: true })).toBe("sleeping");
   });
 });
 
@@ -463,6 +481,15 @@ describe("noticing that an assistant is reading your day", () => {
     expect(ladder({ claudeThinking: true, hovering: true })).toBe("happy");
     expect(ladder({ claudeThinking: true, tabAlert: true })).toBe("tantrum");
     expect(ladder({ claudeThinking: true, proud: true })).toBe("proud");
+  });
+
+  it("stays asleep through an MCP call — no visible reaction, not just no bubble", () => {
+    // The actual point of ranking sleeping second. `say()` already silences
+    // the BUBBLE during sleep, but the mood flag itself used to flip anyway —
+    // a face that visibly reacted to something nobody could hear about was not
+    // "quietly staying in the corner." Claude asking Loaf something while
+    // asleep must be invisible, not merely silent.
+    expect(ladder({ claudeThinking: true, sleeping: true })).toBe("sleeping");
   });
 
   it("leaves the busy-machine face exactly where it was", () => {
