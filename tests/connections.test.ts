@@ -185,7 +185,7 @@ describe("the call log", () => {
     expect(html).toContain("slack");
     expect(html).toContain("post_message");
     expect(html).toContain("#general");
-    expect(html).toContain("2 min ago");
+    expect(html).toContain("2 minutes ago");
   });
 
   // A log that only remembers successes is not an audit trail: the call that
@@ -288,7 +288,9 @@ describe("relativeWhen", () => {
     expect(relativeWhen(secs - 59, now)).toBe("just now");
   });
   it("counts minutes, then hours, then days", () => {
-    expect(relativeWhen(secs - 60, now)).toBe("1 min ago");
+    // Full words, not "min" — this is what a note's "Edited ..." stamp reads,
+    // and an abbreviation there looks like a typo.
+    expect(relativeWhen(secs - 60, now)).toBe("1 minute ago");
     expect(relativeWhen(secs - 3600, now)).toBe("1 hour ago");
     expect(relativeWhen(secs - 7200, now)).toBe("2 hours ago");
     expect(relativeWhen(secs - 86_400, now)).toBe("1 day ago");

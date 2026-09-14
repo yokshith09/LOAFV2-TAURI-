@@ -7,6 +7,7 @@ import {
   hourRangeLabel,
   disabledRadar,
   DASHBOARD_VIEWS,
+  countdown,
   type RadarSnapshot,
 } from "../src/dashboard/html";
 import { isCommand, TANTRUM_OPTIONS, type NoteView } from "../src/dashboard/events";
@@ -60,6 +61,71 @@ const radarOn = (over: Partial<RadarSnapshot> = {}): RadarSnapshot => ({
  */
 const bodyOf = (html: string): string =>
   html.replace(/<style>[\s\S]*?<\/style>/g, "");
+
+describe("countdown — the exact wording a due date reads out", () => {
+  const NOW = new Date("2026-09-14T10:00:00").getTime(); // a Monday, 10:00 local
+
+  it("has nothing to say about a task with no deadline", () => {
+    expect(countdown(null, NOW)).toBe("");
+  });
+
+  it("counts in minutes under an hour away", () => {
+    expect(countdown(NOW + 60_000, NOW)).toBe("Due in 1 minute");
+    expect(countdown(NOW + 20 * 60_000, NOW)).toBe("Due in 20 minutes");
+  });
+
+  it("switches to hours between one hour and one day away", () => {
+    expect(countdown(NOW + 60 * 60_000, NOW)).toBe("Due in 1 hour");
+    expect(countdown(NOW + 3 * 60 * 60_000, NOW)).toBe("Due in 3 hours");
+  });
+
+  it("names tomorrow with a clock time once a full day out", () => {
+    // 26 hours away and past midnight — a calendar day, not a duration.
+    const due = NOW + 26 * 60 * 60_000; // Tuesday 12:00
+    expect(countdown(due, NOW)).toBe("Due tomorrow at 12:00");
+  });
+
+  it("does not call something 15 minutes away 'tomorrow', even across midnight", () => {
+    // The case relative phrasing exists to avoid: technically the next
+    // calendar day, and "in 15 minutes" is the only useful answer to give.
+    const nearMidnight = new Date("2026-09-14T23:50:00").getTime();
+    const due = nearMidnight + 15 * 60_000; // 00:05, the next calendar day
+    expect(countdown(due, nearMidnight)).toBe("Due in 15 minutes");
+  });
+
+  it("names the weekday once further than tomorrow but inside a week", () => {
+    const due = NOW + 3 * 24 * 60 * 60_000; // Thursday
+    expect(countdown(due, NOW)).toBe("Due Thursday at 10:00");
+  });
+
+  it("falls back to a plain date a week or more out", () => {
+    const due = NOW + 10 * 24 * 60 * 60_000;
+    const said = countdown(due, NOW);
+    // Locale decides whether the day or the month comes first ("24 Sept" here) —
+    // the format is not the thing under test, just that it fell through to a
+    // real date rather than staying on a weekday name past a week out.
+    expect(said).toMatch(/^Due .+ at \d{2}:\d{2}$/);
+    expect(said).not.toContain("Thursday");
+  });
+
+  it("says exactly due, right at the boundary", () => {
+    expect(countdown(NOW, NOW)).toBe("Due now");
+    expect(countdown(NOW - 500, NOW)).toBe("Due now");
+  });
+
+  it("counts how late, in the same word-per-unit style", () => {
+    expect(countdown(NOW - 5 * 60_000, NOW)).toBe("5 minutes late");
+    expect(countdown(NOW - 90 * 60_000, NOW)).toBe("1 hour late");
+    expect(countdown(NOW - 3 * 24 * 60 * 60_000, NOW)).toBe("3 days late");
+  });
+
+  it("never reaches zero before the time is genuinely up, either direction", () => {
+    // 90 seconds left must still read as 2 minutes, not round down to 1.
+    expect(countdown(NOW + 90_000, NOW)).toBe("Due in 2 minutes");
+    // 90 seconds overdue must still read as 1 minute late, not round up to 2.
+    expect(countdown(NOW - 90_000, NOW)).toBe("1 minute late");
+  });
+});
 
 describe("escaping", () => {
   it("neutralises markup in a name that came from the OS", () => {
@@ -667,7 +733,7 @@ describe("tasks on the hover card", () => {
       now,
       tasks: [{ title: "bread", priority: "soon", dueAt: now.getTime() + 12 * 60_000 }],
     });
-    expect(html).toContain("12m");
+    expect(html).toContain("Due in 12 minutes");
   });
 
   it("counts DOWN, instead of freezing at the number it was sent", () => {
@@ -678,9 +744,9 @@ describe("tasks on the hover card", () => {
     const task = { title: "bread", priority: "soon", dueAt: due } as const;
     const early = miniDashboardHTML(tracker(), { now: new Date(due - 45 * 60_000), tasks: [task] });
     const late = miniDashboardHTML(tracker(), { now: new Date(due - 5 * 60_000), tasks: [task] });
-    expect(early).toContain("45m");
-    expect(late).toContain("5m");
-    expect(late).not.toContain("45m");
+    expect(early).toContain("Due in 45 minutes");
+    expect(late).toContain("Due in 5 minutes");
+    expect(late).not.toContain("45 minutes");
   });
 
   it("says a missed task is late rather than showing a stuck 0m", () => {
@@ -691,10 +757,11 @@ describe("tasks on the hover card", () => {
       now: new Date(due + 20 * 60_000),
       tasks: [{ title: "bread", priority: "now", dueAt: due }],
     });
-    expect(html).toContain("20m late");
-    // Precisely: no timer whose whole content is "0m". A plain substring check
-    // would match the "0m" inside "20m late".
-    expect(html).not.toMatch(/>0m</);
+    expect(html).toContain("20 minutes late");
+    // Precisely: no timer that says "Due now" once genuinely 20 minutes
+    // overdue — that was the stuck-at-zero bug, restated as a precise check
+    // rather than a substring match that "20 minutes late" would pass anyway.
+    expect(html).not.toMatch(/>Due now</);
   });
 
   it("only reaches zero when the time is actually up", () => {
@@ -705,7 +772,7 @@ describe("tasks on the hover card", () => {
       now: new Date(due - 20_000),
       tasks: [{ title: "bread", priority: "now", dueAt: due }],
     });
-    expect(html).toContain("1m");
+    expect(html).toContain("Due in 1 minute");
   });
 
   it("escapes the title, like every other value on the page", () => {

@@ -271,7 +271,9 @@ export function relativeWhen(at: number, now: number): string {
   const seconds = Math.max(0, Math.floor(now / 1000) - at);
   if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
+  // The full word, not "min" — "5 minutes ago" is what gets read aloud in a
+  // note's "Edited ..." stamp, and an abbreviation there reads as a typo.
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
   const days = Math.floor(hours / 24);

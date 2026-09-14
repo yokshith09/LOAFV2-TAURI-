@@ -274,13 +274,69 @@ export interface TaskView {
  * different states — due imminently, due right now, and long overdue and never
  * cleared — into one string that looked like a stuck timer.
  */
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** "1 minute" vs "2 minutes" — the word Loaf actually says, not an abbreviation. */
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function clockTime(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Midnight of the day `d` falls on, in the viewer's own timezone. */
+function startOfDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Whole calendar days from `now`'s day to `due`'s day. Negative is the past. */
+function calendarDaysAhead(now: Date, due: Date): number {
+  return Math.round((startOfDay(due) - startOfDay(now)) / 86_400_000);
+}
+
+/**
+ * "Due in 20 minutes." "Due tomorrow at 10:00." "20 minutes late."
+ *
+ * DURATION decides the wording, not the calendar — a full re-think, not a
+ * relabelling of the old "20m" / "20m late". Something 15 minutes away at
+ * 11:50pm is still "in 15 minutes", not "tomorrow": tomorrow is technically
+ * true and useless to somebody glancing at a chip. Relative phrasing holds for
+ * anything under 24 hours away; only past that does a calendar day (tomorrow,
+ * a weekday name, a date) take over, because at that distance a duration stops
+ * being the useful answer to "when."
+ */
 export function countdown(dueAt: number | null, now: number): string {
   if (dueAt === null || !Number.isFinite(dueAt)) return "";
-  const minutes = Math.ceil((dueAt - now) / 60_000);
-  if (minutes > 0) return `${minutes}m`;
-  if (minutes === 0) return "now";
-  const over = Math.abs(minutes);
-  return over >= 60 ? `${Math.floor(over / 60)}h late` : `${over}m late`;
+
+  if (dueAt >= now) {
+    // ceil, always: a countdown must reach a boundary only when the time is
+    // genuinely up, never a tick early. "45 minutes" held for a real 45
+    // minutes and then vanishing was the whole bug this replaced.
+    const minutes = Math.ceil((dueAt - now) / 60_000);
+    if (minutes <= 0) return "Due now";
+    if (minutes < 60) return `Due in ${plural(minutes, "minute")}`;
+    if (minutes < 24 * 60) {
+      const hours = Math.ceil((dueAt - now) / 3_600_000);
+      return `Due in ${plural(hours, "hour")}`;
+    }
+    const due = new Date(dueAt);
+    const ahead = calendarDaysAhead(new Date(now), due);
+    if (ahead <= 1) return `Due tomorrow at ${clockTime(due)}`;
+    if (ahead < 7) return `Due ${WEEKDAYS[due.getDay()]} at ${clockTime(due)}`;
+    const date = due.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `Due ${date} at ${clockTime(due)}`;
+  }
+
+  // Overdue: how much time has ALREADY passed, so floor — the largest whole
+  // unit not yet exceeded, the same convention "X ago" already uses elsewhere.
+  const lateMs = now - dueAt;
+  const lateMinutes = Math.floor(lateMs / 60_000);
+  if (lateMinutes < 1) return "Due now";
+  if (lateMinutes < 60) return `${plural(lateMinutes, "minute")} late`;
+  const lateHours = Math.floor(lateMinutes / 60);
+  if (lateHours < 24) return `${plural(lateHours, "hour")} late`;
+  return `${plural(Math.floor(lateHours / 24), "day")} late`;
 }
 
 // --- Escaping ----------------------------------------------------------------
@@ -1190,7 +1246,7 @@ function noteCardClosed(n: NoteView, now: number): string {
   const timer = left === "" ? "" : `<span class="nt-timer">${left}</span>`;
   // The wall is ordered by this and could not show it, so the order looked
   // arbitrary. `relativeWhen` already handles plurals and clamps a future time.
-  const edited = `<span class="nt-when">${escapeHTML(relativeWhen(Math.floor(n.updatedAt / 1000), now))}</span>`;
+  const edited = `<span class="nt-when">Edited ${escapeHTML(relativeWhen(Math.floor(n.updatedAt / 1000), now))}</span>`;
   // Long enough to need room to breathe rather than sitting the same height as
   // "buy milk". Judged on the body now, not the title: the title is capped at
   // 80 characters same as ever, so a transcript's length lives in the body.
