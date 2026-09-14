@@ -718,6 +718,11 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
+    // Every user of this is now `#[cfg(not(target_os = "macos"))]` — macOS has
+    // a real implementation of everything in this file, clickables and
+    // click_named included as of this session — so on a macOS build nothing
+    // reaches it, and clippy is right to call an unreachable constant dead.
+    #[cfg(not(target_os = "macos"))]
     const ELSEWHERE: &str = "That is Windows-only for now.";
 
     /// Ask macOS a one-line question and get the answer back.
