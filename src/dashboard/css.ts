@@ -164,22 +164,6 @@ export const PLUS_CSS = `
   }
   .shelf-btn:hover { border-color:var(--accent-dark); background:var(--accent); }
 
-  /* Not yet built, and saying so. Dashed rather than solid, and not clickable:
-     the border alone tells you this one is different before you read it. */
-  .shelf-soon { margin-top:2px; }
-  .soon {
-    display:flex; flex-direction:column; gap:4px;
-    border:1px dashed var(--edge); border-radius:10px; padding:10px 12px;
-    background:none;
-  }
-  .soon-top { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--ink-soft); }
-  .soon-tag {
-    font-size:9px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
-    color:var(--accent-ink); background:var(--accent);
-    border-radius:999px; padding:2px 6px;
-  }
-  .soon-blurb { font-size:10.5px; line-height:1.45; color:var(--ink-soft); }
-
   /* The gestures. Nothing here is discoverable by looking at a cat, and until
      now the only place any of it was written down was a source comment. */
   /* What Loaf noticed. Sits directly under the total, because a sentence about

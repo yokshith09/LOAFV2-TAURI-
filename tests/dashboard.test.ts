@@ -916,6 +916,23 @@ describe("the settings section", () => {
     const html = dashboardHTML(t(), { view: "settings", settings: state() });
     expect(html).toContain("open:closet");
   });
+
+  // Both open_sounds_folder and open_packs_folder were fully built — real
+  // Tauri commands, wired into main.ts's switch, each creating its folder
+  // and a README before opening it — but the dashboard still called them
+  // "Soon" because nobody came back to add the button once the backend
+  // safeguard (a README, so an empty folder isn't a bare surprise) landed.
+  it("offers real buttons for sounds and character packs, not a Soon card", () => {
+    const html = bodyOf(dashboardHTML(t(), { view: "settings", settings: state() }));
+    expect(html).toContain('data-loaf-cmd="open:sounds"');
+    expect(html).toContain('data-loaf-cmd="open:packs"');
+    // Not the dashed, unclickable card — that class name is gone entirely
+    // now that both buttons are real. "Soon" alone still legitimately
+    // appears elsewhere on the page (the MCP catalog's own "Coming soon"
+    // tiles for services with no trusted server yet).
+    expect(html).not.toContain("shelf-soon");
+    expect(html).not.toContain("Draw a character");
+  });
 });
 
 describe("the meetings section", () => {

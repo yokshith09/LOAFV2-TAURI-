@@ -514,23 +514,6 @@ function sortedApps(tracker: Tracker): Array<[string, number]> {
 }
 
 /**
- * Something that exists in the code but is not ready to be pointed at.
- *
- * Deliberately NOT a disabled button. A greyed-out control invites a click that
- * does nothing, which reads as broken; the folders these would open are also
- * empty until someone puts a file in them, so opening one shows a bare window
- * and no explanation. This says what the feature will be and that it is not
- * here yet, which is the honest version of both.
- */
-function soonCard(title: string, blurb: string): string {
-  return (
-    `<div class="soon"><span class="soon-top">${escapeHTML(title)}` +
-    `<span class="soon-tag">Soon</span></span>` +
-    `<span class="soon-blurb">${escapeHTML(blurb)}</span></div>`
-  );
-}
-
-/**
  * What Loaf has noticed, above the fold.
  *
  * Two notes at most. The whole value of an observation is that it was worth
@@ -1679,10 +1662,8 @@ function settingsPanel(opts: DashboardOptions): string {
     <div class="shelf">
       ${cmdButton("shelf-btn", "open:closet", "Closet — character, outfit, opacity")}
       ${cmdButton("shelf-btn", "open:focus", "Focus timer")}
-    </div>
-    <div class="shelf shelf-soon">
-      ${soonCard("Your sounds", "Drop in your own audio for the little noises he makes.")}
-      ${soonCard("Draw a character", "Hand-drawn sprite packs, so he can be anything you like.")}
+      ${cmdButton("shelf-btn", "open:sounds", "Your sounds — drop in your own audio")}
+      ${cmdButton("shelf-btn", "open:packs", "Character packs — drop in a hand-drawn one")}
     </div>`;
 }
 
