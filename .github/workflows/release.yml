@@ -82,8 +82,19 @@ jobs:
             He sits in the corner of your screen. Click him to see your day;
             leave him alone and he gets on with his own life.
 
-            ## New in 0.6.0 — Claude reactions, Connections, Notes, browser tabs
+            ## New in 0.6.1 — Claude reactions, Connections, Notes, character packs
 
+            - **A hand-drawn character pack now actually shows up.** It could
+              already be dropped in and would load correctly, but the Closet's
+              own picker only ever asked about the built-in cast — a pack had
+              nowhere to be chosen from. Fixed: the Closet now asks for your
+              packs too, so a `character.json` and sprite sheet in
+              `Characters/` gets a real card on the shelf, selectable like any
+              built-in.
+            - **"Your sounds" and "Character packs" are real buttons now**,
+              not a dashed "Soon" card — both features were already fully
+              built (each opens its own folder, with a README explaining the
+              format), the dashboard card just never got updated to say so.
             - **Claude activity stopped spamming.** A single piece of work is
               usually several tool calls in a row, and Loaf used to re-announce
               every one of them — the bubble flickered and the spoken line
