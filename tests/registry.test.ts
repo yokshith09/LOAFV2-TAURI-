@@ -5,6 +5,7 @@ import {
   DEFAULT_COMPANION_ID,
   findCompanion,
   grouped,
+  groupedFrom,
   GROUP_NOTES,
 } from "../src/companions/registry";
 import { drawCompanion } from "../src/render/scene";
@@ -12,6 +13,7 @@ import {
   ALL_MOODS,
   BADGE_STRIP_Y,
   GROUND_Y,
+  type Companion,
   type SceneState,
 } from "../src/core/types";
 
@@ -70,6 +72,20 @@ describe("the registry as a whole", () => {
     for (const g of grouped()) {
       expect(g.members.length).toBeGreaterThan(0);
     }
+  });
+
+  it("groupedFrom on the built-ins is exactly what grouped() returns", () => {
+    // grouped() is groupedFrom(COMPANIONS) — the closet window calls
+    // groupedFrom directly once a hand-drawn pack is in the mix, and the two
+    // must never quietly diverge.
+    expect(groupedFrom(COMPANIONS)).toEqual(grouped());
+  });
+
+  it("groupedFrom shelves an arbitrary roster, not just the built-ins", () => {
+    const extra: Companion = { ...COMPANIONS[0]!, id: "test-only", group: "elsewhere" };
+    const shelves = groupedFrom([...COMPANIONS, extra]);
+    const elsewhere = shelves.find((s) => s.group === "elsewhere");
+    expect(elsewhere?.members.some((c) => c.id === "test-only")).toBe(true);
   });
 });
 

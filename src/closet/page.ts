@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
-import { findCompanion } from "../companions/registry";
+import { COMPANIONS, findCompanion } from "../companions/registry";
 import { findOutfit, seasonalOutfit } from "../outfits/registry";
 import { renderScene } from "../render/scene";
 import { renderPixelScene } from "../render/pixelate";
@@ -14,7 +14,8 @@ import {
   isClosetState,
   type ClosetPick,
 } from "./events";
-import { asCtx2D, type Outfit } from "../core/types";
+import { asCtx2D, type Companion, type Outfit } from "../core/types";
+import { browserImageLoader, loadPacks, mergeCompanions, type RawPack } from "../sprites/load";
 
 
 /**
@@ -36,6 +37,40 @@ style.textContent = CLOSET_CSS;
 document.head.appendChild(style);
 
 const settings = new ClosetSettings(browserStore());
+
+/**
+ * The built-ins, plus whatever the user has drawn.
+ *
+ * A `Companion` carries real draw functions, closures over a decoded `Image`
+ * — not something an `emit()` payload can carry across the window boundary,
+ * since that goes through Tauri's own JSON serialisation. So this window
+ * asks Rust for the same raw sprite-pack bytes the companion window does,
+ * and builds its own roster locally, rather than being handed one.
+ */
+let roster: readonly Companion[] = COMPANIONS;
+let lastState: ClosetState = settings.read();
+
+/**
+ * Load hand-drawn characters into the shelf.
+ *
+ * Runs after the first paint — packs arrive after a round trip to disk and
+ * an image decode, and the closet must not sit blank waiting on a folder
+ * that is usually empty. A pack that fails is named in the console with the
+ * reason; the ones that were fine still show up.
+ */
+async function loadSpritePacks(): Promise<void> {
+  const raw = await invoke<RawPack[]>("sprite_packs").catch(() => null);
+  if (!raw || raw.length === 0) return;
+  const { companions } = await loadPacks(raw, browserImageLoader());
+  if (companions.length === 0) return;
+  roster = mergeCompanions(COMPANIONS, companions);
+  render(lastState);
+  void fit();
+}
+
+function findInRoster(id: string): Companion {
+  return roster.find((c) => c.id === id) ?? findCompanion(id);
+}
 
 function send(pick: ClosetPick): void {
   void emit(CLOSET_PICK_EVENT, pick).catch((err) => {
@@ -65,7 +100,7 @@ function paintThumbnails(state: ClosetState): void {
   const scene = { mood: "idle" as const, phase: 0, blinking: false };
 
   for (const canvas of root.querySelectorAll<HTMLCanvasElement>("canvas[data-thumb]")) {
-    const companion = findCompanion(canvas.dataset.thumb!);
+    const companion = findInRoster(canvas.dataset.thumb!);
     canvas.width = Math.round(THUMB.width * dpr);
     canvas.height = Math.round(THUMB.height * dpr);
     const ctx = canvas.getContext("2d");
@@ -84,7 +119,8 @@ function paintThumbnails(state: ClosetState): void {
 }
 
 function render(state: ClosetState): void {
-  root.innerHTML = closetBody(state);
+  lastState = state;
+  root.innerHTML = closetBody(state, roster);
   paintThumbnails(state);
 
   root.querySelectorAll<HTMLElement>("[data-companion]").forEach((el) => {
@@ -137,6 +173,7 @@ async function fit(): Promise<void> {
 
 render(settings.read());
 void fit();
+void loadSpritePacks();
 
 void listen(CLOSET_CHANGED_EVENT, (e) => {
   // Fall back to storage if the payload is malformed, rather than rendering

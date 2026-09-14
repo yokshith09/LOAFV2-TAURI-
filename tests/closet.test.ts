@@ -11,6 +11,7 @@ import {
 import { isClosetPick, isClosetState } from "../src/closet/events";
 import { closetBody } from "../src/closet/view";
 import { COMPANIONS, DEFAULT_COMPANION_ID, grouped } from "../src/companions/registry";
+import type { Companion } from "../src/core/types";
 import { OUTFITS, SEASONAL_ID } from "../src/outfits/registry";
 import {
   HABITS,
@@ -210,6 +211,61 @@ describe("the closet page", () => {
   it("groups into shelves rather than one wall of animals", () => {
     const html = closetBody(state);
     for (const { group } of grouped()) expect(html).toContain(`<h2>${group}</h2>`);
+  });
+
+  // A hand-drawn pack loads fine (see sprites/manifest.ts and its own tests)
+  // and even resolves as the active companion if its id is already the saved
+  // one — but the closet's own card grid was built from `grouped()`, which
+  // only ever knew the eighteen built-ins. A pack could load successfully and
+  // still never appear anywhere a person could choose it. `closetBody` now
+  // takes the roster it should render instead of assuming it.
+  describe("a hand-drawn pack in the roster", () => {
+    const drawn: Companion = {
+      id: "dalgom",
+      defaultName: "Dalgom",
+      species: "The little Maltese",
+      blurb: "Small, fluffy, and pleased you are here.",
+      group: "dogs",
+      palette: COMPANIONS[0]!.palette,
+      castsShadow: true,
+      drawsOwnFace: true,
+      isPreRendered: true,
+      drifts: false,
+      headEllipse: { x: 0, y: 0, width: 1, height: 1 },
+      eyeLeft: { x: 0, y: 0 },
+      eyeRight: { x: 0, y: 0 },
+      eyeScale: 1,
+      hatAnchor: { x: 0, y: 0 },
+      neckY: 0,
+      handLeft: { x: 0, y: 0 },
+      handRight: { x: 0, y: 0 },
+      handFill: COMPANIONS[0]!.palette.fur,
+      drawBehind: () => {},
+      drawBody: () => {},
+      drawHead: () => {},
+      drawMuzzle: () => {},
+    };
+
+    it("gets a card on the shelf for its own group", () => {
+      const html = closetBody(state, [...COMPANIONS, drawn]);
+      expect(html).toContain('data-companion="dalgom"');
+      expect(html).toContain("Dalgom");
+    });
+
+    it("is invisible when the roster passed in does not include it", () => {
+      // The exact bug this closes: a pack can load correctly and still never
+      // reach the screen if nobody hands its companion to the view.
+      const html = closetBody(state);
+      expect(html).not.toContain('data-companion="dalgom"');
+    });
+
+    it("can be the one marked on duty, same as any built-in", () => {
+      const onDrawn = new ClosetSettings(new MemorySettingsStore());
+      onDrawn.setCompanion("dalgom");
+      const html = closetBody(onDrawn.read(), [...COMPANIONS, drawn]);
+      expect(html).toContain('data-companion="dalgom"');
+      expect(html).toMatch(/data-companion="dalgom"[^]*?on duty/);
+    });
   });
 
   it("escapes a name the user chose", () => {

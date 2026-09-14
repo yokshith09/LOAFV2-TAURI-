@@ -66,13 +66,30 @@ export const GROUP_NOTES: Readonly<Record<CompanionGroup, string>> = {
   elsewhere: "Not every companion is an animal.",
 };
 
-/** Companions bucketed by shelf, skipping shelves that are still empty. */
-export function grouped(): Array<{
+/**
+ * Bucket an arbitrary list of companions by shelf, skipping empty shelves.
+ *
+ * Takes the list rather than reading `COMPANIONS` itself, so a caller with a
+ * roster that also includes hand-drawn packs — the closet window, once it has
+ * asked Rust for them — gets those shelved too. `grouped()` below is this
+ * applied to the built-ins alone, which is what every existing caller wants.
+ */
+export function groupedFrom(
+  companions: readonly Companion[],
+): Array<{
   group: CompanionGroup;
   members: Companion[];
 }> {
   return GROUP_ORDER.map((group) => ({
     group,
-    members: COMPANIONS.filter((c) => c.group === group),
+    members: companions.filter((c) => c.group === group),
   })).filter((g) => g.members.length > 0);
+}
+
+/** Companions bucketed by shelf, skipping shelves that are still empty. */
+export function grouped(): Array<{
+  group: CompanionGroup;
+  members: Companion[];
+}> {
+  return groupedFrom(COMPANIONS);
 }

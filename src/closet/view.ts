@@ -1,6 +1,7 @@
 import { escapeHTML } from "../dashboard/html";
-import { grouped, GROUP_NOTES } from "../companions/registry";
+import { COMPANIONS, groupedFrom, GROUP_NOTES } from "../companions/registry";
 import { OUTFITS, SEASONAL_ID, seasonalLabel } from "../outfits/registry";
+import type { Companion } from "../core/types";
 import {
   displayName,
   NO_OUTFIT,
@@ -101,8 +102,13 @@ function chip(id: string, glyph: string, label: string, selected: boolean): stri
   );
 }
 
-export function closetBody(state: ClosetState): string {
-  const shelves = grouped()
+/**
+ * `roster` defaults to the built-ins alone, so every existing caller —
+ * including the tests, which have never heard of a sprite pack — keeps
+ * seeing exactly what it always has.
+ */
+export function closetBody(state: ClosetState, roster: readonly Companion[] = COMPANIONS): string {
+  const shelves = groupedFrom(roster)
     .map(({ group, members }) => {
       const cards = members
         .map((c) => {
@@ -133,9 +139,7 @@ export function closetBody(state: ClosetState): string {
     OUTFITS.map((o) => chip(o.id, o.glyph, o.name, state.outfitId === o.id)).join("") +
     chip(SEASONAL_ID, "📅", seasonalLabel(), state.outfitId === SEASONAL_ID);
 
-  const onDuty = grouped()
-    .flatMap((g) => g.members)
-    .find((c) => c.id === state.companionId);
+  const onDuty = roster.find((c) => c.id === state.companionId);
   const defaultName = onDuty?.defaultName ?? "";
   // The field shows empty while the name is still the shipped one, so the
   // placeholder does the explaining and clearing it is the obvious reset.
