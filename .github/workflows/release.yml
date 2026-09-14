@@ -82,30 +82,40 @@ jobs:
             He sits in the corner of your screen. Click him to see your day;
             leave him alone and he gets on with his own life.
 
-            ## Fixed in 0.5.2 — the missing character
+            ## New in 0.6.0 — Claude reactions, Connections, Notes, browser tabs
 
-            If you installed **0.4.4 to 0.5.1** and the app was clearly running
-            but there was no cat or dog anywhere on screen, that was a real bug
-            and this build fixes it. One line of the app's code ran before
-            another line it depended on, so the drawing never started and the
-            window stayed empty. It affected Windows and macOS equally — the
-            Mac reports simply came in first. Nothing you did caused it and
-            nothing you saved was lost.
-
-            ## Also fixed in 0.5.2 — talking to Loaf
-
-            Voice had never actually run. The same single fault stopped the
-            code that opens the microphone and the code that listens for what
-            you said, so on every build so far nothing was listening, on
-            Windows and on Mac alike. If you tried the wake word and gave up,
-            it is worth another go.
-
-            On a Mac two more things were missing and are now here: saying
-            "hey loaf" used to answer *"Mm?"* and then tell you that speaking
-            to Loaf is Windows-only, and dictation said it was not available
-            at all. Both now use Whisper, which runs on your machine — so
-            **the Voice tab download is needed for either to work on a Mac**.
-            Nothing is sent anywhere.
+            - **Claude activity stopped spamming.** A single piece of work is
+              usually several tool calls in a row, and Loaf used to re-announce
+              every one of them — the bubble flickered and the spoken line
+              restarted several times a second. It now reacts once per burst
+              of activity, not once per call.
+            - **Sleep is actually quiet now.** A few native OS notifications
+              (recording started, a meeting worth recording was detected,
+              still recording after five minutes) kept popping up while Loaf
+              was asleep even though the matching speech bubble had gone
+              silent. Both channels are gated the same way now.
+            - **Connections got simpler.** Opening "+ Add a connection" used
+              to show the raw command/arguments form immediately, above the
+              catalog buttons that need none of it — it is folded behind
+              "Set up a connection by hand instead" now. Gmail/Slack/GitHub
+              show as "Coming soon" tiles in the same row instead of a bullet
+              list underneath. The call log can be saved to a file or
+              cleared, and each call's arguments are tucked behind a
+              "View details" fold.
+            - **Notes have their own archive shelf and a search box**, Keep
+              style — archiving a note used to silently tick it off the
+              separate 3-item checklist, which is fixed.
+            - **Browser tabs shows every browser, and every window of each.**
+              It used to stop at the first matching window it found, so a
+              second Chrome window — or any browser other than whichever
+              happened to be listed first — was invisible to this panel.
+            - **Countdowns and timestamps read like a sentence**: "Due in 20
+              minutes", "20 minutes late", "Edited 5 minutes ago" — not "20m".
+            - **"click X" by voice now works on a Mac, not only Windows** —
+              through the same System Events scripting the rest of Loaf's Mac
+              control already uses. This is new and **not yet tested on real
+              Mac hardware**; if it does not find or press what you asked for,
+              that is exactly the kind of thing worth reporting.
 
             ## Download
 
@@ -240,6 +250,9 @@ jobs:
             - **macOS is lightly tested.** It compiles, its platform code is
               tested, and CI checks the bundle is signed and declares what it
               touches. It is still the least-used half. Please say what breaks.
+            - **"click X" on a Mac is brand new in this build** and has not
+              been run on real Mac hardware yet — the equivalent Windows
+              feature has existed for a while and is the well-tested one.
             - **No auto-update.** You stay on the build you installed.
           releaseDraft: true
           prerelease: true
