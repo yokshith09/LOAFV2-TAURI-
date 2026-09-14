@@ -19,10 +19,11 @@
 //! guarded by `System Events`' running check first, and the caller is expected
 //! to be asking about a browser that is already in front.
 //!
-//! CLOSING IS BY TITLE, AND THE FIRST EXACT MATCH WINS. Not by index: indices
-//! shift the moment anything else closes a tab, and closing the wrong tab is a
-//! small disaster in a product whose whole promise is not touching things it was
-//! not asked to touch.
+//! CLOSING IS BY BROWSER AND TITLE, NOT BY INDEX. Indices shift the moment
+//! anything else closes a tab, and closing the wrong tab is a small disaster
+//! in a product whose whole promise is not touching things it was not asked
+//! to touch. The browser narrows the search to the one app the user meant,
+//! now that tabs from more than one of them can be listed side by side.
 
 /// THE ONLY PART THAT NEEDS A MAC.
 ///
@@ -114,24 +115,42 @@ fn split(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every open tab title, across whichever supported browser is running.
+/// Every open tab title, across every supported browser that is running —
+/// not just the first one found.
+///
+/// `browser` on each entry is spelled exactly as it appears in `CHROMIUM` (or
+/// `"Safari"`), which is also what `KNOWN_BROWSERS`'s `displayName` already
+/// says on the frontend, so `browserFor` resolves it without a second table.
 ///
 /// Empty when nothing is running, when permission was refused, or when the
 /// browser is not one we know — all of which are "we could not read them"
 /// rather than "there are none". The caller distinguishes those; see the
 /// `tabsRead` flag the dashboard already carries for exactly this reason.
-pub fn list_tabs() -> Vec<String> {
+pub fn list_tabs() -> Vec<crate::browser::TabEntry> {
+    let mut out = Vec::new();
     for app in CHROMIUM {
         if let Some(raw) = osascript(&chromium_list(app)) {
-            let tabs = split(&raw);
-            if !tabs.is_empty() {
-                return tabs;
-            }
+            out.extend(
+                split(&raw)
+                    .into_iter()
+                    .map(|title| crate::browser::TabEntry {
+                        browser: (*app).to_string(),
+                        title,
+                    }),
+            );
         }
     }
-    osascript(&safari_list())
-        .map(|r| split(&r))
-        .unwrap_or_default()
+    if let Some(raw) = osascript(&safari_list()) {
+        out.extend(
+            split(&raw)
+                .into_iter()
+                .map(|title| crate::browser::TabEntry {
+                    browser: "Safari".to_string(),
+                    title,
+                }),
+        );
+    }
+    out
 }
 
 fn chromium_close(app: &str, title: &str) -> String {
@@ -191,16 +210,23 @@ pub fn escape(title: &str) -> String {
         .replace(['\n', '\r'], " ")
 }
 
-/// Close the first tab with exactly this title. False means it was not found.
-pub fn close_tab(title: &str) -> bool {
-    for app in CHROMIUM {
-        if let Some(out) = osascript(&chromium_close(app, title)) {
-            if out.trim() == "yes" {
-                return true;
-            }
-        }
+/// Close the tab with exactly this title in exactly this browser. False means
+/// it was not found.
+///
+/// Scoped to `browser` now that more than one browser's tabs can be listed
+/// side by side — the same title could, in principle, be open in two of them
+/// at once, and closing whichever one happened to be checked first would be
+/// closing the wrong tab.
+pub fn close_tab(browser: &str, title: &str) -> bool {
+    if browser == "Safari" {
+        return osascript(&safari_close(title))
+            .map(|o| o.trim() == "yes")
+            .unwrap_or(false);
     }
-    osascript(&safari_close(title))
+    let Some(app) = CHROMIUM.iter().find(|a| **a == browser) else {
+        return false;
+    };
+    osascript(&chromium_close(app, title))
         .map(|o| o.trim() == "yes")
         .unwrap_or(false)
 }

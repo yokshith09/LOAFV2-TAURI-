@@ -1583,12 +1583,13 @@ fn download_whisper_engine(app: tauri::AppHandle) -> Result<(), String> {
     })
 }
 
-/// The titles of the tabs open in the front browser window.
+/// The titles of the tabs open across every supported browser Loaf can see,
+/// each tagged with which browser it belongs to.
 ///
 /// Titles only \u2014 what the browser writes on the tab strip, which is what you
 /// can already read by looking at the screen. No URLs, no page content.
 #[tauri::command(async)]
-fn list_tabs() -> Vec<String> {
+fn list_tabs() -> Vec<browser::TabEntry> {
     #[cfg(windows)]
     {
         browser_windows::list_tabs()
@@ -1603,20 +1604,20 @@ fn list_tabs() -> Vec<String> {
     }
 }
 
-/// Close one tab by title. False means it was not found.
+/// Close one tab by browser and title. False means it was not found.
 #[tauri::command(async)]
-fn close_tab(title: String) -> Result<bool, String> {
+fn close_tab(browser: String, title: String) -> Result<bool, String> {
     #[cfg(windows)]
     {
-        browser_windows::close_tab(&title)
+        browser_windows::close_tab(&browser, &title)
     }
     #[cfg(target_os = "macos")]
     {
-        Ok(browser_macos::close_tab(&title))
+        Ok(browser_macos::close_tab(&browser, &title))
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
-        let _ = title;
+        let _ = (browser, title);
         Err("Closing tabs is not supported on this platform.".into())
     }
 }

@@ -10,6 +10,7 @@ import {
 import type { RadarSnapshot } from "./html";
 import type { Platform } from "./html";
 import type { DashboardView } from "./html";
+import type { TabEntry } from "./html";
 import {
   CLOSET_CHANGED_EVENT,
   CLOSET_PICK_EVENT,
@@ -969,8 +970,8 @@ root.addEventListener("click", (ev) => {
   const tabClose = target.closest<HTMLElement>("[data-loaf-tabclose]");
   if (tabClose) {
     const index = Number(tabClose.dataset.loafTabclose);
-    const title = browserTabs[index];
-    if (title !== undefined) void closeBrowserTab(title, tabClose);
+    const entry = browserTabs[index];
+    if (entry !== undefined) void closeBrowserTab(entry, tabClose);
     return;
   }
 
@@ -1456,14 +1457,14 @@ let listening = false;
  * because two overlapping recognisers is a way to get one sentence acted on
  * twice.
  */
-/** The browser tabs, as last read. Titles only. */
-let browserTabs: string[] = [];
+/** The browser tabs, as last read, across every supported browser. */
+let browserTabs: TabEntry[] = [];
 /** False when Loaf could not read them, which is a different answer to none. */
 let tabsRead = false;
 
 async function refreshTabs(): Promise<void> {
   try {
-    const tabs = await invoke<string[]>("list_tabs");
+    const tabs = await invoke<TabEntry[]>("list_tabs");
     browserTabs = tabs;
     tabsRead = true;
   } catch {
@@ -1473,16 +1474,19 @@ async function refreshTabs(): Promise<void> {
 }
 
 /**
- * Close one tab, by the title Loaf read.
+ * Close one tab, by the browser and title Loaf read.
  *
  * The list is re-read afterwards rather than patched: the browser is the owner
  * of what is open, and guessing that our row disappeared would show a list that
  * disagrees with the tab strip the moment anything else changes it.
  */
-async function closeBrowserTab(title: string, button: HTMLElement): Promise<void> {
+async function closeBrowserTab(entry: TabEntry, button: HTMLElement): Promise<void> {
   button.setAttribute("disabled", "true");
   try {
-    const closed = await invoke<boolean>("close_tab", { title });
+    const closed = await invoke<boolean>("close_tab", {
+      browser: entry.browser,
+      title: entry.title,
+    });
     if (!closed) {
       const hint = document.getElementById("ask-reply");
       if (hint) hint.textContent = "That tab is not open any more.";

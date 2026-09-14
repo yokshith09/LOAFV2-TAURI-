@@ -239,6 +239,12 @@ export const PLUS_CSS = `
   .tp-tick:hover { border-color:var(--ok, #2C7355); color:#2C7355; }
   .tp-x:hover { border-color:#C2402C; color:#C2402C; }
   .tp-title { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tp-group { margin-bottom:4px; }
+  .tp-browser {
+    margin:8px 0 0; font-size:11px; font-weight:600; text-transform:uppercase;
+    letter-spacing:.03em; opacity:.6;
+  }
+  .tp-group:first-of-type .tp-browser { margin-top:2px; }
   .tp-timer { color:var(--ink-soft); font-size:11.5px; flex-shrink:0; }
   .tp-add { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
   .tp-input {

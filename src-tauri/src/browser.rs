@@ -35,6 +35,18 @@ pub enum ProbeOutcome {
     Unavailable { why: String },
 }
 
+/// One open browser tab, with which browser it belongs to.
+///
+/// `browser` is spelled so the frontend's own `browserFor` can resolve it
+/// straight from `KNOWN_BROWSERS` — the Windows executable name (with `.exe`)
+/// or the macOS process name — rather than needing a second lookup table here
+/// that could drift from the one the radar already keeps in step.
+#[derive(Debug, Clone, Serialize)]
+pub struct TabEntry {
+    pub browser: String,
+    pub title: String,
+}
+
 /// Whether this build can read tabs at all.
 ///
 /// Checked before the radar is offered rather than after every browser fails:

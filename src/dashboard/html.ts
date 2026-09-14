@@ -1,4 +1,5 @@
 import { notesFor } from "../insights/notes";
+import { browserFor } from "../radar/domain";
 import { Tracker, formatDuration, dayKeyFor, type HistoryEntry } from "../tracker/tracker";
 import {
   BASE_CSS,
@@ -230,8 +231,8 @@ export interface DashboardOptions {
    * be a claim this window has not earned.
    */
   readonly memory?: MemorySnapshot;
-  /** Browser tab titles, for the panel that lets you close them. */
-  readonly tabs?: readonly string[];
+  /** Browser tabs, for the panel that lets you close them. */
+  readonly tabs?: readonly TabEntry[];
   /** False when Loaf could not read them — different from none open. */
   readonly tabsRead?: boolean;
   /** Tabs open right now, for the tab note. Null when the browser will not say. */
@@ -589,18 +590,32 @@ function taskBlock(tasks: readonly TaskView[], now: number): string {
  * choice from three, and optionally a number of minutes. Anything more elaborate
  * would be a second task.
  */
+/** One open tab, and which browser it belongs to. */
+export interface TabEntry {
+  readonly browser: string;
+  readonly title: string;
+}
+
 /**
- * The tabs open in the browser, each with a way to close it.
+ * The tabs open across every browser Loaf can see, each with a way to close
+ * it.
  *
  * This is the answer to "Loaf tells me I have forty tabs and I cannot do
  * anything about it from here". It lists titles — what the browser writes on
  * the tab strip — and never URLs or page content.
  *
+ * GROUPED BY BROWSER, NOT ONE FLAT LIST. Rust used to stop at the first
+ * browser window it found, so this panel only ever needed one list — now that
+ * every supported browser and every one of its windows is read, a flat list
+ * would read as one enormous browser's worth of tabs. `browserFor` is the
+ * same lookup the radar already uses, so a second name table did not need
+ * inventing here.
+ *
  * Rendered empty rather than hidden when there are none, because "no tabs" and
  * "Loaf could not read them" are different answers and the empty state says
  * which.
  */
-export function tabPanel(tabs: readonly string[], read: boolean): string {
+export function tabPanel(tabs: readonly TabEntry[], read: boolean): string {
   if (!read) {
     return (
       `<h2>Browser tabs</h2>` +
@@ -614,14 +629,36 @@ export function tabPanel(tabs: readonly string[], read: boolean): string {
   if (tabs.length === 0) {
     return `<h2>${heading}</h2><div class="tp"><p class="empty">No browser tabs open.</p></div>`;
   }
-  const rows = tabs
-    .map(
-      (title, i) =>
-        `<div class="tp-row">` +
-        `<span class="tp-title">${escapeHTML(tidyTabTitle(title))}</span>` +
-        `<button class="tp-x" data-loaf-tabclose="${i}" title="Close this tab">×</button>` +
-        `</div>`,
-    )
+  // Grouped in the order each browser was first seen, index kept against the
+  // FULL list — data-loaf-tabclose still addresses `tabs[i]` directly, so
+  // closing one needs no change to how the click is handled.
+  const order: string[] = [];
+  const groups = new Map<string, { readonly entry: TabEntry; readonly index: number }[]>();
+  tabs.forEach((entry, index) => {
+    if (!groups.has(entry.browser)) {
+      groups.set(entry.browser, []);
+      order.push(entry.browser);
+    }
+    groups.get(entry.browser)!.push({ entry, index });
+  });
+  const label = (browser: string): string => browserFor(browser)?.displayName ?? browser;
+  const rows = order
+    .map((browser) => {
+      const items = groups
+        .get(browser)!
+        .map(
+          ({ entry, index }) =>
+            `<div class="tp-row">` +
+            `<span class="tp-title">${escapeHTML(tidyTabTitle(entry.title))}</span>` +
+            `<button class="tp-x" data-loaf-tabclose="${index}" title="Close this tab">×</button>` +
+            `</div>`,
+        )
+        .join("");
+      return (
+        `<div class="tp-group">` +
+        `<h3 class="tp-browser">${escapeHTML(label(browser))}</h3>${items}</div>`
+      );
+    })
     .join("");
   return `<h2>${heading}</h2><div class="tp">${rows}</div>`;
 }

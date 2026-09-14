@@ -25,7 +25,7 @@
 
 #![cfg(windows)]
 
-use crate::browser::ProbeOutcome;
+use crate::browser::{ProbeOutcome, TabEntry};
 use windows::core::{BSTR, VARIANT};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
@@ -398,7 +398,8 @@ fn name_of(element: &IUIAutomationElement) -> Option<String> {
     }
 }
 
-/// The title of every open tab in the front browser window.
+/// The title of every open tab, across every supported browser and every one
+/// of its windows.
 ///
 /// TAB TITLES, NOT PAGE CONTENT. A tab's accessible Name is what the browser
 /// itself writes on the tab strip — the same string you can read by looking at
@@ -406,25 +407,27 @@ fn name_of(element: &IUIAutomationElement) -> Option<String> {
 /// collected: the radar records the address bar of the ACTIVE tab only, and
 /// this does not extend that.
 ///
-/// Empty when the front window is not a browser, which is a real answer rather
-/// than an error.
-pub fn list_tabs() -> Vec<String> {
+/// Empty when no supported browser has a window open, which is a real answer
+/// rather than an error.
+pub fn list_tabs() -> Vec<TabEntry> {
     imp_tabs::list().unwrap_or_default()
 }
 
-/// Close one tab by its exact title. False means it was not found.
+/// Close one tab by its browser and exact title. False means it was not found.
 ///
 /// Closes it the way you would: by pressing the tab's own close button through
 /// UI Automation. NOT by sending Ctrl+W, which closes whatever happens to be in
 /// front and would lose the wrong thing if the user changed tabs between asking
-/// and Loaf acting.
-pub fn close_tab(title: &str) -> Result<bool, String> {
-    imp_tabs::close(title)
+/// and Loaf acting. The browser narrows the search to the right window rather
+/// than the first one with a matching title, now that more than one browser's
+/// tabs can be listed side by side.
+pub fn close_tab(browser: &str, title: &str) -> Result<bool, String> {
+    imp_tabs::close(browser, title)
 }
 
 #[cfg(windows)]
 mod imp_tabs {
-    use super::{close_button, name_of, real_tabs, stem_of, visible_windows, Apartment};
+    use super::{close_button, name_of, real_tabs, stem_of, visible_windows, Apartment, TabEntry};
     use windows::core::Interface;
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Accessibility::{
@@ -433,11 +436,6 @@ mod imp_tabs {
     };
 
     /// Executables whose windows have a tab strip worth listing.
-    ///
-    /// Only a fallback ordering now: `list`/`close` act on a browser rather than
-    /// on whatever is in front, because the dashboard asking "what tabs are
-    /// open" IS the foreground window at that moment and would otherwise list
-    /// its own.
     const BROWSERS: &[&str] = &[
         "chrome",
         "msedge",
@@ -452,65 +450,91 @@ mod imp_tabs {
         "chrome_canary",
     ];
 
-    /// The first browser window found, for the tab list and the close button.
-    fn browser_window(automation: &IUIAutomation) -> Option<IUIAutomationElement> {
-        let hwnd = visible_windows()
+    /// Every window belonging to a supported browser, tagged with which one.
+    ///
+    /// EVERY WINDOW OF EVERY BROWSER, not the first one found. A single-window
+    /// read used to mean a second Chrome window, or a browser other than
+    /// whichever happened to be listed first, was invisible to this panel even
+    /// though `probe` (the tab COUNT, used elsewhere) already got this right —
+    /// this brings the tab LIST up to the same standard.
+    fn matching_windows(automation: &IUIAutomation) -> Vec<(String, IUIAutomationElement)> {
+        visible_windows()
             .into_iter()
-            .find(|(_, stem)| BROWSERS.contains(&stem_of(stem).as_str()))
-            .map(|(hwnd, _)| hwnd)?;
-        unsafe { automation.ElementFromHandle(hwnd).ok() }
+            .filter_map(|(hwnd, stem)| {
+                let matched = stem_of(&stem);
+                if !BROWSERS.contains(&matched.as_str()) {
+                    return None;
+                }
+                let root = unsafe { automation.ElementFromHandle(hwnd) }.ok()?;
+                // `.exe`, so this matches what KNOWN_BROWSERS.exe carries on the
+                // frontend and `browserFor` resolves it without a second table.
+                Some((format!("{matched}.exe"), root))
+            })
+            .collect()
     }
 
-    pub fn list() -> Option<Vec<String>> {
+    pub fn list() -> Option<Vec<TabEntry>> {
         let _apartment = Apartment::enter();
         let automation: IUIAutomation =
             unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }.ok()?;
-        let root = browser_window(&automation)?;
-        Some(
-            real_tabs(&automation, &root)
-                .iter()
-                .filter_map(name_of)
-                .collect(),
-        )
+        let mut out = Vec::new();
+        for (browser, root) in matching_windows(&automation) {
+            for tab in real_tabs(&automation, &root) {
+                if let Some(title) = name_of(&tab) {
+                    out.push(TabEntry {
+                        browser: browser.clone(),
+                        title,
+                    });
+                }
+            }
+        }
+        Some(out)
     }
 
-    pub fn close(title: &str) -> Result<bool, String> {
+    pub fn close(browser: &str, title: &str) -> Result<bool, String> {
         let _apartment = Apartment::enter();
         let automation: IUIAutomation =
             unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
                 .map_err(|e| e.to_string())?;
-        let Some(root) = browser_window(&automation) else {
-            return Ok(false);
-        };
-        let Some(tab) = real_tabs(&automation, &root)
-            .into_iter()
-            .find(|t| name_of(t).as_deref() == Some(title))
-        else {
-            return Ok(false);
-        };
+        let target = stem_of(browser);
+        for (candidate, root) in matching_windows(&automation) {
+            if stem_of(&candidate) != target {
+                continue;
+            }
+            let Some(tab) = real_tabs(&automation, &root)
+                .into_iter()
+                .find(|t| name_of(t).as_deref() == Some(title))
+            else {
+                continue;
+            };
 
-        // The close button is a child of THIS tab. Found under the tab rather
-        // than searched for in the window, which is what makes this close the
-        // tab the user picked instead of whichever one is in front.
-        let Some(button) = close_button(&automation, &tab) else {
-            // Reported honestly rather than falling back to Ctrl+W, which would
-            // close a different tab.
-            return Err("That tab has no close button Loaf can press.".into());
-        };
-        let pattern =
-            unsafe { button.GetCurrentPattern(UIA_InvokePatternId) }.map_err(|e| e.to_string())?;
-        let invoker: IUIAutomationInvokePattern = pattern.cast().map_err(|e| e.to_string())?;
-        unsafe { invoker.Invoke() }.map_err(|e| e.to_string())?;
-        Ok(true)
+            // The close button is a child of THIS tab. Found under the tab
+            // rather than searched for in the window, which is what makes this
+            // close the tab the user picked instead of whichever one is in
+            // front.
+            let Some(button) = close_button(&automation, &tab) else {
+                // Reported honestly rather than falling back to Ctrl+W, which
+                // would close a different tab.
+                return Err("That tab has no close button Loaf can press.".into());
+            };
+            let pattern = unsafe { button.GetCurrentPattern(UIA_InvokePatternId) }
+                .map_err(|e| e.to_string())?;
+            let invoker: IUIAutomationInvokePattern = pattern.cast().map_err(|e| e.to_string())?;
+            unsafe { invoker.Invoke() }.map_err(|e| e.to_string())?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 
 #[cfg(not(windows))]
 mod imp_tabs {
-    pub fn list() -> Option<Vec<String>> {
+    use super::TabEntry;
+
+    pub fn list() -> Option<Vec<TabEntry>> {
         None
     }
-    pub fn close(_title: &str) -> Result<bool, String> {
+    pub fn close(_browser: &str, _title: &str) -> Result<bool, String> {
         Err("Closing tabs is Windows-only for now.".into())
     }
 }
@@ -564,19 +588,25 @@ mod tests {
         println!("total across every browser: {total}");
     }
 
-    /// What tabs are open in whatever is in front right now.
+    /// What tabs are open, across every supported browser with a window open —
+    /// not only the one in front.
     ///
-    /// Ignored: it depends on a browser being the foreground window, which a
-    /// CI runner does not have. Bring a browser to the front, then:
+    /// Ignored: it depends on a real browser being open, which a CI runner
+    /// does not have. Open two different browsers, each with a window or two,
+    /// then:
     ///
     ///     cargo test -- --ignored --nocapture what_tabs_are_open
+    ///
+    /// The check this exists for: every open browser shows up, labelled with
+    /// its own name, and a second window of the same browser contributes its
+    /// tabs too rather than being invisible.
     #[test]
     #[ignore]
     fn what_tabs_are_open() {
         let tabs = super::list_tabs();
-        println!("{} tabs in the front window", tabs.len());
+        println!("{} tabs across every open browser", tabs.len());
         for t in tabs.iter().take(15) {
-            println!("  - {t}");
+            println!("  - [{}] {}", t.browser, t.title);
         }
     }
 
