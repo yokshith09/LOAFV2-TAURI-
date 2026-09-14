@@ -2615,6 +2615,15 @@ fn claude_disconnect(app: tauri::AppHandle) -> Result<ClaudeStatus, String> {
 /// Only a real `tools/call` raises the bubble. Claude pings its servers on a
 /// timer, and a pet that looked busy every few seconds because of a keep-alive
 /// would be lying about being asked something.
+///
+/// ONE BUBBLE PER BURST, NOT PER CALL. A single piece of work is usually
+/// several `tools/call`s in a row — today's screen time, then this week's,
+/// then the meeting notes — and re-announcing "Claude is asking Loaf
+/// something" on each one flickered the bubble and restarted the spoken line
+/// several times a second. `busy_since` already tracks whether a burst is in
+/// progress for the "done" side of this; the fix is to also gate `asked` on
+/// it, only emitting when a burst STARTS (idle to busy), not on every call
+/// inside one.
 fn watch_for_claude(app: &tauri::AppHandle) {
     use tauri::Emitter;
     let app = app.clone();
@@ -2652,8 +2661,15 @@ fn watch_for_claude(app: &tauri::AppHandle) {
             if first || tool.is_empty() {
                 continue;
             }
+            // Idle to busy is a new burst and gets the bubble. Busy to busy is
+            // the same burst continuing — the quiet timer still gets pushed
+            // out so "done" waits for this call too, but nothing is said
+            // about it, because nothing changed as far as the user can see.
+            let starting_new_burst = busy_since.is_none();
             busy_since = Some(std::time::Instant::now());
-            let _ = app.emit("loaf://claude/asked", tool);
+            if starting_new_burst {
+                let _ = app.emit("loaf://claude/asked", tool);
+            }
         }
     });
 }
