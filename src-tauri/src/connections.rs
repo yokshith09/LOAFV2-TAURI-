@@ -251,6 +251,40 @@ pub fn calls(data_dir: &std::path::Path) -> Vec<CallRecord> {
         .unwrap_or_default()
 }
 
+/// Wipe the call log. The connections themselves are untouched — this forgets
+/// only the history of what was sent, not what is set up.
+pub fn clear_calls(data_dir: &std::path::Path) -> Result<(), String> {
+    let path = mcp_client::log_path(data_dir);
+    if !path.exists() {
+        return Ok(());
+    }
+    std::fs::write(&path, "[]").map_err(|e| e.to_string())
+}
+
+/// A copy of the call log a person can actually read, for the Save button.
+/// Plain text rather than the stored JSON, because the JSON is Loaf's shape
+/// for itself and this file is for a human.
+pub fn export_calls_text(data_dir: &std::path::Path) -> String {
+    let entries = calls(data_dir);
+    if entries.is_empty() {
+        return "Nothing has been sent to anything yet.\n".to_string();
+    }
+    entries
+        .iter()
+        .map(|c| {
+            format!(
+                "{}  {} \u{b7} {}  {}\n{}\n",
+                c.at,
+                c.server,
+                c.tool,
+                if c.ok { "ok" } else { "failed" },
+                c.arguments,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Get a connection to `name`, starting the program if it is not already up.
 ///
 /// Takes the pool lock for the whole handshake. That serialises connecting,
@@ -469,6 +503,53 @@ mod tests {
         let back = load(&dir).unwrap();
         assert_eq!(back.servers.len(), 1);
         assert_eq!(back.servers[0].env["KEY"], "v");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_the_log_empties_it_without_touching_the_config() {
+        let dir = std::env::temp_dir().join("loaf-mcp-test-clear-calls");
+        let _ = std::fs::remove_dir_all(&dir);
+        let record = CallRecord {
+            server: "slack".into(),
+            tool: "post_message".into(),
+            arguments: "{}".into(),
+            at: 1,
+            ok: true,
+        };
+        mcp_client::record(&dir, &record).unwrap();
+        assert_eq!(calls(&dir).len(), 1);
+        clear_calls(&dir).unwrap();
+        assert!(calls(&dir).is_empty());
+        // Clearing a log that was never written must not be an error either —
+        // the button is offered the moment anything has been sent, before any
+        // file necessarily exists on disk.
+        let never_written = std::env::temp_dir().join("loaf-mcp-test-clear-calls-missing");
+        let _ = std::fs::remove_dir_all(&never_written);
+        assert!(clear_calls(&never_written).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exported_text_names_every_call_and_says_when_there_is_none() {
+        let dir = std::env::temp_dir().join("loaf-mcp-test-export-calls");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(export_calls_text(&dir).contains("Nothing has been sent"));
+        mcp_client::record(
+            &dir,
+            &CallRecord {
+                server: "slack".into(),
+                tool: "post_message".into(),
+                arguments: "{\"channel\":\"#general\"}".into(),
+                at: 1,
+                ok: true,
+            },
+        )
+        .unwrap();
+        let text = export_calls_text(&dir);
+        assert!(text.contains("slack"));
+        assert!(text.contains("post_message"));
+        assert!(text.contains("#general"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

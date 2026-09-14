@@ -2056,6 +2056,25 @@ fn mcp_calls(app: tauri::AppHandle) -> Result<Vec<mcp_client::CallRecord>, Strin
     Ok(connections::calls(&data_dir(&app)?))
 }
 
+/// Forget the call log. What is connected is untouched.
+#[tauri::command(async)]
+fn mcp_clear_calls(app: tauri::AppHandle) -> Result<(), String> {
+    connections::clear_calls(&data_dir(&app)?)
+}
+
+/// Write the call log out as a plain-text file and show it in the file
+/// manager, the same way `open_mcp_config` does for the config.
+#[tauri::command(async)]
+fn mcp_save_calls(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    let path = dir.join("LoafPlus").join("mcp-calls.txt");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, connections::export_calls_text(&dir)).map_err(|e| e.to_string())?;
+    open_in_file_manager(&path.to_string_lossy())
+}
+
 /// Which servers are running right now.
 #[tauri::command(async)]
 fn mcp_connected(pool: tauri::State<'_, connections::Pool>) -> Vec<String> {
@@ -2794,6 +2813,8 @@ pub fn run() {
             mcp_tools,
             mcp_call,
             mcp_calls,
+            mcp_clear_calls,
+            mcp_save_calls,
             watches_list,
             watches_save,
             mcp_connected,

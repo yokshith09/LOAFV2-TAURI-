@@ -146,6 +146,17 @@ export interface ConnectionsState {
    */
   readonly pickedCatalog: string | null;
   /**
+   * Whether the raw command/address form is showing.
+   *
+   * Off by default. Most people are here for one of the catalog buttons above
+   * it, which need none of these boxes — showing "Program to run" and
+   * "Arguments" the instant the form opens told every one of them this was a
+   * technical task before they had even read the catalog. A local-program
+   * catalog entry (there is exactly one: "files") still needs these boxes to
+   * fill in, so picking one opens them regardless of this flag.
+   */
+  readonly manualOpen: boolean;
+  /**
    * The tool the user has opened, if any.
    *
    * WHY THIS EXISTS AT ALL. Every piece of the MCP client was built and
@@ -179,6 +190,7 @@ export const EMPTY_CONNECTIONS: ConnectionsState = {
   watches: [],
   adding: false,
   pickedCatalog: null,
+  manualOpen: false,
   picked: null,
   argsDraft: "{}",
   result: "",
@@ -537,14 +549,12 @@ function envFields(entry: CatalogEntry | null): string {
     .join("");
 }
 
-function addForm(open: boolean, entry: CatalogEntry | null): string {
-  if (!open) {
-    return `<button class="mcp-add" data-mcp-add-open="1">+ Add a connection</button>`;
-  }
+/**
+ * The raw command/address boxes. A technical form, kept behind a fold — see
+ * `manualOpen` on ConnectionsState for why.
+ */
+function manualFields(entry: CatalogEntry | null): string {
   return (
-    `<div class="mcp-form">` +
-    pickList(entry) +
-    setupSteps(entry) +
     `<label>What to call it<input id="mcp-new-name" placeholder="granola" maxlength="40"></label>` +
     `<label>Program to run<input id="mcp-new-cmd" placeholder="npx" maxlength="200"></label>` +
     `<label>Arguments<input id="mcp-new-args" placeholder="-y granola-mcp" maxlength="400"></label>` +
@@ -560,7 +570,26 @@ function addForm(open: boolean, entry: CatalogEntry | null): string {
     `<div class="mcp-actions">` +
     `<button class="mcp-btn primary" data-mcp-add-save="1">Add it</button>` +
     `<button class="mcp-btn" data-mcp-add-cancel="1">Cancel</button>` +
-    `</div></div>`
+    `</div>`
+  );
+}
+
+function addForm(open: boolean, entry: CatalogEntry | null, manualOpen: boolean): string {
+  if (!open) {
+    return `<button class="mcp-add" data-mcp-add-open="1">+ Add a connection</button>`;
+  }
+  // A local-program entry (there is one: "files") has no sign-in step, so the
+  // boxes that name its command are the only way to finish adding it.
+  const showManual = manualOpen || (entry !== null && !isHosted(entry));
+  return (
+    `<div class="mcp-form">` +
+    pickList(entry) +
+    setupSteps(entry) +
+    (showManual
+      ? manualFields(entry)
+      : `<button class="mcp-btn" data-mcp-manual-open="1">Set up a connection by hand instead</button>` +
+        `<div class="mcp-actions"><button class="mcp-btn" data-mcp-add-cancel="1">Cancel</button></div>`) +
+    `</div>`
   );
 }
 
@@ -601,9 +630,19 @@ function pickList(picked: CatalogEntry | null): string {
       `</button>`,
   ).join("");
 
-  const manual = MANUAL_ONLY.map(
+  // Shown as tiles in the same row rather than a bullet list underneath, so
+  // "not yet possible" reads as part of the catalog instead of a separate
+  // apology. Still not clickable — there is nothing to press yet — and the
+  // reason is on the tile itself rather than hidden in a tooltip, since a
+  // title-only tooltip is invisible on a touch screen and to anyone tabbing
+  // through with a keyboard.
+  const soon = MANUAL_ONLY.map(
     (m) =>
-      `<li><b>${escapeHTML(m.label)}</b> &mdash; ${escapeHTML(m.why)}</li>`,
+      `<div class="mcp-pick mcp-pick-soon">` +
+      `<span class="mcp-pick-name">${escapeHTML(m.label)}</span>` +
+      `<span class="mcp-pick-soon-badge">Coming soon</span>` +
+      `<span class="mcp-pick-by">${escapeHTML(m.why)}</span>` +
+      `</div>`,
   ).join("");
 
   return (
@@ -612,9 +651,7 @@ function pickList(picked: CatalogEntry | null): string {
     `<p class="mcp-watch-note">Only services published by the people who own the ` +
     `thing being connected, and every one of them checked. The online ones add ` +
     `straight away and then ask you to sign in; nothing is shared until you do.</p>` +
-    `<div class="mcp-pick-row">${rows}</div>` +
-    `<p class="mcp-watch-note">Not on this list, on purpose:</p>` +
-    `<ul class="mcp-manual">${manual}</ul>` +
+    `<div class="mcp-pick-row">${rows}${soon}</div>` +
     `</div>`
   );
 }
@@ -639,7 +676,12 @@ function callLog(calls: readonly CallRecord[], now: number): string {
         `<span class="mcp-when">${escapeHTML(relativeWhen(c.at, now))}` +
         (c.ok ? "" : " · failed") +
         `</span></div>` +
-        `<code class="mcp-args">${escapeHTML(c.arguments)}</code>` +
+        // A native <details> disclosure rather than a click handler: what was
+        // sent is the raw arguments, useful for checking a server got the
+        // right call and noise every other time, and this is the one widget
+        // that collapses/expands with no JS of its own.
+        `<details class="mcp-call-details"><summary>View details</summary>` +
+        `<code class="mcp-args">${escapeHTML(c.arguments)}</code></details>` +
         `</div>`,
     )
     .join("");
@@ -647,6 +689,10 @@ function callLog(calls: readonly CallRecord[], now: number): string {
     `<h2>What has been sent</h2>` +
     `<p class="mcp-fine">Newest first, kept on this machine, last 500 calls. ` +
     `A failed call still sent its arguments, so it is listed too.</p>` +
+    `<div class="mcp-actions">` +
+    `<button class="mcp-btn" data-mcp-log-save="1">Save</button>` +
+    `<button class="mcp-btn danger" data-mcp-log-clear="1">Clear</button>` +
+    `</div>` +
     `<div class="mcp-log">${rows}</div>`
   );
 }
@@ -777,7 +823,11 @@ export function connectionsPanel(
     disclosure() +
     claudeCard(claude) +
     list +
-    addForm(state.adding, state.pickedCatalog === null ? null : catalogEntry(state.pickedCatalog)) +
+    addForm(
+      state.adding,
+      state.pickedCatalog === null ? null : catalogEntry(state.pickedCatalog),
+      state.manualOpen,
+    ) +
     `<button class="mcp-btn" data-mcp-config="1">Open the config file</button>` +
     callLog(state.calls, now)
   );
@@ -825,6 +875,11 @@ export const CONNECTIONS_CSS = `
 .mcp-pick-needs{font-size:11px;opacity:.7;font-style:italic}
 .mcp-pick-hosted{font-size:11px;color:#2f8f5b;font-weight:600}
 .mcp-pick.chosen{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+.mcp-pick-soon{cursor:default;opacity:.6}
+.mcp-pick-soon-badge{font-size:11px;font-weight:600;opacity:.8}
+.mcp-call-details{margin-top:4px}
+.mcp-call-details summary{cursor:pointer;font-size:11px;opacity:.7}
+.mcp-call-details .mcp-args{margin-top:4px}
 .mcp-claude{border-left:3px solid #6b5bd6}
 .mcp-live{font-size:11px;color:#2f8f5b;font-weight:600}
 .mcp-steps{margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}

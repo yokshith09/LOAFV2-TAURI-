@@ -221,6 +221,34 @@ describe("the call log", () => {
     );
     expect(html.indexOf("newer")).toBeLessThan(html.indexOf("older"));
   });
+
+  it("offers Save and Clear once there is something to save or clear", () => {
+    const html = connectionsPanel(
+      state({ calls: [{ server: "a", tool: "t", arguments: "{}", at: 1, ok: true }] }),
+      NOW,
+    );
+    expect(html).toContain('data-mcp-log-save="1"');
+    expect(html).toContain('data-mcp-log-clear="1"');
+  });
+
+  it("offers neither when there is nothing logged yet", () => {
+    const html = connectionsPanel(EMPTY_CONNECTIONS, NOW);
+    expect(html).not.toContain("data-mcp-log-save");
+    expect(html).not.toContain("data-mcp-log-clear");
+  });
+
+  it("hides a call's raw arguments behind a View details fold", () => {
+    // The arguments are useful for checking a server got the right call and
+    // noise every other time, so they start collapsed.
+    const html = connectionsPanel(
+      state({
+        calls: [{ server: "a", tool: "t", arguments: '{"secret":"x"}', at: 1, ok: true }],
+      }),
+      NOW,
+    );
+    expect(html).toContain("<summary>View details</summary>");
+    expect(html).toContain("<details");
+  });
 });
 
 describe("escaping", () => {
@@ -759,11 +787,37 @@ describe("a remote server", () => {
   });
 
   it("can be added from the form, which offers an address and a token", () => {
-    const html = connectionsPanel(state({ adding: true }), NOW);
+    const html = connectionsPanel(state({ adding: true, manualOpen: true }), NOW);
     expect(html).toContain('id="mcp-new-url"');
     expect(html).toContain('id="mcp-new-token"');
     // A token box that is not a password box is a token on somebody's screen.
     expect(html).toContain('type="password"');
+  });
+
+  it("keeps the raw command/address boxes folded away until asked for", () => {
+    // Most people are here for a catalog button, not a program-and-arguments
+    // form — the fold is what stops the technical form being the first thing
+    // anyone sees the moment they open "+ Add a connection".
+    const html = connectionsPanel(state({ adding: true }), NOW);
+    expect(html).not.toContain('id="mcp-new-url"');
+    expect(html).not.toContain('id="mcp-new-cmd"');
+    expect(html).toContain('data-mcp-manual-open="1"');
+  });
+
+  it("unfolds automatically for the one catalog entry that is a local program", () => {
+    // "files" has no sign-in step, so its own boxes are the only way to finish
+    // adding it — the fold would otherwise hide the very fields it just filled.
+    const html = connectionsPanel(state({ adding: true, pickedCatalog: "files" }), NOW);
+    expect(html).toContain('id="mcp-new-cmd"');
+  });
+});
+
+describe("the manual-only catalog rows", () => {
+  it("render as tiles in the same row, not a separate bullet list", () => {
+    const html = connectionsPanel(state({ adding: true }), NOW);
+    expect(html).toContain("mcp-pick-soon");
+    expect(html).toContain("Coming soon");
+    expect(html).not.toContain('<ul class="mcp-manual">');
   });
 });
 

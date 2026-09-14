@@ -793,7 +793,7 @@ root.addEventListener("click", (ev) => {
             };
           }
         }
-        connections = { ...connections, adding: false, pickedCatalog: null };
+        connections = { ...connections, adding: false, pickedCatalog: null, manualOpen: false };
         await refreshConnections();
         // Straight into the browser, because "add it" and "sign in" are one
         // intention and making somebody hunt for a second button is the kind of
@@ -839,7 +839,13 @@ root.addEventListener("click", (ev) => {
   }
 
   if (target.closest("[data-mcp-add-cancel]")) {
-    connections = { ...connections, adding: false, pickedCatalog: null };
+    connections = { ...connections, adding: false, pickedCatalog: null, manualOpen: false };
+    void render();
+    return;
+  }
+
+  if (target.closest("[data-mcp-manual-open]")) {
+    connections = { ...connections, manualOpen: true };
     void render();
     return;
   }
@@ -887,12 +893,24 @@ root.addEventListener("click", (ev) => {
           servers,
           ...(Object.keys(secrets).length ? { secrets: { [name]: secrets } } : {}),
         });
-        connections = { ...connections, adding: false, pickedCatalog: null };
+        connections = { ...connections, adding: false, pickedCatalog: null, manualOpen: false };
       } catch (err) {
         connections = { ...connections, errors: { ...connections.errors, [name]: String(err) } };
       }
       await refreshConnections();
     })();
+    return;
+  }
+
+  if (target.closest("[data-mcp-log-save]")) {
+    void invoke("mcp_save_calls").catch((err) => console.error("could not save the log", err));
+    return;
+  }
+
+  if (target.closest("[data-mcp-log-clear]")) {
+    void invoke("mcp_clear_calls")
+      .then(() => refreshConnections())
+      .catch((err) => console.error("could not clear the log", err));
     return;
   }
 
