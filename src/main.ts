@@ -1814,6 +1814,7 @@ function noteViews(): NoteView[] {
     // Sent so a card can say when it was last touched. The wall is SORTED by
     // this and could not show it, so the order looked arbitrary.
     updatedAt: t.updatedAt,
+    archived: t.archived,
   }));
 }
 
@@ -1902,14 +1903,13 @@ function applyTaskCommand(raw: unknown): void {
       tasks.togglePin(raw.id);
       break;
     }
-    case "note-done": {
+    case "note-archive": {
+      // Used to be "note-done", toggling `done` underneath a button labelled
+      // "Archive" — which meant archiving a note could silently tick it off
+      // the pet's separate checklist too. A real `archived` field now carries
+      // this, and `done` goes back to meaning only what the checklist means.
       if (typeof raw.id !== "string") return;
-      // A TOGGLE, not a one-way mark. Keep's archive works the same way: the
-      // same control that puts a note away brings it back.
-      const found = tasks.all.find((t) => t.id === raw.id);
-      if (found === undefined) return;
-      if (found.done) tasks.reopen(found.id);
-      else tasks.complete(found.id);
+      tasks.toggleArchived(raw.id);
       break;
     }
     case "note-remove": {

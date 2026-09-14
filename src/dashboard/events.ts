@@ -158,7 +158,7 @@ export interface TaskCommand {
     | "note-edit"
     | "note-colour"
     | "note-pin"
-    | "note-done"
+    | "note-archive"
     | "note-remove"
     | "note-label-add"
     | "note-label-remove";
@@ -189,7 +189,7 @@ export function isTaskCommand(v: unknown): v is TaskCommand {
     "note-edit",
     "note-colour",
     "note-pin",
-    "note-done",
+    "note-archive",
     "note-remove",
     "note-label-add",
     "note-label-remove",
@@ -264,11 +264,12 @@ export interface NoteView {
   readonly pinned: boolean;
   readonly done: boolean;
   readonly labels: readonly string[];
-  /** Minutes until its timer, rounded, or null when it has none. */
   /** When its timer goes off, epoch milliseconds, or null for no timer. */
   readonly dueAt: number | null;
   /** When the note was last touched. The wall is sorted by this. */
   readonly updatedAt: number;
+  /** Off the main wall, but not deleted. See `Task.archived`. */
+  readonly archived: boolean;
 }
 
 /**
@@ -294,7 +295,8 @@ export function isNoteView(v: unknown): v is NoteView {
     n.labels.every((l) => typeof l === "string") &&
     (n.dueAt === null || (typeof n.dueAt === "number" && Number.isFinite(n.dueAt))) &&
     typeof n.updatedAt === "number" &&
-    Number.isFinite(n.updatedAt)
+    Number.isFinite(n.updatedAt) &&
+    typeof n.archived === "boolean"
   );
 }
 

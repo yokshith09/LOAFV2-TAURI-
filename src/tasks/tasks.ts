@@ -86,6 +86,17 @@ export interface Task {
   readonly labels: readonly string[];
   /** Wall-clock ms of the last edit, so the grid can show recent work first. */
   readonly updatedAt: number;
+  /**
+   * Off the main wall, but not deleted — Keep's own archive.
+   *
+   * SEPARATE FROM `done` ON PURPOSE, which the UI used to conflate: a button
+   * labelled "Archive" toggled `done` underneath, because `done` was the only
+   * off-to-one-side state a note had. That made archiving and the pet's
+   * checklist the same bit — completing a note on the wall could silently tick
+   * it off the "What you meant to do" list too. They are different questions:
+   * "did I do this" is `done`, "do I still want this on my board" is this.
+   */
+  readonly archived: boolean;
 }
 
 export interface TaskStore {
@@ -163,6 +174,7 @@ function readTask(v: unknown, fallbackNow: number): Task | null {
     colour: isNoteColour(r.colour) ? r.colour : "default",
     pinned: r.pinned === true,
     labels: readLabels(r.labels),
+    archived: r.archived === true,
     updatedAt:
       typeof r.updatedAt === "number" && Number.isFinite(r.updatedAt)
         ? r.updatedAt
@@ -330,6 +342,7 @@ export class TaskList {
       colour: "default",
       pinned: false,
       labels: [],
+      archived: false,
       updatedAt: createdAt,
     };
     this.tasks.push(task);
@@ -373,6 +386,11 @@ export class TaskList {
   /** Returns the new state, so a caller does not have to look it up again. */
   togglePin(id: string): boolean {
     return this.replace(id, (t) => ({ ...t, pinned: !t.pinned, updatedAt: this.now() }));
+  }
+
+  /** The one control that puts a note away and brings it back. */
+  toggleArchived(id: string): boolean {
+    return this.replace(id, (t) => ({ ...t, archived: !t.archived, updatedAt: this.now() }));
   }
 
   addLabel(id: string, raw: string): boolean {

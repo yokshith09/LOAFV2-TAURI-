@@ -138,6 +138,16 @@ let notesFilter: string | null = null;
 let notesEditing: string | null = null;
 
 /**
+ * Showing the archived shelf instead of the main wall. View-only, same reason
+ * as `notesFilter` — which pile you are looking at is not a fact about the
+ * notes, and sending it to the companion would mean a round trip to switch.
+ */
+let notesShowArchived = false;
+
+/** Text typed into the Notes search box. Client-side, same reason as above. */
+let notesSearch = "";
+
+/**
  * What the companion last said about the radar.
  *
  * Unavailable until it answers, which is also the truthful state if it never
@@ -333,6 +343,8 @@ async function render(): Promise<void> {
       notes,
       notesFilter,
       notesEditing,
+      notesShowArchived,
+      notesSearch,
       tabs: browserTabs,
       tabsRead,
       view: activeView,
@@ -385,6 +397,17 @@ root.addEventListener("keydown", (ev) => {
   if (!(target instanceof HTMLInputElement) || target.id !== "sr-input") return;
   ev.preventDefault();
   void runSearch();
+});
+
+// Notes search is client-side and instant, unlike the store-backed search box
+// above — there is nothing to wait on, so it filters live rather than only on
+// Enter. The focus/caret restore in `render` (see the note above) is what
+// keeps this from losing the cursor on every keystroke.
+root.addEventListener("input", (ev) => {
+  const target = ev.target;
+  if (!(target instanceof HTMLInputElement) || target.id !== "nt-search") return;
+  notesSearch = target.value;
+  void render();
 });
 
 root.addEventListener("click", (ev) => {
@@ -961,6 +984,19 @@ root.addEventListener("click", (ev) => {
     return;
   }
 
+  // The archived-shelf toggle. Same view-only pattern as the label filter —
+  // switching shelves is a fact about this window, not the notes.
+  const archiveToggle = target.closest<HTMLElement>("[data-loaf-notes-archived]");
+  if (archiveToggle) {
+    notesShowArchived = archiveToggle.dataset.loafNotesArchived === "1";
+    // A label chosen on one shelf usually does not exist on the other, and a
+    // filter that silently keeps the board looking empty after switching
+    // shelves is confusing rather than useful.
+    notesFilter = null;
+    void render();
+    return;
+  }
+
   const cmd = target.closest<HTMLElement>("[data-loaf-cmd]");
   if (cmd) void emit(COMMAND_EVENT, cmd.dataset.loafCmd);
 });
@@ -1094,11 +1130,11 @@ function sendTask(action: string, el: HTMLElement): void {
     return;
   }
 
-  if (action.startsWith("note-done:")) {
+  if (action.startsWith("note-archive:")) {
     void emit(TASK_COMMAND_EVENT, {
       kind: "task",
-      action: "note-done",
-      id: action.slice("note-done:".length),
+      action: "note-archive",
+      id: action.slice("note-archive:".length),
     });
     return;
   }

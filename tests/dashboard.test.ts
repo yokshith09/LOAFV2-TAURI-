@@ -1027,6 +1027,7 @@ describe("the notes board", () => {
     labels: [],
     dueAt: null,
     updatedAt: 1_789_200_000_000,
+    archived: false,
     ...over,
   });
 
@@ -1097,8 +1098,133 @@ describe("the notes board", () => {
 
   it("keeps archive and delete on every card, addressed by real id", () => {
     const html = dashboardHTML(t(), { view: "notes", notes: [note({ id: "abc123" })] });
-    expect(html).toContain('data-loaf-task="note-done:abc123"');
+    expect(html).toContain('data-loaf-task="note-archive:abc123"');
     expect(html).toContain('data-loaf-task="note-remove:abc123"');
+  });
+
+  describe("the archived shelf", () => {
+    // bodyOf() throughout: the stylesheet has its own prose ("the height of
+    // 'buy milk'" in a comment, elsewhere) and a plain toContain against the
+    // whole document can pass by coincidence rather than by the card existing.
+    it("keeps an archived note off the main wall", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notes: [
+            note({ id: "kept", title: "still here" }),
+            note({ id: "gone", title: "put away", archived: true }),
+          ],
+        }),
+      );
+      expect(html).toContain("still here");
+      expect(html).not.toContain("put away");
+    });
+
+    it("offers a way back to it, with a count, only when something is there", () => {
+      const none = bodyOf(dashboardHTML(t(), { view: "notes", notes: [note()] }));
+      expect(none).not.toContain("data-loaf-notes-archived");
+
+      const some = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notes: [note(), note({ id: "a", archived: true }), note({ id: "b", archived: true })],
+        }),
+      );
+      expect(some).toContain('data-loaf-notes-archived="1"');
+      expect(some).toContain("Archived (2)");
+    });
+
+    it("shows only the archived notes once that shelf is selected", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notesShowArchived: true,
+          notes: [
+            note({ id: "kept", title: "still here" }),
+            note({ id: "gone", title: "put away", archived: true }),
+          ],
+        }),
+      );
+      expect(html).toContain("put away");
+      expect(html).not.toContain("still here");
+      // The action on that shelf is "put it back", not "archive it again".
+      expect(html).toContain("Put back");
+    });
+
+    it("says so when the archived shelf is genuinely empty", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notesShowArchived: true,
+          notes: [note({ archived: false })],
+        }),
+      );
+      expect(html).toContain("Nothing archived");
+    });
+  });
+
+  describe("searching notes", () => {
+    it("matches the title", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notesSearch: "dentist",
+          notes: [note({ id: "a", title: "call the dentist" }), note({ id: "b", title: "get bread" })],
+        }),
+      );
+      expect(html).toContain("call the dentist");
+      expect(html).not.toContain("get bread");
+    });
+
+    it("matches the body too, not just the title", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notesSearch: "eggs and bread",
+          notes: [note({ id: "a", title: "shopping", body: "get eggs and bread" })],
+        }),
+      );
+      expect(html).toContain("shopping");
+    });
+
+    it("is not case-sensitive", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notesSearch: "DENTIST",
+          notes: [note({ title: "call the dentist" })],
+        }),
+      );
+      expect(html).toContain("call the dentist");
+    });
+
+    it("says so when nothing matches, rather than showing an empty board silently", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notesSearch: "xyzzy",
+          notes: [note({ title: "call the dentist" })],
+        }),
+      );
+      expect(html).toContain("Nothing matches");
+      expect(html).toContain("xyzzy");
+    });
+
+    it("searches within the archived shelf too, not only the main wall", () => {
+      const html = bodyOf(
+        dashboardHTML(t(), {
+          view: "notes",
+          notesShowArchived: true,
+          notesSearch: "put away",
+          notes: [
+            note({ id: "a", title: "put away this one", archived: true }),
+            note({ id: "b", title: "keep this one", archived: true }),
+          ],
+        }),
+      );
+      expect(html).toContain("put away this one");
+      expect(html).not.toContain("keep this one");
+    });
   });
 
   it("offers a pin on every card", () => {

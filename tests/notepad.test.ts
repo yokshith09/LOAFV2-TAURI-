@@ -49,6 +49,7 @@ function note(over: Partial<Task> = {}): Task {
     priority: "soon",
     dueAt: null,
     done: false,
+    archived: false,
     createdAt: 1_000,
     body: "",
     colour: "default",
@@ -139,6 +140,42 @@ describe("pinning", () => {
     expect(list.all[0]!.pinned).toBe(true);
     list.togglePin(t.id);
     expect(list.all[0]!.pinned).toBe(false);
+  });
+});
+
+describe("archiving — Keep's shelf, not the checklist's done", () => {
+  it("puts a note away and brings it back with the same toggle", () => {
+    const list = new TaskList(memoryStore());
+    const t = list.add("Archive me")!;
+    list.toggleArchived(t.id);
+    expect(list.all[0]!.archived).toBe(true);
+    list.toggleArchived(t.id);
+    expect(list.all[0]!.archived).toBe(false);
+  });
+
+  it("is a different bit from done — archiving must not tick off the checklist", () => {
+    // THE BUG THIS SEPARATES. The old "Archive" button toggled `done`
+    // underneath, so archiving a note silently marked it complete on the
+    // pet's separate 3-item list too.
+    const list = new TaskList(memoryStore());
+    const t = list.add("Archive me")!;
+    list.toggleArchived(t.id);
+    expect(list.all[0]!.done).toBe(false);
+    expect(list.all[0]!.archived).toBe(true);
+  });
+
+  it("bumps updatedAt, the same as every other card action", () => {
+    let now = 1_000;
+    const list = new TaskList(memoryStore(), { now: () => now });
+    const t = list.add("Archive me")!;
+    now = 5_000;
+    list.toggleArchived(t.id);
+    expect(list.all[0]!.updatedAt).toBe(5_000);
+  });
+
+  it("refuses an id that does not exist, the same as every other action", () => {
+    const list = new TaskList(memoryStore());
+    expect(list.toggleArchived("nope")).toBe(false);
   });
 });
 

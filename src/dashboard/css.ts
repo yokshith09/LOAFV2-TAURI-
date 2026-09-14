@@ -450,6 +450,10 @@ export const NOTES_CSS = `
     background:var(--accent); border:1px solid var(--accent-dark); color:var(--accent-ink); }
   .nt-add:hover { filter:brightness(0.97); }
 
+  /* Client-side and instant — filters the wall as you type, no round trip. */
+  .nt-search { margin:0 0 10px; }
+  .nt-search .nt-input { margin:0; }
+
   /* One row of chips above the grid, filtering the wall to one label at a
      time. Only rendered once a note actually carries a label — one chip on
      one note is not a reason to add a permanent row above every empty wall. */

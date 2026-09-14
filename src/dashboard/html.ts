@@ -188,6 +188,20 @@ export interface DashboardOptions {
    */
   readonly notesEditing?: string | null;
   /**
+   * Showing the archived notes instead of the main wall. View-only, same
+   * reason as `notesFilter` — which shelf you are looking at is not a fact
+   * about the notes themselves.
+   */
+  readonly notesShowArchived?: boolean;
+  /**
+   * Text typed into the Notes search box, or "" for no filter.
+   *
+   * Client-side, against notes this window already has — every note lives in
+   * this window's own copy already, the same reason label filtering never
+   * needed a round trip either.
+   */
+  readonly notesSearch?: string;
+  /**
    * Which section is open. Passed in rather than held here because the whole
    * body is re-rendered on every stats tick, and a view that reset itself to
    * "Today" every few seconds would be unusable.
@@ -1056,6 +1070,8 @@ export function dashboardBody(
         opts.memory,
         opts.notesFilter ?? null,
         opts.notesEditing ?? null,
+        opts.notesShowArchived ?? false,
+        opts.notesSearch ?? "",
         (opts.now ?? new Date()).getTime(),
       ),
     )}
@@ -1292,8 +1308,8 @@ function noteCardClosed(n: NoteView, now: number): string {
     edited +
     timer +
     `<span class="nt-acts">` +
-    `<button class="nt-btn" data-loaf-task="note-done:${escapeHTML(n.id)}" ` +
-    `title="${n.done ? "Put back" : "Archive"}">${n.done ? "↺" : "✓"}</button>` +
+    `<button class="nt-btn" data-loaf-task="note-archive:${escapeHTML(n.id)}" ` +
+    `title="${n.archived ? "Put back" : "Archive"}">${n.archived ? "↺" : "🗄"}</button>` +
     `<button class="nt-btn" data-loaf-task="note-remove:${escapeHTML(n.id)}" title="Delete">×</button>` +
     `</span></div></article>`
   );
@@ -1377,6 +1393,8 @@ function notesPanel(
   memory: MemorySnapshot | undefined,
   filter: string | null,
   editingId: string | null,
+  showArchived: boolean,
+  search: string,
   now: number,
 ): string {
   const compose = `<div class="nt-compose">
@@ -1407,12 +1425,28 @@ function notesPanel(
       ${memoryPanel(memory)}`;
   }
 
-  const labels = labelsOnTheWall(notes);
+  // The archived pile is a SHELF, not a delete. Off the main wall, still
+  // searchable, still editable — never gone. Checked here, once, rather than
+  // scattered through every filter below.
+  const archivedNotes = notes.filter((n) => n.archived);
+  const activeNotes = notes.filter((n) => !n.archived);
+  const board = showArchived ? archivedNotes : activeNotes;
+  // Always shown, unlike the label strip — it is not label-dependent, and a
+  // pile of archived notes with no way back to see them again is a shelf
+  // nobody can find.
+  const archiveToggle = showArchived
+    ? `<button class="nt-filter-chip active" data-loaf-notes-archived="0">← Back to notes</button>`
+    : archivedNotes.length > 0
+      ? `<button class="nt-filter-chip" data-loaf-notes-archived="1">Archived (${archivedNotes.length})</button>`
+      : "";
+
+  const labels = labelsOnTheWall(board);
   // The filter strip only earns its place once there is something to filter
   // BY. One label on one note is not a reason to add a row of chips above
   // every wall anyone will ever have.
   const filterStrip = labels.length
     ? `<div class="nt-filters">` +
+      archiveToggle +
       `<button class="nt-filter-chip${filter === null ? " active" : ""}" data-loaf-note-filter="">All</button>` +
       labels
         .map(
@@ -1422,22 +1456,45 @@ function notesPanel(
         )
         .join("") +
       `</div>`
-    : "";
+    : archiveToggle
+      ? `<div class="nt-filters">${archiveToggle}</div>`
+      : "";
 
-  const shown = filter
-    ? notes.filter((n) => n.labels.some((l) => l.toLowerCase() === filter.toLowerCase()))
-    : notes;
+  const byLabel = filter
+    ? board.filter((n) => n.labels.some((l) => l.toLowerCase() === filter.toLowerCase()))
+    : board;
+
+  // Client-side, against notes this window already has in full — the same
+  // reason label filtering never needed a round trip to the companion either.
+  // Title and body both, since the title alone is often just the first line.
+  const query = search.trim().toLowerCase();
+  const shown = query
+    ? byLabel.filter(
+        (n) => n.title.toLowerCase().includes(query) || n.body.toLowerCase().includes(query),
+      )
+    : byLabel;
+
+  const searchBox = `<div class="nt-search">
+    <input id="nt-search" class="nt-input" type="search" value="${escapeHTML(search)}"
+           placeholder="Search your notes" aria-label="Search notes">
+  </div>`;
 
   const empty =
     shown.length === 0
-      ? `<p class="empty">Nothing here is labelled “${escapeHTML(filter ?? "")}”.</p>`
+      ? query
+        ? `<p class="empty">Nothing matches “${escapeHTML(search.trim())}”.</p>`
+        : filter
+          ? `<p class="empty">Nothing here is labelled “${escapeHTML(filter)}”.</p>`
+          : showArchived
+            ? `<p class="empty">Nothing archived.</p>`
+            : ""
       : "";
 
   const cards = shown
     .map((n) => (n.id === editingId ? noteCardOpen(n) : noteCardClosed(n, now)))
     .join("");
 
-  return `<h2>Notes</h2>${compose}${filterStrip}
+  return `<h2>Notes</h2>${compose}${searchBox}${filterStrip}
     ${empty}<div class="nt-board">${cards}</div>
     ${memoryPanel(memory)}`;
 }

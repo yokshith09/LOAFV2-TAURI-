@@ -115,7 +115,7 @@ describe("task commands", () => {
 
     it("accepts pinning, archiving and deleting by id", () => {
       expect(isTaskCommand({ kind: "task", action: "note-pin", id: "n1" })).toBe(true);
-      expect(isTaskCommand({ kind: "task", action: "note-done", id: "n1" })).toBe(true);
+      expect(isTaskCommand({ kind: "task", action: "note-archive", id: "n1" })).toBe(true);
       expect(isTaskCommand({ kind: "task", action: "note-remove", id: "n1" })).toBe(true);
     });
 
@@ -159,6 +159,7 @@ describe("NoteView, the Notes wall's broadcast", () => {
     labels: [],
     dueAt: null,
     updatedAt: 1_789_200_000_000,
+    archived: false,
     ...over,
   });
 
