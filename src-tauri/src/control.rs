@@ -273,6 +273,119 @@ end tell"#
     }
 }
 
+/// The macOS half of `clickables`/`click_named`, as pure strings.
+///
+/// Same reasoning as `macos_keys` above: not behind a `cfg`, because the
+/// escaping and the script shape are the pieces where a mistake is either an
+/// injection or a script AppleScript refuses to parse, and both are worth
+/// catching on the machine this was written on, which is a PC. Only the
+/// actual `osascript` process spawn, in `mod imp` below, needs a real Mac.
+pub mod macos_click {
+    /// Names come back separated by this rather than a comma — the same
+    /// reason `browser_macos.rs` uses one: a button legitimately called
+    /// "Save, then continue" is not three buttons.
+    pub const SEP: &str = "\u{1}";
+
+    /// Roles System Events reports for things a person would call "clickable".
+    ///
+    /// Everything else — static text, images, groups — has no press action to
+    /// perform, and listing it would be a phrase Loaf hears and then cannot
+    /// act on, the same rule the Windows half applies by checking for an
+    /// Invoke pattern.
+    const CLICKABLE_ROLES: &[&str] = &[
+        "AXButton",
+        "AXMenuItem",
+        "AXMenuButton",
+        "AXCheckBox",
+        "AXRadioButton",
+        "AXPopUpButton",
+        "AXLink",
+    ];
+
+    fn role_check() -> String {
+        CLICKABLE_ROLES
+            .iter()
+            .map(|r| format!("r is \"{r}\""))
+            .collect::<Vec<_>>()
+            .join(" or ")
+    }
+
+    /// The script for `clickables`.
+    ///
+    /// `entire contents of` is System Events' own recursive walk — the same
+    /// shape as the Windows half's `TreeScope_Descendants` — so this does not
+    /// need to know how deep a Mac app nests its own UI. Never targets an
+    /// application by name, so unlike `apps.rs` this cannot launch anything:
+    /// it only ever asks System Events about whatever is frontmost already.
+    pub fn clickables_script() -> String {
+        format!(
+            r#"tell application "System Events"
+    tell (first application process whose frontmost is true)
+        set out to ""
+        try
+            repeat with elem in (entire contents of front window)
+                try
+                    set r to role of elem
+                    if {roles} then
+                        set n to (name of elem) as text
+                        if n is not "" then set out to out & n & "{sep}"
+                    end if
+                end try
+            end repeat
+        end try
+        return out
+    end tell
+end tell"#,
+            roles = role_check(),
+            sep = SEP,
+        )
+    }
+
+    /// The script for `click_named`.
+    ///
+    /// `name` is whatever a Mac app calls its own button, which makes it
+    /// exactly the kind of string `browser_macos.rs` already has to worry
+    /// about pasting into an AppleScript literal — so it goes through the
+    /// same `escape` that file uses, rather than a second copy of it.
+    /// `perform action "AXPress"` is System Events' own trigger for a
+    /// control — the same accessibility action Windows' Invoke pattern
+    /// performs — rather than a synthetic click at a screen coordinate,
+    /// which would miss anything covered or scrolled out of view.
+    pub fn click_script(name: &str) -> String {
+        let target = crate::browser_macos::escape(name);
+        format!(
+            r#"tell application "System Events"
+    tell (first application process whose frontmost is true)
+        try
+            repeat with elem in (entire contents of front window)
+                try
+                    if (name of elem as text) is equal to "{target}" then
+                        perform action "AXPress" of elem
+                        return "yes"
+                    end if
+                end try
+            end repeat
+        end try
+        return "no"
+    end tell
+end tell"#
+        )
+    }
+
+    /// Turn what `clickables_script` printed back into a clean, deduped list.
+    pub fn parse_names(raw: &str) -> Vec<String> {
+        let mut names: Vec<String> = raw
+            .split(SEP)
+            .map(str::trim)
+            .filter(|n| !n.is_empty() && n.len() <= 40)
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+}
+
 /// Whether a path is one Loaf will hand to the shell.
 ///
 /// The rule is narrow on purpose: it must exist. Loaf opens things that are
@@ -811,20 +924,36 @@ mod imp {
 
     #[cfg(target_os = "macos")]
     fn run(script: &str) -> Result<(), String> {
+        run_for_output(script, "control your keyboard").map(|_| ())
+    }
+
+    /// Run an AppleScript and keep what it printed back.
+    ///
+    /// `run` above only needs to know a script worked; `clickables`/
+    /// `click_named` need the text macOS actually returned — the names on
+    /// screen, or whether a press found its target. One place translates
+    /// -1719 into a sentence naming the switch to flip either way, so a typed
+    /// command and a spoken one fail with the same words for the same cause.
+    /// `permission_for` names what THIS call needed the permission for,
+    /// since "control your keyboard" would be a wrong reason to give someone
+    /// who asked Loaf to click a button.
+    #[cfg(target_os = "macos")]
+    fn run_for_output(script: &str, permission_for: &str) -> Result<String, String> {
         let out = std::process::Command::new("/usr/bin/osascript")
             .arg("-e")
             .arg(script)
             .output()
             .map_err(|e| format!("could not run osascript: {e}"))?;
         if out.status.success() {
-            return Ok(());
+            return Ok(String::from_utf8_lossy(&out.stdout).to_string());
         }
         let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
         // -1719 is errAEAccessDenied: Accessibility permission not granted.
         if err.contains("-1719") || err.contains("not allowed assistive") {
-            return Err("macOS needs to let Loaf control your keyboard. \
+            return Err(format!(
+                "macOS needs to let Loaf {permission_for}. \
                  System Settings, Privacy & Security, Accessibility, then switch Loaf on."
-                .into());
+            ));
         }
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
@@ -837,9 +966,39 @@ mod imp {
     pub fn press(_held: &[u16], _key: u16) -> Result<(), String> {
         Err(ELSEWHERE.into())
     }
+
+    /// Everything clickable in the frontmost app's front window, by name.
+    ///
+    /// The script and the parsing are pure functions in `macos_click`, kept
+    /// there so their shape and escaping can be checked without a Mac; this
+    /// is the one line that actually needs one.
+    #[cfg(target_os = "macos")]
+    pub fn clickables() -> Vec<String> {
+        let Ok(raw) = run_for_output(
+            &super::macos_click::clickables_script(),
+            "see what's on your screen",
+        ) else {
+            return Vec::new();
+        };
+        super::macos_click::parse_names(&raw)
+    }
+
+    /// Click the first thing named exactly this in the frontmost app's front
+    /// window. False means nothing by that name was found.
+    #[cfg(target_os = "macos")]
+    pub fn click_named(name: &str) -> Result<bool, String> {
+        run_for_output(
+            &super::macos_click::click_script(name),
+            "click things on your screen",
+        )
+        .map(|out| out.trim() == "yes")
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn click_named(_name: &str) -> Result<bool, String> {
         Err(ELSEWHERE.into())
     }
+    #[cfg(not(target_os = "macos"))]
     pub fn clickables() -> Vec<String> {
         Vec::new()
     }
@@ -1036,6 +1195,88 @@ mod tests {
             script.contains(r#"keystroke "remind me at ten""#),
             "{script}"
         );
+    }
+
+    // ---- macOS clickables, as pure strings ---------------------------------
+    //
+    // Compiled and run on every platform, same reasoning as the key table
+    // above: the escaping and the script shape are what a mistake here would
+    // break, and this machine is a PC.
+
+    #[test]
+    fn clickables_never_targets_an_application_by_name() {
+        // Unlike apps.rs's close(), which can start System Events talking to
+        // a specific app, this only ever asks about whatever is frontmost —
+        // so the only application this `tell`s is System Events itself; the
+        // frontmost app is reached through it, never named directly, which is
+        // what makes launching one impossible here.
+        let script = macos_click::clickables_script();
+        assert!(script.contains("frontmost is true"), "{script}");
+        let targeted: Vec<&str> = script.matches("tell application \"").collect();
+        assert_eq!(targeted.len(), 1, "{script}");
+        assert!(
+            script.contains("tell application \"System Events\""),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn clickables_only_asks_about_things_with_a_press_action() {
+        let script = macos_click::clickables_script();
+        for role in ["AXButton", "AXMenuItem", "AXCheckBox", "AXLink"] {
+            assert!(script.contains(role), "{script}");
+        }
+        // Not everything System Events can name — a label or a group has no
+        // press action, and listing it would be a phrase Loaf hears and then
+        // cannot act on.
+        assert!(!script.contains("AXStaticText"), "{script}");
+    }
+
+    #[test]
+    fn a_button_named_with_a_quote_goes_in_escaped_not_raw() {
+        // Rather than re-tallying every literal quote the template itself
+        // contains (this script has several, in "System Events", "AXPress",
+        // "yes" and "no" — none of them the button's business), check the
+        // one thing this function is responsible for: the name is routed
+        // through the same `escape` browser_macos.rs already proves correct,
+        // and lands in the script as that escaped form, not the raw one.
+        let nasty = r#"Evil" & (do shell script "rm -rf /") & ""#;
+        let script = macos_click::click_script(nasty);
+        let expected = crate::browser_macos::escape(nasty);
+        assert!(
+            script.contains(&format!("\"{expected}\"")),
+            "escaped name not found as its own literal: {script}"
+        );
+        assert!(!script.contains(&format!("\"{nasty}\"")), "{script}");
+    }
+
+    #[test]
+    fn click_script_presses_rather_than_clicks_a_coordinate() {
+        let script = macos_click::click_script("Save");
+        assert!(script.contains(r#"name of elem as text) is equal to "Save""#));
+        assert!(script.contains(r#"perform action "AXPress" of elem"#));
+    }
+
+    #[test]
+    fn parse_names_drops_empty_entries_and_dedupes() {
+        let raw = format!(
+            "Save{sep}{sep}  {sep}Save{sep}Cancel{sep}",
+            sep = macos_click::SEP
+        );
+        assert_eq!(
+            macos_click::parse_names(&raw),
+            vec!["Cancel".to_string(), "Save".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_names_drops_a_paragraph_masquerading_as_a_button_name() {
+        // A control legitimately called "Save" is a button; forty-plus
+        // characters is content that happened to have an Invoke pattern, the
+        // same 40-character rule the Windows half applies.
+        let long = "x".repeat(41);
+        let raw = format!("Save{sep}{long}{sep}", sep = macos_click::SEP);
+        assert_eq!(macos_click::parse_names(&raw), vec!["Save".to_string()]);
     }
 
     #[test]
