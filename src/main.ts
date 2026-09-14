@@ -810,10 +810,10 @@ function startRecordingReminders(device: string | null): void {
       return;
     }
     const minutes = Math.round((Date.now() - startedAt) / 60_000);
-    void invokeSafe("notify", {
-      title: `Still recording — ${minutes} min`,
-      body: `${device ?? "Your microphone"} only. Say “stop recording” to finish.`,
-    });
+    notifyNative(
+      `Still recording — ${minutes} min`,
+      `${device ?? "Your microphone"} only. Say “stop recording” to finish.`,
+    );
   }, RECORDING_REMINDER_MS);
 }
 
@@ -853,10 +853,10 @@ async function startRecording(): Promise<void> {
       text: `Recording ${device ?? "your microphone"}. Say "stop recording" when you are done.`,
       seconds: 10,
     });
-    void invokeSafe("notify", {
-      title: "Loaf is recording",
-      body: `${device ?? "Your microphone"} only — never the other people in the room.`,
-    });
+    notifyNative(
+      "Loaf is recording",
+      `${device ?? "Your microphone"} only — never the other people in the room.`,
+    );
   } catch (e) {
     say({ kind: "speech", text: String(e), seconds: 10 });
   }
@@ -907,10 +907,10 @@ async function stopRecording(): Promise<void> {
     say({ kind: "speech", text: `Kept in ${where}.`, seconds: 8 });
     // And a native one, because the transcription took a minute and whoever
     // started it has almost certainly looked away by now.
-    void invokeSafe("notify", {
-      title: "Loaf kept your transcript",
-      body: `${text.length} characters, in ${where}. It stays on this computer.`,
-    });
+    notifyNative(
+      "Loaf kept your transcript",
+      `${text.length} characters, in ${where}. It stays on this computer.`,
+    );
   } catch (e) {
     say({ kind: "speech", text: String(e), seconds: 12 });
   }
@@ -3471,6 +3471,24 @@ async function invokeSafe<T>(
 }
 
 /**
+ * A native OS toast, gated by the same sleep rule `say()` already enforces.
+ *
+ * THE SAME RULE, A SECOND CHANNEL. Every one of these used to fire straight
+ * through `invokeSafe("notify", ...)` alongside a `say()` bubble at the same
+ * moment — recording started, a meeting worth recording was detected, still
+ * recording after five minutes. `say()` already goes quiet while asleep, so
+ * the bubble was silent and the OS toast popped up anyway: "quietly stays in
+ * the corner, no interruptions" was true of one channel and false of the
+ * other. One gate here, the same way `say()` has one, rather than a
+ * `toldToSleep` check written out at every call site and inevitably missing
+ * one the next time this is copied.
+ */
+function notifyNative(title: string, body: string): void {
+  if (toldToSleep) return;
+  void invokeSafe("notify", { title, body });
+}
+
+/**
  * One tracker tick: ask the OS what is in front and how long since you touched
  * anything, credit the time, and label the result.
  *
@@ -3551,10 +3569,10 @@ async function pollPlatform(): Promise<void> {
         until: Date.now() + CONFIRM_WINDOW_MS,
       };
       askWith(`${mins} minutes into ${meetingWatch.current}, not recording. Start now?`);
-      void invokeSafe("notify", {
-        title: `Not recording ${meetingWatch.current}`,
-        body: `${mins} minutes in. Answer in Loaf to start.`,
-      });
+      notifyNative(
+        `Not recording ${meetingWatch.current}`,
+        `${mins} minutes in. Answer in Loaf to start.`,
+      );
     }
 
     // Ask once, right when a call is first noticed — not after the meeting
@@ -3584,10 +3602,10 @@ async function pollPlatform(): Promise<void> {
       // likely moment, since joining a meeting usually means looking at the
       // meeting window instead. Best effort: see notify()'s own comment for
       // why a failure here is not worth surfacing separately.
-      void invokeSafe("notify", {
-        title: `Record ${meetingWatch.current}?`,
-        body: "Your microphone only, never the other people. Answer in Loaf.",
-      });
+      notifyNative(
+        `Record ${meetingWatch.current}?`,
+        "Your microphone only, never the other people. Answer in Loaf.",
+      );
     }
     sleeping = lastTickResult === "idle";
     if (lastTickResult === "breakDue") nudge();
