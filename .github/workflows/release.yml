@@ -82,8 +82,35 @@ jobs:
             He sits in the corner of your screen. Click him to see your day;
             leave him alone and he gets on with his own life.
 
-            ## New in 0.6.3 — Claude reactions, Connections, Notes, character packs
+            ## New in 0.6.4 — Claude reactions actually fire, character packs work end to end
 
+            - **An assistant working on this project — Claude Code, or
+              Claude Desktop's own questions — could go completely unnoticed
+              even when everything was wired up correctly.** The bug: the
+              very first fresh activity or status Loaf read after starting
+              up was always treated as leftover history from before launch
+              and silently skipped, even when it was genuinely new — sent
+              while Loaf was already open and running. Found by testing
+              `report_status` live and getting no reaction at all despite
+              Rust confirming the call landed. Fixed: only activity written
+              before Loaf actually started is now treated as stale.
+            - **A hand-drawn character pack's moods now render correctly,
+              tantrum included.** The shared "bristling fur" overlay used to
+              paint over ANY companion's tantrum frame, sprite packs
+              included — even one that already drew its own furious pose.
+              Generic spikes positioned from a bounding box were never going
+              to line up with real art. Skipped now for any companion that
+              draws its own face.
+            - **The alt-click mood preview actually works now.** It sat
+              below every real signal without exception, typing included —
+              and alt-clicking to compare a pack's moods means the mouse is
+              on the character (hovering, which still correctly wins — real
+              petting has to stay real petting) and almost always describing
+              what you see out loud, which is typing. Both used to outrank
+              the preview, so it never visibly advanced past "happy" or
+              "typing" while anyone was actually using it. Now outranks
+              every ambient signal; move the pointer off the character after
+              clicking to see the cycled mood.
             - **A hand-drawn character pack now actually shows up.** It could
               already be dropped in and would load correctly, but the Closet's
               own picker only ever asked about the built-in cast — a pack had
