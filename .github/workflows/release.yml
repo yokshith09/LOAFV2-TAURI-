@@ -82,7 +82,7 @@ jobs:
             He sits in the corner of your screen. Click him to see your day;
             leave him alone and he gets on with his own life.
 
-            ## New in 0.6.2 — Claude reactions, Connections, Notes, character packs
+            ## New in 0.6.3 — Claude reactions, Connections, Notes, character packs
 
             - **A hand-drawn character pack now actually shows up.** It could
               already be dropped in and would load correctly, but the Closet's
@@ -94,10 +94,27 @@ jobs:
             - **A pack that still doesn't load now says why, on the shelf
               itself** — this build ships with no devtools, so a console
               message about a broken pack was never something most people
-              could read. If a pack's sheet is unusually large and the
-              WebView can't decode it in time, that used to hang silently
-              with nothing shown at all; it now reports as "timed out" like
-              any other failure.
+              could read. That now covers BOTH failure shapes: one broken
+              pack among otherwise-working ones, and the whole request to
+              Rust failing outright (previously still silent). If a pack's
+              sheet is unusually large and the WebView can't decode it in
+              time, that used to hang silently with nothing shown at all; it
+              now reports as "timed out" like any other failure. The command
+              that reads packs off disk also now runs off the main thread,
+              so a large sheet can no longer stall the rest of the app while
+              it loads.
+            - **Loaf can now react to more than Claude Desktop's questions.**
+              A new `report_status` tool lets an assistant working on your
+              code — Claude Code, or anything else in a coding session — tell
+              Loaf what it's doing: thinking, working, a build or checks
+              passing or failing, a push, a deploy succeeding or failing.
+              Needs that assistant's session to be pointed at Loaf's MCP
+              server to actually fire.
+            - **Priority and the reminder timer in the task/note composer are
+              labelled now.** "Soon" and a bare minutes field used to sit side
+              by side with no caption — they are unrelated: priority is just
+              a sort order, and a note stays on "Soon" with no reminder at
+              all unless you fill in the minutes field separately.
             - **"Your sounds" and "Character packs" are real buttons now**,
               not a dashed "Soon" card — both features were already fully
               built (each opens its own folder, with a README explaining the
