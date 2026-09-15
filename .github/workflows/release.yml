@@ -82,7 +82,7 @@ jobs:
             He sits in the corner of your screen. Click him to see your day;
             leave him alone and he gets on with his own life.
 
-            ## New in 0.6.1 — Claude reactions, Connections, Notes, character packs
+            ## New in 0.6.2 — Claude reactions, Connections, Notes, character packs
 
             - **A hand-drawn character pack now actually shows up.** It could
               already be dropped in and would load correctly, but the Closet's
@@ -91,6 +91,13 @@ jobs:
               packs too, so a `character.json` and sprite sheet in
               `Characters/` gets a real card on the shelf, selectable like any
               built-in.
+            - **A pack that still doesn't load now says why, on the shelf
+              itself** — this build ships with no devtools, so a console
+              message about a broken pack was never something most people
+              could read. If a pack's sheet is unusually large and the
+              WebView can't decode it in time, that used to hang silently
+              with nothing shown at all; it now reports as "timed out" like
+              any other failure.
             - **"Your sounds" and "Character packs" are real buttons now**,
               not a dashed "Soon" card — both features were already fully
               built (each opens its own folder, with a README explaining the
