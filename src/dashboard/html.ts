@@ -685,13 +685,17 @@ function taskPanel(tasks: readonly TaskView[], now: number): string {
     <div class="tp-add">
       <input id="tp-title" class="tp-input" type="text" maxlength="80"
              placeholder="Something you mean to do" aria-label="New task">
-      <select id="tp-priority" class="tp-select" aria-label="Priority">
-        <option value="now">Now</option>
-        <option value="soon" selected>Soon</option>
-        <option value="whenever">Whenever</option>
-      </select>
-      <input id="tp-minutes" class="tp-mins" type="number" min="0" max="600" step="5"
-             placeholder="min" aria-label="Remind me in, minutes">
+      <label class="tp-field">Priority
+        <select id="tp-priority" class="tp-select" aria-label="Priority">
+          <option value="now">Now</option>
+          <option value="soon" selected>Soon</option>
+          <option value="whenever">Whenever</option>
+        </select>
+      </label>
+      <label class="tp-field">Remind in (min)
+        <input id="tp-minutes" class="tp-mins" type="number" min="0" max="600" step="5"
+               placeholder="off" aria-label="Remind me in, minutes">
+      </label>
       <button class="tp-save" data-loaf-task="add">Add</button>
     </div>
   </div>`;
@@ -1423,16 +1427,22 @@ function notesPanel(
     <textarea id="nt-body" class="nt-input" rows="3" maxlength="20000"
               placeholder="Take a note…" aria-label="Note"></textarea>
     <div class="nt-tools">
-      <select id="nt-priority" class="nt-select" aria-label="Priority">
-        <option value="now">Now</option>
-        <option value="soon" selected>Soon</option>
-        <option value="whenever">Whenever</option>
-      </select>
-      <input id="nt-minutes" class="nt-mins" type="number" min="0" max="600" step="5"
-             placeholder="mins" aria-label="Remind me in, minutes">
+      <label class="nt-field">Priority
+        <select id="nt-priority" class="nt-select" aria-label="Priority">
+          <option value="now">Now</option>
+          <option value="soon" selected>Soon</option>
+          <option value="whenever">Whenever</option>
+        </select>
+      </label>
+      <label class="nt-field">Remind in (min)
+        <input id="nt-minutes" class="nt-mins" type="number" min="0" max="600" step="5"
+               placeholder="off" aria-label="Remind me in, minutes">
+      </label>
       <button class="nt-add" data-loaf-note="add">Add note</button>
     </div>
-    <p class="note">Ctrl+Enter adds it. Everything here stays on this computer.</p>
+    <p class="note">Priority is just how it's sorted — it sets no reminder by
+    itself. Leave "Remind in" empty for none. Ctrl+Enter adds it. Everything
+    here stays on this computer.</p>
   </div>`;
 
   if (notes.length === 0) {

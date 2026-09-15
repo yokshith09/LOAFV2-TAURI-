@@ -230,7 +230,7 @@ export const PLUS_CSS = `
   }
   .tp-group:first-of-type .tp-browser { margin-top:2px; }
   .tp-timer { color:var(--ink-soft); font-size:11.5px; flex-shrink:0; }
-  .tp-add { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
+  .tp-add { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; align-items:flex-end; }
   .tp-input {
     font:inherit; font-size:12.5px; flex:1; min-width:140px;
     border:1px solid var(--edge); border-radius:8px; padding:7px 9px;
@@ -239,11 +239,18 @@ export const PLUS_CSS = `
   .tp-input:focus, .tp-select:focus, .tp-mins:focus {
     outline:2px solid var(--accent-dark); outline-offset:1px;
   }
+  /* The caption makes clear these two are unrelated: a priority is a sort
+     order, "remind in" is an optional timer, and sitting side by side used to
+     read as one setting with two parts. */
+  .tp-field {
+    display:flex; flex-direction:column; gap:3px; font-size:9.5px;
+    text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft);
+  }
   .tp-select, .tp-mins {
     font:inherit; font-size:12.5px; border:1px solid var(--edge);
     border-radius:8px; padding:7px 8px; background:var(--paper); color:var(--ink);
   }
-  .tp-mins { width:62px; }
+  .tp-mins { width:66px; }
   .tp-save {
     font:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
     background:var(--accent-dark); color:var(--paper);
@@ -430,11 +437,18 @@ export const NOTES_CSS = `
     border:1px solid var(--edge); border-radius:9px; padding:9px 11px;
     outline:none; -webkit-user-select:text; user-select:text; }
   .nt-input:focus { border-color:var(--accent-dark); }
-  .nt-tools { display:flex; gap:8px; align-items:center; margin-top:9px; flex-wrap:wrap; }
+  .nt-tools { display:flex; gap:8px; align-items:flex-end; margin-top:9px; flex-wrap:wrap; }
+  /* Same reasoning as .tp-field: without a caption, a priority (a sort order)
+     and "remind in" (an optional timer) sitting side by side read as one
+     setting instead of two unrelated ones. */
+  .nt-field {
+    display:flex; flex-direction:column; gap:3px; font-size:9.5px;
+    text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft);
+  }
   .nt-select, .nt-mins { font-family:inherit; font-size:12px; color:var(--ink);
     background:var(--paper); border:1px solid var(--edge); border-radius:8px;
     padding:6px 8px; }
-  .nt-mins { width:74px; }
+  .nt-mins { width:78px; }
   .nt-add { margin-left:auto; font-family:inherit; font-size:12.5px; font-weight:600;
     cursor:pointer; border-radius:8px; padding:7px 15px;
     background:var(--accent); border:1px solid var(--accent-dark); color:var(--accent-ink); }

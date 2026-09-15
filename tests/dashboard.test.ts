@@ -1064,6 +1064,20 @@ describe("the notes board", () => {
     expect(html).toMatch(/<textarea id="nt-body"/);
   });
 
+  // Priority (a sort order) and "remind in" (an optional timer) used to sit
+  // side by side with no caption, which read as one setting with two parts —
+  // there is no relationship between them at all; a "soon" note with no
+  // minutes entered gets no reminder whatsoever.
+  it("labels priority and the reminder timer as the two unrelated things they are", () => {
+    const html = bodyOf(dashboardHTML(t(), { view: "notes" }));
+    // A visible caption, not just the aria-label already on the <select>/
+    // <input> themselves — this is what makes the two controls readable
+    // without a screen reader.
+    expect(html).toMatch(/class="nt-field">Priority/);
+    expect(html).toMatch(/class="nt-field">Remind in \(min\)/);
+    expect(html).toContain("Priority is just how it's sorted");
+  });
+
   // Every panel is in the document at once, so a shared id would mean
   // getElementById returning whichever came first and one box doing nothing.
   it("uses different ids from the checklist composer on Today", () => {
