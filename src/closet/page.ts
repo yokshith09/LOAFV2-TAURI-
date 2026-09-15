@@ -58,16 +58,22 @@ let roster: readonly Companion[] = COMPANIONS;
 let lastState: ClosetState = settings.read();
 /** A pack that loaded off disk but did not make it onto the shelf, and why. */
 let packFailures: readonly LoadFailure[] = [];
+/**
+ * Set when asking Rust for packs failed outright — a different failure mode
+ * from a single broken pack, and one the first version of this fix did not
+ * surface anywhere: it was logged to a console this build does not expose,
+ * so the closet stayed silent even though something real had gone wrong.
+ */
+let packLoadError: string | null = null;
 
 /**
  * Load hand-drawn characters into the shelf.
  *
  * Runs after the first paint — packs arrive after a round trip to disk and
  * an image decode, and the closet must not sit blank waiting on a folder
- * that is usually empty. A pack that fails is named in the console with the
- * reason; the ones that were fine still show up. Logged rather than swallowed
- * on every failure path — an invoke error included — because a pack that
- * silently never appears is indistinguishable from one that was never drawn.
+ * that is usually empty. Every failure path — the whole request failing,
+ * or one pack inside it — ends up on the shelf itself, not just the
+ * console, because this build ships with no devtools to read one in.
  */
 async function loadSpritePacks(): Promise<void> {
   let raw: RawPack[];
@@ -75,6 +81,8 @@ async function loadSpritePacks(): Promise<void> {
     raw = await invoke<RawPack[]>("sprite_packs");
   } catch (err) {
     console.warn("could not ask Rust for sprite packs", err);
+    packLoadError = String(err);
+    render(lastState);
     return;
   }
   if (raw.length === 0) return;
@@ -141,7 +149,7 @@ function paintThumbnails(state: ClosetState): void {
 
 function render(state: ClosetState): void {
   lastState = state;
-  root.innerHTML = closetBody(state, roster, packFailures);
+  root.innerHTML = closetBody(state, roster, packFailures, packLoadError);
   paintThumbnails(state);
 
   root.querySelectorAll<HTMLElement>("[data-companion]").forEach((el) => {

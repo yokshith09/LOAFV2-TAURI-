@@ -115,11 +115,17 @@ function chip(id: string, glyph: string, label: string, selected: boolean): stri
  * silent absence here reads as "did I put this in the wrong place", and this
  * release ships with no devtools, so a console line nobody can open is not a
  * real answer for someone who just dropped a pack in and cannot find it.
+ *
+ * `packLoadError` is the OTHER failure mode: asking Rust for the list of
+ * packs at all did not work, so there is nothing to even check per pack.
+ * Different message, same reasoning — this is the one place that does not
+ * need devtools to read.
  */
 export function closetBody(
   state: ClosetState,
   roster: readonly Companion[] = COMPANIONS,
   packFailures: readonly LoadFailure[] = [],
+  packLoadError: string | null = null,
 ): string {
   const shelves = groupedFrom(roster)
     .map(({ group, members }) => {
@@ -158,8 +164,9 @@ export function closetBody(
   // placeholder does the explaining and clearing it is the obvious reset.
   const custom = state.names[state.companionId] ?? "";
 
-  const packWarning =
-    packFailures.length > 0
+  const packWarning = packLoadError
+    ? `<p class="fine warn">Couldn't check for character packs: ${escapeHTML(packLoadError)}</p>`
+    : packFailures.length > 0
       ? `<p class="fine warn">Couldn't add ` +
         packFailures
           .map((f) => `${escapeHTML(f.folder)} (${escapeHTML(FAILURE_NOTES[f.reason])})`)

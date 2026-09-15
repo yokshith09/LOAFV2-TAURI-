@@ -286,6 +286,35 @@ describe("the closet page", () => {
     });
   });
 
+  // A different failure mode from a single broken pack: asking Rust for the
+  // list at all did not work, so there was nothing to check per pack. Found
+  // missing from the first version of this fix — the invoke() catch block
+  // logged to a console this build does not expose, so the shelf still said
+  // nothing even though something real had gone wrong.
+  describe("asking Rust for packs failing outright", () => {
+    it("shows the error rather than looking like an empty folder", () => {
+      const html = closetBody(state, COMPANIONS, [], "command sprite_packs not found");
+      expect(html).toContain("Couldn't check for character packs");
+      expect(html).toContain("command sprite_packs not found");
+    });
+
+    it("takes priority over a per-pack failure list, since there is nothing to list", () => {
+      const html = closetBody(
+        state,
+        COMPANIONS,
+        [{ folder: "dalgom", reason: "bad-image" }],
+        "the whole call failed",
+      );
+      expect(html).toContain("the whole call failed");
+      expect(html).not.toContain("Couldn't add dalgom");
+    });
+
+    it("says nothing extra when nothing went wrong", () => {
+      const html = closetBody(state, COMPANIONS, [], null);
+      expect(html).not.toContain("Couldn't check for character packs");
+    });
+  });
+
   it("escapes a name the user chose", () => {
     const store = new MemorySettingsStore();
     const s = new ClosetSettings(store);

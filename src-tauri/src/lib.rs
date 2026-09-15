@@ -246,7 +246,13 @@ fn write_stats(app: tauri::AppHandle, json: String) -> Result<(), String> {
 }
 
 /// Every hand-drawn character in the Characters folder.
-#[tauri::command]
+///
+/// `async`, unlike most of this file's simple reads: a sprite sheet is easily
+/// several megabytes, and `load_all` reads and base64-encodes every one of
+/// them synchronously. Without this a large pack blocked the main event
+/// loop for however long that took — everything else in the app, `invoke`
+/// included, waits behind it.
+#[tauri::command(async)]
 fn sprite_packs(app: tauri::AppHandle) -> Result<Vec<packs::LoadedPack>, String> {
     Ok(packs::load_all(&data_dir(&app)?))
 }
