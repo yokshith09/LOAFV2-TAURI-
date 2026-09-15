@@ -15,7 +15,14 @@ import {
   type ClosetPick,
 } from "./events";
 import { asCtx2D, type Companion, type Outfit } from "../core/types";
-import { browserImageLoader, loadPacks, mergeCompanions, type RawPack } from "../sprites/load";
+import {
+  browserImageLoader,
+  FAILURE_NOTES,
+  loadPacks,
+  mergeCompanions,
+  type LoadFailure,
+  type RawPack,
+} from "../sprites/load";
 
 
 /**
@@ -49,6 +56,8 @@ const settings = new ClosetSettings(browserStore());
  */
 let roster: readonly Companion[] = COMPANIONS;
 let lastState: ClosetState = settings.read();
+/** A pack that loaded off disk but did not make it onto the shelf, and why. */
+let packFailures: readonly LoadFailure[] = [];
 
 /**
  * Load hand-drawn characters into the shelf.
@@ -56,13 +65,25 @@ let lastState: ClosetState = settings.read();
  * Runs after the first paint — packs arrive after a round trip to disk and
  * an image decode, and the closet must not sit blank waiting on a folder
  * that is usually empty. A pack that fails is named in the console with the
- * reason; the ones that were fine still show up.
+ * reason; the ones that were fine still show up. Logged rather than swallowed
+ * on every failure path — an invoke error included — because a pack that
+ * silently never appears is indistinguishable from one that was never drawn.
  */
 async function loadSpritePacks(): Promise<void> {
-  const raw = await invoke<RawPack[]>("sprite_packs").catch(() => null);
-  if (!raw || raw.length === 0) return;
-  const { companions } = await loadPacks(raw, browserImageLoader());
-  if (companions.length === 0) return;
+  let raw: RawPack[];
+  try {
+    raw = await invoke<RawPack[]>("sprite_packs");
+  } catch (err) {
+    console.warn("could not ask Rust for sprite packs", err);
+    return;
+  }
+  if (raw.length === 0) return;
+  const { companions, failures } = await loadPacks(raw, browserImageLoader());
+  for (const failure of failures) {
+    console.warn(`character "${failure.folder}" was skipped: ${FAILURE_NOTES[failure.reason]}`);
+  }
+  packFailures = failures;
+  if (companions.length === 0 && failures.length === 0) return;
   roster = mergeCompanions(COMPANIONS, companions);
   render(lastState);
   void fit();
@@ -120,7 +141,7 @@ function paintThumbnails(state: ClosetState): void {
 
 function render(state: ClosetState): void {
   lastState = state;
-  root.innerHTML = closetBody(state, roster);
+  root.innerHTML = closetBody(state, roster, packFailures);
   paintThumbnails(state);
 
   root.querySelectorAll<HTMLElement>("[data-companion]").forEach((el) => {

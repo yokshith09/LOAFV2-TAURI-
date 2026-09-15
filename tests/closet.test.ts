@@ -268,6 +268,24 @@ describe("the closet page", () => {
     });
   });
 
+  // This build ships with no devtools, so a console.warn about a broken pack
+  // is a message nobody who hit the bug could ever open. The one place left
+  // to say it is the shelf itself.
+  describe("a pack that loaded off disk but failed to become a companion", () => {
+    it("names the folder and the reason, right on the shelf", () => {
+      const html = closetBody(state, COMPANIONS, [
+        { folder: "dalgom", reason: "bad-image" },
+      ]);
+      expect(html).toContain("dalgom");
+      expect(html).toContain("the sheet image could not be decoded");
+    });
+
+    it("says nothing extra when every pack loaded fine", () => {
+      const html = closetBody(state, COMPANIONS, []);
+      expect(html).not.toContain("Couldn't add");
+    });
+  });
+
   it("escapes a name the user chose", () => {
     const store = new MemorySettingsStore();
     const s = new ClosetSettings(store);

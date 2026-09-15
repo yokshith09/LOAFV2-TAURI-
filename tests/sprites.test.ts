@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parsePack, frameAt, frameRect, type SpriteClip } from "../src/sprites/manifest";
-import { loadPacks, mergeCompanions, FAILURE_NOTES } from "../src/sprites/load";
+import {
+  loadPacks,
+  mergeCompanions,
+  FAILURE_NOTES,
+  IMAGE_DECODE_TIMEOUT_MS,
+} from "../src/sprites/load";
 import { DESIGN_HEIGHT } from "../src/core/types";
 
 const sheet = { file: "sheet.png", scale: 2, frameWidth: 128, frameHeight: 142, columns: 4, rows: 2 };
@@ -253,6 +258,23 @@ describe("loading a folder of packs", () => {
     const { companions, failures } = await loadPacks([raw("fox", manifest())], failing);
     expect(companions).toEqual([]);
     expect(failures[0]!.reason).toBe("bad-image");
+  });
+
+  // A sheet the browser can neither decode nor error on — a huge allocation
+  // it just never finishes — must not leave loadPacks pending forever with no
+  // failure and nothing for the closet to ever show.
+  it("reports a sheet that never resolves as timed out, not left hanging", async () => {
+    vi.useFakeTimers();
+    try {
+      const hangs = () => new Promise<{ width: number; height: number }>(() => {});
+      const result = loadPacks([raw("fox", manifest())], hangs);
+      await vi.advanceTimersByTimeAsync(IMAGE_DECODE_TIMEOUT_MS);
+      const { companions, failures } = await result;
+      expect(companions).toEqual([]);
+      expect(failures[0]!.reason).toBe("timed-out");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

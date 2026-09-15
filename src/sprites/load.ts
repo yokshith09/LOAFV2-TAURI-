@@ -21,7 +21,7 @@ export interface RawPack {
 
 export interface LoadFailure {
   readonly folder: string;
-  readonly reason: PackError | "bad-json" | "bad-image";
+  readonly reason: PackError | "bad-json" | "bad-image" | "timed-out";
 }
 
 export interface LoadResult {
@@ -40,7 +40,35 @@ export const FAILURE_NOTES: Readonly<Record<LoadFailure["reason"], string>> = {
     'the "sheet" section needs file, scale, frameWidth, frameHeight, columns and rows',
   "no-idle": 'no "idle" mood — a character needs something to show at rest',
   "bad-image": "the sheet image could not be decoded",
+  "timed-out": "the sheet took too long to decode — it may be an unusually large image",
 };
+
+/**
+ * How long a sheet gets to decode before this gives up on it.
+ *
+ * Without this, a very large sheet that the WebView struggles to allocate
+ * does not fail — it just never resolves, and `loadImage`'s promise sits
+ * pending forever. That is worse than an error: no companion, no failure
+ * entry, no console line, nothing for the closet to ever show. A timeout at
+ * least turns "hung" into a reported failure like any other.
+ */
+export const IMAGE_DECODE_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
 
 /**
  * Decode one sheet.
@@ -84,9 +112,10 @@ export async function loadPacks(
 
     let sheet: { width: number; height: number };
     try {
-      sheet = await loadImage(entry.sheet);
-    } catch {
-      failures.push({ folder: entry.folder, reason: "bad-image" });
+      sheet = await withTimeout(loadImage(entry.sheet), IMAGE_DECODE_TIMEOUT_MS);
+    } catch (err) {
+      const timedOut = err instanceof Error && err.message === "timed out";
+      failures.push({ folder: entry.folder, reason: timedOut ? "timed-out" : "bad-image" });
       continue;
     }
 

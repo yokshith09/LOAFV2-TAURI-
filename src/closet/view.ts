@@ -1,6 +1,7 @@
 import { escapeHTML } from "../dashboard/html";
 import { COMPANIONS, groupedFrom, GROUP_NOTES } from "../companions/registry";
 import { OUTFITS, SEASONAL_ID, seasonalLabel } from "../outfits/registry";
+import { FAILURE_NOTES, type LoadFailure } from "../sprites/load";
 import type { Companion } from "../core/types";
 import {
   displayName,
@@ -70,6 +71,7 @@ export const CLOSET_CSS = `
   .chip .glyph { font-size:14px; line-height:1; }
 
   .fine { font-size:10.5px; color:var(--ink-soft); line-height:1.5; margin:11px 0 0; }
+  .fine.warn { color:#a8452f; }
   .foot { font-size:11px; color:var(--ink-soft); line-height:1.55;
           margin:18px 0 0; padding-top:13px; border-top:1px solid var(--edge); }
 
@@ -106,8 +108,19 @@ function chip(id: string, glyph: string, label: string, selected: boolean): stri
  * `roster` defaults to the built-ins alone, so every existing caller —
  * including the tests, which have never heard of a sprite pack — keeps
  * seeing exactly what it always has.
+ *
+ * `packFailures` surfaces a pack that loaded off disk but did not make it
+ * into `roster` — a folder with no `character.json`, a sheet that would not
+ * decode — right on the shelf where a working one would have appeared. A
+ * silent absence here reads as "did I put this in the wrong place", and this
+ * release ships with no devtools, so a console line nobody can open is not a
+ * real answer for someone who just dropped a pack in and cannot find it.
  */
-export function closetBody(state: ClosetState, roster: readonly Companion[] = COMPANIONS): string {
+export function closetBody(
+  state: ClosetState,
+  roster: readonly Companion[] = COMPANIONS,
+  packFailures: readonly LoadFailure[] = [],
+): string {
   const shelves = groupedFrom(roster)
     .map(({ group, members }) => {
       const cards = members
@@ -145,6 +158,15 @@ export function closetBody(state: ClosetState, roster: readonly Companion[] = CO
   // placeholder does the explaining and clearing it is the obvious reset.
   const custom = state.names[state.companionId] ?? "";
 
+  const packWarning =
+    packFailures.length > 0
+      ? `<p class="fine warn">Couldn't add ` +
+        packFailures
+          .map((f) => `${escapeHTML(f.folder)} (${escapeHTML(FAILURE_NOTES[f.reason])})`)
+          .join(", ") +
+        ` — from the dashboard's "Character packs" button.</p>`
+      : "";
+
   return `<div class="wrap" id="wrap">
   <h1>Closet</h1>
   <p class="lede">Same job, different animal. They all count the same hours —
@@ -168,6 +190,7 @@ export function closetBody(state: ClosetState, roster: readonly Companion[] = CO
   </label>
   <p class="fine">Leave the name empty to go back to ${escapeHTML(defaultName)}.
   Names are kept per character, so renaming this one won't rename the rest.</p>
+  ${packWarning}
 
   ${shelves}
 
