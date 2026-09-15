@@ -62,17 +62,68 @@ list with test evidence):
 - Version bumped to **0.6.0**, tagged, and pushed — draft release building
   for Windows + macOS testing.
 
+## v0.6.1 — the closet couldn't see a pack it had already loaded correctly
+
+A user-supplied character pack (Dalgom: a real `character.json` plus a
+~45-megapixel hand-drawn sheet) parsed and merged into the roster correctly,
+and still never appeared as a choice in the Closet. Root cause: the Closet
+window's own picker read only the static built-in list; it never asked Rust
+for sprite packs at all, unlike the companion window. Fixed by having the
+Closet ask independently (a `Companion`'s draw closures can't cross the
+window boundary, so it can't just be handed one). Also replaced the
+dashboard's two dashed "Soon" cards for sounds/packs with real buttons — both
+features were already fully built.
+
+## v0.6.2 / v0.6.3 — making failure visible on a build with no devtools
+
+The pack still didn't show up after the v0.6.1 fix, and nothing explained
+why — this build ships with no devtools, so a `console.warn` about a broken
+pack was a message nobody could open. Added: a failure notice printed
+directly on the Closet shelf (both "one pack failed" and "the whole request
+to Rust failed" cases), a timeout so a stalled image decode reports as a
+failure instead of hanging forever with nothing shown, and marked the
+pack-reading command `async` so a large sheet can't block the whole app
+while it loads.
+
+## v0.6.4 — the reactions were real, the report was being eaten
+
+Live-tested `report_status` (new: an MCP tool letting Claude Code, not just
+Claude Desktop, tell Loaf what it's doing — thinking, working, a build or
+checks passing/failing, a push, a deploy) through a real MCP connection from
+this Claude Code session. Rust confirmed every write; nothing reacted on
+screen. Root cause, found only because this test was run for real: the
+watcher treated "the first time this loop has successfully read the file" as
+"stale, from before Loaf launched" — which silently ate the very first
+activity or status report after every restart, even when it was genuinely
+fresh. This likely explains every earlier "Claude is connected but nothing
+happens" report this session, not just `report_status`. Fixed by comparing
+against the watcher's own start time instead.
+
+Also fixed while investigating "the moods don't look right for Dalgom": the
+shared tantrum "fur bristling" overlay was drawing on top of ANY companion's
+tantrum frame, sprite packs included, even one with its own complete tantrum
+art — and the alt-click mood-preview dev tool lost to typing/scrolling/
+working, making it nearly impossible to use for its actual job of comparing
+a pack's moods while describing them out loud.
+
 ## What's next
 
-1. **Test the v0.6.0 draft release** on both platforms — this is the first
-   real human contact with several of this session's fixes, and the only way
-   to find out whether macOS `clickables` actually works.
-2. **Physical Mac testing**, generally — the standing gap across this whole
-   project, not new to this release.
-3. Decide whether to pick up **M4 stage two** (ONNX wake-word model) or
+1. **Confirm v0.6.4's fix actually shows a bubble on screen** — the write and
+   the MCP connection are proven live; the visual result on the user's
+   machine is not yet confirmed back.
+2. **Answer, then re-verify, "does search work and are meetings not getting
+   transcribed"** — asked directly, not yet answered; M1/M3 below say
+   "shipped," but so did the Closet pack picker.
+3. **Set up a guided way to connect Claude Code (not just Claude Desktop) to
+   Loaf's MCP server** — right now this is a manual, per-machine step with no
+   in-app flow, unlike the documented one-click Claude Desktop connection.
+4. **Physical Mac testing**, generally — the standing gap across this whole
+   project. All of this session's live testing (packs, MCP status) was done
+   on Windows.
+5. Decide whether to pick up **M4 stage two** (ONNX wake-word model) or
    **stage four** (instruct-model command parser) next, or leave both as
    documented future work.
-4. The three README staleness items in `ARCHITECTURE-REVIEW.md` §5 (macOS
+6. The three README staleness items in `ARCHITECTURE-REVIEW.md` §5 (macOS
    speech claimed unimplemented, test counts, the zero-network section not
    accounting for MCP Connections) — worth a deliberate pass when there is
    time to write it carefully rather than as a side effect of something else.
