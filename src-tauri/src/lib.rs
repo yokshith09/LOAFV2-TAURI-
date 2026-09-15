@@ -2633,6 +2633,20 @@ fn claude_disconnect(app: tauri::AppHandle) -> Result<ClaudeStatus, String> {
 fn watch_for_claude(app: &tauri::AppHandle) {
     use tauri::Emitter;
     let app = app.clone();
+    // Captured ONCE, before the loop, and never from inside it. The two
+    // files this watches persist across restarts, so at the moment Loaf
+    // starts up they can legitimately already hold something from before —
+    // that is genuinely stale and must not be announced. What must NOT
+    // happen is treating "the first time this loop happens to read the
+    // file successfully" as the same thing as "before launch": if the file
+    // did not exist yet at startup and gets written for the first time
+    // three minutes in, that write is real activity that happened while
+    // Loaf was running, not history. Comparing every reading against this
+    // one fixed instant, rather than against whichever value the loop
+    // happened to see first, is what tells those two apart. This is
+    // exactly the bug that made a `report_status` call sent while Loaf was
+    // already open never announce anything at all.
+    let started_at = now_ms();
     std::thread::spawn(move || {
         let mut last_seen: u64 = 0;
         // Set while Claude is mid-task, so the "finished" moment can be noticed.
@@ -2663,12 +2677,11 @@ fn watch_for_claude(app: &tauri::AppHandle) {
 
             if let Some((tool, at)) = claude_desktop::last_activity(&dir) {
                 if at > last_seen {
-                    // The first reading after launch establishes the baseline
-                    // instead of announcing something that happened while
-                    // Loaf was closed.
-                    let first = last_seen == 0;
                     last_seen = at;
-                    if !first && !tool.is_empty() {
+                    // Stale means from before Loaf started, not merely "the
+                    // first thing this loop has read" — see the note on
+                    // `started_at` above.
+                    if at > started_at && !tool.is_empty() {
                         // Idle to busy is a new burst and gets the bubble.
                         // Busy to busy is the same burst continuing — the
                         // quiet timer still gets pushed out so "done" waits
@@ -2685,15 +2698,24 @@ fn watch_for_claude(app: &tauri::AppHandle) {
 
             if let Some((status, at)) = claude_desktop::last_status(&dir) {
                 if at > last_status_seen {
-                    let first_status = last_status_seen == 0;
                     last_status_seen = at;
-                    if !first_status {
+                    if at > started_at {
                         let _ = app.emit("loaf://claude/status", status);
                     }
                 }
             }
         }
     });
+}
+
+/// Milliseconds since the epoch, or 0 if the clock is unreadable. Matches the
+/// unit `note_activity`/`note_status` write in `mcp_stdio.rs`, since both
+/// sides of this comparison have to agree on what a bare number means.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// How long Claude has to stay quiet before Loaf calls the job done.

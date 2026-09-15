@@ -65,7 +65,8 @@ export function applyFit(ctx: Ctx2D, fit: FitTransform): void {
  *
  * Order is load-bearing and matches the Swift: anything behind the body, then
  * the body, then the head, then the shared eyes, then the species' own muzzle.
- * Fur spikes go last so a bristling tantrum reads on top of the silhouette.
+ * Fur spikes go last so a bristling tantrum reads on top of the silhouette —
+ * for a bezier companion only; a sprite pack skips them, see the note below.
  */
 export function drawCompanion(
   ctx: Ctx2D,
@@ -77,8 +78,14 @@ export function drawCompanion(
   c.drawBody(ctx, s);
   c.drawHead(ctx, s);
 
-  // Tantrum bristling sits over the head outline but under the face.
-  if (s.mood === "tantrum") {
+  // Tantrum bristling sits over the head outline but under the face — for a
+  // companion assembled from beziers, which has no fur of its own to bristle.
+  // A sprite pack that DREW a tantrum mood already has its own answer to
+  // "what does this character look like furious", using anchors that only
+  // ever meant to describe a head silhouette for THIS overlay to bristle
+  // around — not the actual edge of a hand-drawn animal. Painting spikes on
+  // top of finished art was never going to line up with it.
+  if (s.mood === "tantrum" && !c.drawsOwnFace) {
     drawFurSpikes(ctx, c, s.phase);
   }
 

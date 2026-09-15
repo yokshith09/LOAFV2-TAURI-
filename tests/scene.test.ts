@@ -138,6 +138,26 @@ describe("drawCompanion — layer order", () => {
     expect(cross.count("closePath") - calm.count("closePath")).toBe(13);
   });
 
+  // A sprite pack that authored its own "tantrum" mood clip already has a
+  // complete answer to "what does furious look like" — and the shared spikes
+  // are positioned from `headEllipse`, an anchor that only ever meant to
+  // describe a bounding box for beziers, not the real edge of hand-drawn art.
+  // Painting spikes over finished art was never going to line up with it,
+  // which is what "the moods are not aligned right" for a real drawn pack
+  // turned out to be.
+  it("does not add fur spikes over a companion that already drew its own tantrum", () => {
+    const cat = new CatCompanion();
+    const drawsOwnFace = Object.create(cat) as typeof cat & { drawsOwnFace: boolean };
+    Object.defineProperty(drawsOwnFace, "drawsOwnFace", { value: true });
+
+    const calm = new RecordingCtx();
+    drawCompanion(calm, drawsOwnFace, state({ mood: "idle" }));
+    const cross = new RecordingCtx();
+    drawCompanion(cross, drawsOwnFace, state({ mood: "tantrum" }));
+
+    expect(cross.count("closePath") - calm.count("closePath")).toBe(0);
+  });
+
   it("skips the shared eyes when the companion draws its own face", () => {
     const cat = new CatCompanion();
     const faked = Object.create(cat) as typeof cat & { drawsOwnFace: boolean };
