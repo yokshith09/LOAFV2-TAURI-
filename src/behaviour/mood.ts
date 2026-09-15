@@ -59,7 +59,22 @@ export interface MoodInputs {
   readonly working: boolean;
   /** The tracker reported an idle tick. */
   readonly sleeping: boolean;
-  /** The alt-click development cycle. Below every real signal. */
+  /**
+   * The alt-click development cycle.
+   *
+   * Below the signals worth seeing for real even while previewing art —
+   * hovering, asleep, a tantrum, having just earned "proud", a spoken line —
+   * but ABOVE the merely ambient ones: an assistant reading your day,
+   * scrolling, typing, the machine working. It used to sit under every real
+   * signal without exception, and `typing` alone made it nearly impossible
+   * to use for its actual job: describing out loud what mood you are looking
+   * at is typing, which used to win outright, so the cycle never visibly
+   * advanced past whatever the room around it happened to be doing.
+   * Hovering stays above it deliberately — "petting calms even a tantrum"
+   * has to keep meaning a REAL hand on the character, not an artifact of the
+   * click that started the preview — so to actually see a cycled mood, move
+   * the pointer off the character after clicking.
+   */
   readonly debug: Mood | null;
 }
 
@@ -72,6 +87,10 @@ export function resolveMood(inputs: MoodInputs): Mood {
   if (inputs.tabAlert) return "tantrum";
   if (inputs.proud) return "proud";
   if (inputs.override !== null) return inputs.override;
+  // Above every ambient signal below — see the note on `debug` above for why
+  // an explicit developer action has to win here or it cannot be previewed
+  // at all while doing anything else, typing included.
+  if (inputs.debug !== null) return inputs.debug;
   // Above both of the absorbed poses. Someone else reading your history is a
   // fact about the world; you scrolling is a fact about you, and the first one
   // is the one you cannot otherwise see.
@@ -82,5 +101,5 @@ export function resolveMood(inputs: MoodInputs): Mood {
   // every keystroke in an editor costs CPU — and this is which one wins.
   if (inputs.typing) return "typing";
   if (inputs.working) return "working";
-  return inputs.debug ?? "idle";
+  return "idle";
 }

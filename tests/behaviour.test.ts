@@ -404,9 +404,26 @@ describe("the mood ladder", () => {
     expect(ladder({ sleeping: true })).toBe("sleeping");
   });
 
-  it("keeps the development cycle underneath every real signal", () => {
+  it("keeps the development cycle underneath the signals worth seeing for real", () => {
     expect(ladder({ debug: "proud" })).toBe("proud");
     expect(ladder({ debug: "proud", sleeping: true })).toBe("sleeping");
+    expect(ladder({ debug: "proud", tabAlert: true })).toBe("tantrum");
+    expect(ladder({ debug: "proud", override: "worried" })).toBe("worried");
+    // Hovering too — a real hand on the character while alt-clicking through
+    // moods still reads as petting, not as "ignore this and show me sleeping".
+    expect(ladder({ debug: "proud", hovering: true })).toBe("happy");
+  });
+
+  // The actual bug report this closes: alt-clicking to preview a mood
+  // requires the mouse to be on the character to click it, and describing
+  // what you see out loud is typing — both of which used to sit ABOVE debug,
+  // so the cycle never visibly advanced past "happy" or "typing" while
+  // someone was actually in the middle of using it for its one job.
+  it("outranks every merely ambient signal, unlike before", () => {
+    expect(ladder({ debug: "proud", claudeThinking: true })).toBe("proud");
+    expect(ladder({ debug: "proud", scrolling: true })).toBe("proud");
+    expect(ladder({ debug: "proud", typing: true })).toBe("proud");
+    expect(ladder({ debug: "proud", working: true })).toBe("proud");
   });
 
   it("is idle when nothing at all is happening", () => {
