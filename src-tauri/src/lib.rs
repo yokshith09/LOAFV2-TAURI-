@@ -2631,6 +2631,12 @@ fn watch_for_claude(app: &tauri::AppHandle) {
         let mut last_seen: u64 = 0;
         // Set while Claude is mid-task, so the "finished" moment can be noticed.
         let mut busy_since: Option<std::time::Instant> = None;
+        // A separate baseline for `report_status` — see the note on
+        // `last_status` in claude_desktop.rs for why this is not folded into
+        // `last_seen`. Status reports are their own discrete moments (a build
+        // passed, a push happened) rather than a burst of related questions,
+        // so each new one is announced on its own, with no burst-suppression.
+        let mut last_status_seen: u64 = 0;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(500));
 
@@ -2648,27 +2654,37 @@ fn watch_for_claude(app: &tauri::AppHandle) {
             }
 
             let Ok(dir) = data_dir(&app) else { continue };
-            let Some((tool, at)) = claude_desktop::last_activity(&dir) else {
-                continue;
-            };
-            if at <= last_seen {
-                continue;
+
+            if let Some((tool, at)) = claude_desktop::last_activity(&dir) {
+                if at > last_seen {
+                    // The first reading after launch establishes the baseline
+                    // instead of announcing something that happened while
+                    // Loaf was closed.
+                    let first = last_seen == 0;
+                    last_seen = at;
+                    if !first && !tool.is_empty() {
+                        // Idle to busy is a new burst and gets the bubble.
+                        // Busy to busy is the same burst continuing — the
+                        // quiet timer still gets pushed out so "done" waits
+                        // for this call too, but nothing is said about it,
+                        // because nothing changed as far as the user can see.
+                        let starting_new_burst = busy_since.is_none();
+                        busy_since = Some(std::time::Instant::now());
+                        if starting_new_burst {
+                            let _ = app.emit("loaf://claude/asked", tool);
+                        }
+                    }
+                }
             }
-            // The first reading after launch establishes the baseline instead of
-            // announcing something that happened while Loaf was closed.
-            let first = last_seen == 0;
-            last_seen = at;
-            if first || tool.is_empty() {
-                continue;
-            }
-            // Idle to busy is a new burst and gets the bubble. Busy to busy is
-            // the same burst continuing — the quiet timer still gets pushed
-            // out so "done" waits for this call too, but nothing is said
-            // about it, because nothing changed as far as the user can see.
-            let starting_new_burst = busy_since.is_none();
-            busy_since = Some(std::time::Instant::now());
-            if starting_new_burst {
-                let _ = app.emit("loaf://claude/asked", tool);
+
+            if let Some((status, at)) = claude_desktop::last_status(&dir) {
+                if at > last_status_seen {
+                    let first_status = last_status_seen == 0;
+                    last_status_seen = at;
+                    if !first_status {
+                        let _ = app.emit("loaf://claude/status", status);
+                    }
+                }
             }
         }
     });

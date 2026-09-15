@@ -6,7 +6,13 @@ import {
   WORKING_LEAVE_SECONDS,
   WORTH_MENTIONING_SECONDS,
 } from "../src/behaviour/working";
-import { claudeAskedLine, claudeDoneLine } from "../src/bubble/prompts";
+import {
+  claudeAskedLine,
+  claudeDoneLine,
+  claudeStatusLine,
+  isTerminalStatus,
+  statusReadsAsGoodNews,
+} from "../src/bubble/prompts";
 
 /**
  * Feed a constant reading for a number of seconds, one tick per 0.5s.
@@ -154,5 +160,58 @@ describe("what Loaf says when Claude finishes", () => {
 
   it("is stable within the same second, so a re-render does not reword it", () => {
     expect(claudeDoneLine(5_000)).toBe(claudeDoneLine(5_400));
+  });
+});
+
+// The fixed enum `report_status` accepts, in src-tauri/src/mcp_stdio.rs's
+// STATUS_KINDS — kept here rather than imported, since one is Rust and one is
+// TypeScript, the same way sounds.rs's OCCASIONS is kept in step with
+// voice.ts by a comment rather than a shared import.
+const ALL_STATUS_KINDS = [
+  "thinking",
+  "working",
+  "build_passed",
+  "build_failed",
+  "checks_passed",
+  "checks_failed",
+  "pushed",
+  "deploy_succeeded",
+  "deploy_failed",
+  "done",
+] as const;
+
+describe("what Loaf says for a dev-workflow status report", () => {
+  it("has a real line for every status the MCP tool actually accepts", () => {
+    for (const status of ALL_STATUS_KINDS) {
+      const line = claudeStatusLine(status);
+      expect(line.length).toBeGreaterThan(0);
+      // "done" rotates through claudeDoneLine's own wording rather than
+      // repeating "Claude"; every other status is its own short sentence.
+      if (status !== "done") expect(line.toLowerCase()).not.toContain("does not recognise");
+    }
+  });
+
+  it("still says something for a status this build has never heard of", () => {
+    // An older companion talking to a newer server that added one.
+    const line = claudeStatusLine("shipped_to_the_moon");
+    expect(line.length).toBeGreaterThan(0);
+  });
+
+  it("sorts passing/pushing/deploying/finishing as good news, failing as bad", () => {
+    for (const good of ["build_passed", "checks_passed", "pushed", "deploy_succeeded", "done"]) {
+      expect(isTerminalStatus(good)).toBe(true);
+      expect(statusReadsAsGoodNews(good)).toBe(true);
+    }
+    for (const bad of ["build_failed", "checks_failed", "deploy_failed"]) {
+      expect(isTerminalStatus(bad)).toBe(true);
+      expect(statusReadsAsGoodNews(bad)).toBe(false);
+    }
+  });
+
+  it("treats thinking and working as ongoing, not a finished result", () => {
+    // These get the same "still busy" pose "asked" already uses, not a
+    // proud or worried flash — nothing has concluded yet.
+    expect(isTerminalStatus("thinking")).toBe(false);
+    expect(isTerminalStatus("working")).toBe(false);
   });
 });

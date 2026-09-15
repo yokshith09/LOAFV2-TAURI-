@@ -172,3 +172,66 @@ export function claudeDoneLine(at: number = Date.now()): string {
   const i = Math.floor(at / 1000) % CLAUDE_DONE_LINES.length;
   return CLAUDE_DONE_LINES[i]!;
 }
+
+/**
+ * What to say for a `report_status` call — Claude Code (or anything else
+ * working alongside you) telling Loaf about a build, a push, a deploy.
+ *
+ * FIXED COPY, KEYED BY A FIXED ENUM — see the note on `report_status` in
+ * `mcp_stdio.rs`. The caller picks a status word, never the sentence, so
+ * there is nothing here an assistant confused by something it read could
+ * put in Loaf's mouth. An unrecognised status (an older companion talking to
+ * a newer server that added one) falls back to a plain, honest line rather
+ * than silence.
+ */
+export function claudeStatusLine(status: string): string {
+  switch (status) {
+    case "thinking":
+      return "Claude is thinking this through.";
+    case "working":
+      return "Claude is working on it.";
+    case "build_passed":
+      return "Build passed.";
+    case "build_failed":
+      return "Build failed.";
+    case "checks_passed":
+      return "Checks passed.";
+    case "checks_failed":
+      return "Checks failed.";
+    case "pushed":
+      return "Pushed to GitHub.";
+    case "deploy_succeeded":
+      return "Deploy succeeded.";
+    case "deploy_failed":
+      return "Deploy failed.";
+    case "done":
+      return claudeDoneLine();
+    default:
+      return "Claude reported something Loaf does not recognise yet.";
+  }
+}
+
+/** The statuses that read as good news — the "proud" mood, not "worried". */
+const GOOD_STATUSES: ReadonlySet<string> = new Set([
+  "build_passed",
+  "checks_passed",
+  "pushed",
+  "deploy_succeeded",
+  "done",
+]);
+
+/** The statuses that read as bad news — the "worried" mood. */
+const BAD_STATUSES: ReadonlySet<string> = new Set([
+  "build_failed",
+  "checks_failed",
+  "deploy_failed",
+]);
+
+/** Whether this status is a finished result (good or bad) rather than ongoing work. */
+export function isTerminalStatus(status: string): boolean {
+  return GOOD_STATUSES.has(status) || BAD_STATUSES.has(status);
+}
+
+export function statusReadsAsGoodNews(status: string): boolean {
+  return GOOD_STATUSES.has(status);
+}

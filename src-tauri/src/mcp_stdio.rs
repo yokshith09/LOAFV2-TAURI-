@@ -12,8 +12,19 @@
 //! while Claude is using it, and which is a file precisely so that this stays
 //! true.
 //!
-//! EVERY TOOL IS A QUESTION. Nothing here writes, resets, or deletes. See the
-//! note at the top of `mcp.rs` for why that is not merely a missing feature.
+//! EVERY TOOL ABOUT YOUR DATA IS A QUESTION. Nothing here writes, resets, or
+//! deletes `stats.json` or `meetings.json`. See the note at the top of
+//! `mcp.rs` for why that is not merely a missing feature — it is what stops
+//! an assistant confused by something it read from being able to touch the
+//! one file Loaf exists to protect.
+//!
+//! `report_status` IS THE ONE EXCEPTION, AND DELIBERATELY A NARROW ONE. It
+//! never touches that file or any other user data — it writes a status word
+//! from a small fixed list to its own file, purely so the character on
+//! screen can react. There is no freeform message: the caller picks a KIND
+//! (`build_failed`, `pushed`, ...), never the words Loaf says about it, so
+//! there is nothing here for an assistant to be tricked into saying on
+//! Loaf's behalf.
 //!
 //! THIS LIVES IN THE LIBRARY so that two entry points can share one
 //! implementation: the `loaf-mcp` binary, and the main application launched
@@ -113,6 +124,33 @@ fn tools() -> Value {
                 "Which hours of today the user was most at the machine. Useful \
                  for questions about when someone actually works.",
             "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "report_status",
+            "description":
+                "Tell Loaf what you are doing right now, so the character on \
+                 screen reacts and shows a bubble: thinking, working, a build \
+                 passing or failing, checks passing or failing, a push, or a \
+                 deploy succeeding or failing. Call this as an assistant working \
+                 in a coding session (Claude Code or similar) does these things, \
+                 not for ordinary conversation. `status` MUST be one of: \
+                 thinking, working, build_passed, build_failed, checks_passed, \
+                 checks_failed, pushed, deploy_succeeded, deploy_failed, done. \
+                 Loaf chooses what to say — this only picks which reaction.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "thinking", "working", "build_passed", "build_failed",
+                            "checks_passed", "checks_failed", "pushed",
+                            "deploy_succeeded", "deploy_failed", "done"
+                        ]
+                    }
+                },
+                "required": ["status"]
+            }
         }
     ])
 }
@@ -168,6 +206,17 @@ fn call(name: &str, args: &Value) -> String {
             None => "Nothing has been recorded yet.".into(),
             Some(date) => mcp::describe_hours(&history[&date]),
         },
+        "report_status" => {
+            let status = args.get("status").and_then(Value::as_str).unwrap_or("");
+            if !STATUS_KINDS.contains(&status) {
+                return format!(
+                    "\"{status}\" is not a status Loaf understands. Use one of: {}.",
+                    STATUS_KINDS.join(", ")
+                );
+            }
+            note_status(status);
+            "Noted.".into()
+        }
         other => format!("There is no tool called {other}."),
     }
 }
@@ -210,6 +259,39 @@ fn note_activity(tool: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
     let record = json!({ "tool": tool, "at": now_ms() as u64 });
+    let _ = std::fs::write(&path, record.to_string());
+}
+
+/// A dev-workflow moment worth a reaction. Fixed set, on purpose — see
+/// `report_status` below for why this is not a freeform message.
+const STATUS_KINDS: &[&str] = &[
+    "thinking",
+    "working",
+    "build_passed",
+    "build_failed",
+    "checks_passed",
+    "checks_failed",
+    "pushed",
+    "deploy_succeeded",
+    "deploy_failed",
+    "done",
+];
+
+/// The file this writes so the companion can react to Claude Code's own work
+/// — a build, a push, a deploy — separate from `activity_path`, which is
+/// about a QUESTION being asked. Same reasoning as that file: a file, not a
+/// socket, because this process has no connection to the running app.
+pub fn status_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("LoafPlus").join("claude-status.json")
+}
+
+fn note_status(status: &str) {
+    let Some(dir) = data_dir() else { return };
+    let path = status_path(&dir);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let record = json!({ "status": status, "at": now_ms() as u64 });
     let _ = std::fs::write(&path, record.to_string());
 }
 
@@ -275,5 +357,56 @@ pub fn serve() {
             break;
         }
         let _ = stdout.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_status_is_offered_with_the_fixed_enum() {
+        let tools = tools();
+        let report = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "report_status")
+            .expect("report_status should be in the tool list");
+        let enum_values = report["inputSchema"]["properties"]["status"]["enum"]
+            .as_array()
+            .expect("status must be an enum, not freeform text");
+        let listed: Vec<&str> = enum_values.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(listed, STATUS_KINDS);
+        // "required" matters as much as the enum: a caller that can omit
+        // status entirely gets the same effect as a freeform field.
+        assert_eq!(report["inputSchema"]["required"], json!(["status"]));
+    }
+
+    #[test]
+    fn every_status_kind_is_actually_a_word_a_caller_could_pick() {
+        // Guards against a typo silently shrinking the enum to nothing useful.
+        assert!(STATUS_KINDS.len() >= 9);
+        for kind in STATUS_KINDS {
+            assert!(!kind.is_empty());
+            assert!(kind.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+        }
+    }
+
+    #[test]
+    fn refuses_a_status_outside_the_fixed_list_rather_than_recording_it() {
+        // No filesystem write should even be attempted for a bad value — this
+        // path returns before `note_status` is ever called.
+        let result = call("report_status", &json!({ "status": "vibing" }));
+        assert!(result.contains("not a status Loaf understands"), "{result}");
+        for kind in STATUS_KINDS {
+            assert!(result.contains(kind), "{result} should mention {kind}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_missing_status_the_same_way_as_a_wrong_one() {
+        let result = call("report_status", &json!({}));
+        assert!(result.contains("not a status Loaf understands"), "{result}");
     }
 }

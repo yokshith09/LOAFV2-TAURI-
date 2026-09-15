@@ -278,6 +278,20 @@ pub fn last_activity(data_dir: &Path) -> Option<(String, u64)> {
     Some((tool.to_string(), at))
 }
 
+/// What `report_status` last recorded, read from its own file.
+///
+/// Separate from `last_activity` on purpose: one is "a question was asked
+/// about your data", the other is "an assistant working on your code told
+/// Loaf what it is doing" — different sources, different reactions, and
+/// mixing their schemas would make either easy to misread as the other.
+pub fn last_status(data_dir: &Path) -> Option<(String, u64)> {
+    let text = std::fs::read_to_string(crate::mcp_stdio::status_path(data_dir)).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let status = value.get("status").and_then(Value::as_str).unwrap_or("");
+    let at = value.get("at").and_then(Value::as_u64)?;
+    Some((status.to_string(), at))
+}
+
 /// How long after the last word from Claude to keep saying it is connected.
 ///
 /// Claude Desktop keeps the server process alive for a whole conversation and

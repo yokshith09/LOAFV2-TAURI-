@@ -121,6 +121,9 @@ import {
   tantrumLine,
   claudeAskedLine,
   claudeDoneLine,
+  claudeStatusLine,
+  isTerminalStatus,
+  statusReadsAsGoodNews,
   sessionDoneLine,
   closetGreeting,
   renameLine,
@@ -3996,6 +3999,38 @@ if (hasTauriHost()) {
     say({ kind: "speech", text: claudeDoneLine(), seconds: 5 });
   }).catch(() => {
     // The pose just never appears. Nothing else depends on it.
+  });
+
+  // THE OTHER SIDE OF "asked"/"done". Those two are Claude Desktop reading
+  // your day; this is an assistant working ON YOUR CODE — Claude Code or
+  // anything else that calls the `report_status` MCP tool — telling Loaf
+  // what it is doing right now: thinking it through, working on it, a build
+  // or the checks passing or failing, a push, a deploy landing or not.
+  //
+  // "thinking"/"working" reuse the exact same `claudeThinkingUntil` timer
+  // "asked" already drives — the ongoing-work pose is identical either way,
+  // it does not matter which assistant is behind it. A terminal result
+  // (passed, failed, pushed, deployed, done) gets its own brief pose instead
+  // — proud for good news, worried for bad — because that is a moment worth
+  // a reaction of its own, not just "still busy".
+  void listen<string>("loaf://claude/status", (e) => {
+    const status = e.payload;
+    if (isTerminalStatus(status)) {
+      claudeThinkingUntil = 0;
+      if (statusReadsAsGoodNews(status)) {
+        proudUntil = Date.now() + PROUD_SECONDS * 1000;
+      } else {
+        moodOverride = "worried";
+        window.setTimeout(() => {
+          moodOverride = null;
+        }, PROUD_SECONDS * 1000);
+      }
+    } else {
+      claudeThinkingUntil = Date.now() + CLAUDE_THINKING_MS;
+    }
+    say({ kind: "speech", text: claudeStatusLine(status), seconds: 5 });
+  }).catch(() => {
+    // Loaf still runs; it just does not visibly notice this one.
   });
 
   void listen(TASK_COMMAND_EVENT, (e) => applyTaskCommand(e.payload)).catch(() => {
